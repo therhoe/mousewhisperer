@@ -1,0 +1,18 @@
+api_version = "2024-10"
+
+[[extensions]]
+type = "theme"
+name = "Product Page Tracker"
+handle = "tracking-embed"
+
+  [[extensions.blocks]]
+  type = "app_embed"
+  name = "Engagement Tracker"
+  file = "blocks/tracker.liquid"
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "api_endpoint"
+    type = "single_line_text_field"
+    name = "API Endpoint"
+    description = "The endpoint to send tracking data to"

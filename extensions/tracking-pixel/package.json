@@ -1,0 +1,8 @@
+{
+  "name": "tracking-pixel",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@shopify/web-pixels-extension": "^1.0.0"
+  }
+}

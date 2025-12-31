@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Shopify session storage (required by shopify-app-remix)
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// A tracking project/audit for a specific product
+model Project {
+  id              String   @id @default(cuid())
+  shop            String   // Shopify shop domain
+  productId       String   // Shopify product GID
+  productTitle    String
+  productHandle   String
+  status          ProjectStatus @default(ACTIVE)
+  targetVisitors  Int      @default(1000) // Target number of real visitors
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  completedAt     DateTime?
+
+  visits          Visit[]
+
+  @@index([shop])
+  @@index([productId])
+  @@index([status])
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+// Individual visit/session to a product page
+model Visit {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Visitor classification
+  visitorType     VisitorType @default(PENDING)
+
+  // Session tracking
+  sessionId       String   // Unique session identifier
+
+  // Traffic source
+  source          String?  // e.g., "google", "facebook", "direct"
+  medium          String?  // e.g., "cpc", "organic", "referral"
+  campaign        String?  // UTM campaign
+  referrer        String?  // Full referrer URL
+  sourceCategory  String?  // e.g., "Paid Search", "Organic Social"
+
+  // Engagement metrics
+  timeOnPage      Int      @default(0) // milliseconds
+  scrollDepth     Int      @default(0) // percentage 0-100
+  mouseMovements  Int      @default(0) // count of mouse move events
+  keyPresses      Int      @default(0) // count of key press events
+  touchEvents     Int      @default(0) // count of touch events (mobile)
+
+  // Bot detection signals
+  hasMouseMoved   Boolean  @default(false)
+  hasScrolled     Boolean  @default(false)
+  hasKeyPressed   Boolean  @default(false)
+  hasTouched      Boolean  @default(false)
+  isWebdriver     Boolean  @default(false)
+  suspiciousUA    Boolean  @default(false)
+  linearMovement  Boolean  @default(false) // bot-like straight-line movement
+
+  // Conversion events
+  addedToCart     Boolean  @default(false)
+  addedToCartAt   DateTime?
+  converted       Boolean  @default(false)
+  convertedAt     DateTime?
+
+  // Timestamps
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+
+  // Device info
+  userAgent       String?
+  deviceType      String?  // desktop, mobile, tablet
+
+  @@unique([sessionId, projectId])
+  @@index([projectId])
+  @@index([visitorType])
+  @@index([sourceCategory])
+  @@index([sessionId])
+}
+
+enum VisitorType {
+  PENDING   // Not yet classified
+  REAL      // Real engaged user (5+ seconds, engagement signals)
+  ZOMBIE    // Human but low engagement
+  BOT       // Automated traffic
+}

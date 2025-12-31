@@ -1,0 +1,4 @@
+<script>
+  window.__TRACKING_API_ENDPOINT__ = "{{ app.proxy_url }}/api/track";
+</script>
+{{ 'tracker.js' | asset_url | script_tag }}
