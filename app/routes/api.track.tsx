@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { getClientIP, getGeoData } from "../utils/geo.server";
+import { isDatacenterIP, calculateBotScore } from "../utils/datacenter-ips.server";
 
 // Visitor classification thresholds
 const CLASSIFICATION = {
@@ -19,6 +21,7 @@ function classifyVisitor(data: {
   isWebdriver: boolean;
   suspiciousUA: boolean;
   linearMovement: boolean;
+  datacenterIP: boolean;
 }): "REAL" | "ZOMBIE" | "BOT" {
   // Count bot signals
   const botSignals = [
@@ -26,6 +29,7 @@ function classifyVisitor(data: {
     data.suspiciousUA,
     !data.hasMouseMoved && !data.hasTouched, // No pointer activity
     data.linearMovement,
+    data.datacenterIP, // Traffic from datacenter IPs
   ].filter(Boolean).length;
 
   // If 2+ bot signals, classify as bot
@@ -69,7 +73,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Handle engagement tracking from theme extension
-    return handleEngagementTrack(data, headers);
+    return handleEngagementTrack(data, headers, request);
   } catch (error) {
     console.error("Tracking error:", error);
     return json({ error: "Invalid request" }, { status: 400, headers });
@@ -92,7 +96,7 @@ export const loader = async ({ request }: { request: Request }) => {
   return json({ error: "Method not allowed" }, { status: 405 });
 };
 
-async function handleEngagementTrack(data: any, headers: Record<string, string>) {
+async function handleEngagementTrack(data: any, headers: Record<string, string>, request: Request) {
   const {
     sessionId,
     productHandle,
@@ -125,6 +129,27 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>)
     return json({ error: "Missing required fields" }, { status: 400, headers });
   }
 
+  // Get client IP and geo-location data
+  const clientIP = getClientIP(request);
+  const geoData = await getGeoData(clientIP);
+
+  // Check if IP belongs to a datacenter
+  const datacenterCheck = clientIP ? isDatacenterIP(clientIP) : { isDatacenter: false, provider: null };
+  const datacenterIP = datacenterCheck.isDatacenter;
+
+  // Calculate bot score
+  const botScore = calculateBotScore({
+    isWebdriver: isWebdriver || false,
+    suspiciousUA: suspiciousUA || false,
+    linearMovement: linearMovement || false,
+    datacenterIP,
+    hasMouseMoved: hasMouseMoved || false,
+    hasTouched: hasTouched || false,
+    hasScrolled: hasScrolled || false,
+    hasKeyPressed: hasKeyPressed || false,
+    timeOnPage: timeOnPage || 0,
+  });
+
   // Find active project for this product handle
   const project = await prisma.project.findFirst({
     where: {
@@ -152,7 +177,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>)
     return json({ ok: true, tracked: false, reason: "completed" }, { headers });
   }
 
-  // Classify visitor
+  // Classify visitor (now includes datacenterIP signal)
   const visitorType = classifyVisitor({
     timeOnPage: timeOnPage || 0,
     scrollDepth: scrollDepth || 0,
@@ -163,9 +188,10 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>)
     isWebdriver: isWebdriver || false,
     suspiciousUA: suspiciousUA || false,
     linearMovement: linearMovement || false,
+    datacenterIP,
   });
 
-  // Upsert visit record
+  // Upsert visit record with geo-location and enhanced bot detection
   await prisma.visit.upsert({
     where: {
       sessionId_projectId: {
@@ -194,12 +220,21 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>)
       isWebdriver: isWebdriver || false,
       suspiciousUA: suspiciousUA || false,
       linearMovement: linearMovement || false,
+      datacenterIP,
+      botScore,
       addedToCart: addedToCart || false,
       addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : null,
       userAgent,
       deviceType,
       startedAt: startedAt ? new Date(startedAt) : new Date(),
       endedAt: endedAt ? new Date(endedAt) : null,
+      // Geo-location data
+      ipAddress: clientIP,
+      country: geoData.country,
+      countryCode: geoData.countryCode,
+      city: geoData.city,
+      region: geoData.region,
+      timezone: geoData.timezone,
     },
     update: {
       visitorType,
@@ -213,9 +248,17 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>)
       hasKeyPressed: hasKeyPressed || false,
       hasTouched: hasTouched || false,
       linearMovement: linearMovement || false,
+      datacenterIP,
+      botScore,
       addedToCart: addedToCart || false,
       addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : null,
       endedAt: endedAt ? new Date(endedAt) : null,
+      // Update geo only if we have new data
+      ...(geoData.country && { country: geoData.country }),
+      ...(geoData.countryCode && { countryCode: geoData.countryCode }),
+      ...(geoData.city && { city: geoData.city }),
+      ...(geoData.region && { region: geoData.region }),
+      ...(geoData.timezone && { timezone: geoData.timezone }),
     },
   });
 

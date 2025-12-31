@@ -80,6 +80,14 @@ model Visit {
   keyPresses      Int      @default(0) // count of key press events
   touchEvents     Int      @default(0) // count of touch events (mobile)
 
+  // Geo-location (from IP)
+  ipAddress       String?
+  country         String?
+  countryCode     String?
+  city            String?
+  region          String?
+  timezone        String?
+
   // Bot detection signals
   hasMouseMoved   Boolean  @default(false)
   hasScrolled     Boolean  @default(false)
@@ -88,6 +96,8 @@ model Visit {
   isWebdriver     Boolean  @default(false)
   suspiciousUA    Boolean  @default(false)
   linearMovement  Boolean  @default(false) // bot-like straight-line movement
+  datacenterIP    Boolean  @default(false) // IP belongs to known datacenter
+  botScore        Int      @default(0)     // 0-100 bot confidence score
 
   // Conversion events
   addedToCart     Boolean  @default(false)
@@ -108,6 +118,8 @@ model Visit {
   @@index([visitorType])
   @@index([sourceCategory])
   @@index([sessionId])
+  @@index([country])
+  @@index([startedAt])
 }
 
 enum VisitorType {
