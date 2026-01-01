@@ -1,6 +1,7 @@
 api_version = "2024-10"
 
 [[extensions]]
+uid = "75aa2bb9-6264-a116-9f29-20e2f02eac340138f8fb"
 type = "theme"
 name = "Product Page Tracker"
 handle = "tracking-embed"

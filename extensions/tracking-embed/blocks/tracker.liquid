@@ -1,4 +1,12 @@
 <script>
   window.__TRACKING_API_ENDPOINT__ = "{{ app.proxy_url }}/api/track";
 </script>
-{{ 'tracker.js' | asset_url | script_tag }}
+<script src="{{ 'tracker.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Crofly Tracker",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
