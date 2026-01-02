@@ -12,7 +12,7 @@ scopes = "read_products,write_pixels,read_customer_events"
 redirect_urls = ["https://mousewhisperer.vercel.app/auth/callback"]
 
 [app_proxy]
-url = "/api/track"
+url = "https://mousewhisperer.vercel.app/api/track"
 subpath = "api"
 prefix = "apps"
 
