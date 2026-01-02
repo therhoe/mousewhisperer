@@ -151,6 +151,8 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   });
 
   // Find active project for this product handle
+  console.log("[TRACKING] Looking for project with productHandle:", productHandle);
+
   const project = await prisma.project.findFirst({
     where: {
       productHandle,
@@ -164,8 +166,16 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   });
 
   if (!project) {
+    // Log all active projects to help debug
+    const allProjects = await prisma.project.findMany({
+      where: { status: "ACTIVE" },
+      select: { productHandle: true, productTitle: true },
+    });
+    console.log("[TRACKING] No project found. Active projects:", JSON.stringify(allProjects));
+    console.log("[TRACKING] Received handle:", productHandle);
+
     // No active project for this product
-    return json({ ok: true, tracked: false }, { headers });
+    return json({ ok: true, tracked: false, debug: { receivedHandle: productHandle, activeProjects: allProjects } }, { headers });
   }
 
   // Check if project has reached target
