@@ -129,6 +129,9 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     return json({ error: "Missing required fields" }, { status: 400, headers });
   }
 
+  // Decode URL-encoded product handle (e.g., %E2%84%A2 -> ™)
+  const decodedProductHandle = decodeURIComponent(productHandle);
+
   // Get client IP and geo-location data
   const clientIP = getClientIP(request);
   const geoData = await getGeoData(clientIP);
@@ -153,7 +156,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   // Find active project for this product handle
   const project = await prisma.project.findFirst({
     where: {
-      productHandle,
+      productHandle: decodedProductHandle,
       status: "ACTIVE",
     },
     include: {
@@ -314,10 +317,12 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
     // Update all visits for products in this order
     for (const product of products || []) {
       if (product.productHandle) {
+        // Decode URL-encoded product handle
+        const decodedHandle = decodeURIComponent(product.productHandle);
         const visit = await prisma.visit.findFirst({
           where: {
             sessionId,
-            project: { productHandle: product.productHandle },
+            project: { productHandle: decodedHandle },
           },
         });
 
