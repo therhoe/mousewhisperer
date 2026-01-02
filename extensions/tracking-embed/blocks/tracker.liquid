@@ -1,5 +1,5 @@
 <script>
-  window.__TRACKING_API_ENDPOINT__ = "{{ app.proxy_url }}";
+  window.__TRACKING_API_ENDPOINT__ = "{{ app.proxy_url | default: 'https://mousewhisperer.vercel.app/api/track' }}";
 </script>
 <script src="{{ 'tracker.js' | asset_url }}" defer></script>
 
