@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -188,9 +188,9 @@ export default function Index() {
     >
       <IndexTable.Cell>
         <Text variant="bodyMd" fontWeight="bold" as="span">
-          <a href={`/app/project/${project.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+          <Link to={`/app/project/${project.id}`} style={{ textDecoration: "none", color: "inherit" }}>
             {project.productTitle}
-          </a>
+          </Link>
         </Text>
       </IndexTable.Cell>
       <IndexTable.Cell>{getStatusBadge(project.status)}</IndexTable.Cell>
