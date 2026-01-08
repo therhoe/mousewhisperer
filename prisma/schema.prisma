@@ -35,20 +35,40 @@ model Project {
   productId       String   // Shopify product GID
   productTitle    String
   productHandle   String
-  status          ProjectStatus @default(ACTIVE)
-  targetVisitors  Int      @default(1000) // Target number of real visitors
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  snapshots       Snapshot[]
+
+  @@index([shop])
+  @@index([productId])
+  @@index([productHandle])
+}
+
+// A snapshot/measurement period within a project
+model Snapshot {
+  id              String         @id @default(cuid())
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  number          Int            // Auto-increment per project: 1, 2, 3...
+  name            String?        // User-defined label (e.g., "Baseline", "After Redesign")
+  targetVisitors  Int            @default(1000)
+  status          SnapshotStatus @default(ACTIVE)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
   completedAt     DateTime?
 
   visits          Visit[]
 
-  @@index([shop])
-  @@index([productId])
+  @@unique([projectId, number])
+  @@index([projectId])
   @@index([status])
+  @@index([projectId, status])
 }
 
-enum ProjectStatus {
+enum SnapshotStatus {
   ACTIVE
   COMPLETED
   PAUSED
@@ -57,8 +77,8 @@ enum ProjectStatus {
 // Individual visit/session to a product page
 model Visit {
   id              String   @id @default(cuid())
-  projectId       String
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshotId      String
+  snapshot        Snapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   // Visitor classification
   visitorType     VisitorType @default(PENDING)
@@ -109,12 +129,15 @@ model Visit {
   startedAt       DateTime @default(now())
   endedAt         DateTime?
 
+  // Exit tracking
+  exitType        String?  // window_closed, back_button, idle, internal_link, external_link, checkout
+
   // Device info
   userAgent       String?
   deviceType      String?  // desktop, mobile, tablet
 
-  @@unique([sessionId, projectId])
-  @@index([projectId])
+  @@unique([sessionId, snapshotId])
+  @@index([snapshotId])
   @@index([visitorType])
   @@index([sourceCategory])
   @@index([sessionId])

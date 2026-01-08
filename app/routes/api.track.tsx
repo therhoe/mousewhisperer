@@ -123,6 +123,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     deviceType,
     startedAt,
     endedAt,
+    exitType,
   } = data;
 
   if (!sessionId || !productHandle) {
@@ -153,28 +154,40 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     timeOnPage: timeOnPage || 0,
   });
 
-  // Find active project for this product handle
+  // Find project with an active snapshot for this product handle
   const project = await prisma.project.findFirst({
     where: {
       productHandle: decodedProductHandle,
-      status: "ACTIVE",
+      snapshots: {
+        some: {
+          status: "ACTIVE",
+        },
+      },
     },
     include: {
-      _count: {
-        select: { visits: { where: { visitorType: "REAL" } } },
+      snapshots: {
+        where: { status: "ACTIVE" },
+        take: 1, // Only ONE active snapshot allowed per project
+        include: {
+          _count: {
+            select: { visits: { where: { visitorType: "REAL" } } },
+          },
+        },
       },
     },
   });
 
-  if (!project) {
-    // No active project for this product
+  if (!project || project.snapshots.length === 0) {
+    // No active snapshot for this product
     return json({ ok: true, tracked: false }, { headers });
   }
 
-  // Check if project has reached target
-  if (project._count.visits >= project.targetVisitors) {
-    await prisma.project.update({
-      where: { id: project.id },
+  const activeSnapshot = project.snapshots[0];
+
+  // Check if snapshot has reached target
+  if (activeSnapshot._count.visits >= activeSnapshot.targetVisitors) {
+    await prisma.snapshot.update({
+      where: { id: activeSnapshot.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
     return json({ ok: true, tracked: false, reason: "completed" }, { headers });
@@ -194,16 +207,16 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     datacenterIP,
   });
 
-  // Upsert visit record with geo-location and enhanced bot detection
+  // Upsert visit record linked to snapshot (not project directly)
   await prisma.visit.upsert({
     where: {
-      sessionId_projectId: {
+      sessionId_snapshotId: {
         sessionId,
-        projectId: project.id,
+        snapshotId: activeSnapshot.id,
       },
     },
     create: {
-      projectId: project.id,
+      snapshotId: activeSnapshot.id,
       sessionId,
       visitorType,
       source,
@@ -231,6 +244,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       deviceType,
       startedAt: startedAt ? new Date(startedAt) : new Date(),
       endedAt: endedAt ? new Date(endedAt) : null,
+      exitType: exitType || null,
       // Geo-location data
       ipAddress: clientIP,
       country: geoData.country,
@@ -256,6 +270,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       addedToCart: addedToCart || false,
       addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : null,
       endedAt: endedAt ? new Date(endedAt) : null,
+      exitType: exitType || null,
       // Update geo only if we have new data
       ...(geoData.country && { country: geoData.country }),
       ...(geoData.countryCode && { countryCode: geoData.countryCode }),
@@ -267,12 +282,12 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
 
   // Check again if we've hit the target after this visit
   const realCount = await prisma.visit.count({
-    where: { projectId: project.id, visitorType: "REAL" },
+    where: { snapshotId: activeSnapshot.id, visitorType: "REAL" },
   });
 
-  if (realCount >= project.targetVisitors) {
-    await prisma.project.update({
-      where: { id: project.id },
+  if (realCount >= activeSnapshot.targetVisitors) {
+    await prisma.snapshot.update({
+      where: { id: activeSnapshot.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
   }
@@ -313,18 +328,43 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
 
   if (eventType === "conversion") {
     const { products } = data;
+    let conversionsTracked = 0;
 
     // Update all visits for products in this order
     for (const product of products || []) {
       if (product.productHandle) {
         // Decode URL-encoded product handle
         const decodedHandle = decodeURIComponent(product.productHandle);
-        const visit = await prisma.visit.findFirst({
+
+        // First try: exact session ID match
+        let visit = await prisma.visit.findFirst({
           where: {
             sessionId,
-            project: { productHandle: decodedHandle },
+            snapshot: {
+              project: { productHandle: decodedHandle },
+            },
           },
         });
+
+        // Fallback: if no exact match, find most recent unconverted visit
+        // that added this product to cart in the last 7 days
+        if (!visit) {
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+          visit = await prisma.visit.findFirst({
+            where: {
+              snapshot: {
+                project: { productHandle: decodedHandle },
+                status: { in: ["ACTIVE", "COMPLETED"] },
+              },
+              addedToCart: true,
+              converted: false,
+              startedAt: { gte: sevenDaysAgo },
+            },
+            orderBy: { startedAt: "desc" }, // Most recent first
+          });
+        }
 
         if (visit) {
           await prisma.visit.update({
@@ -334,11 +374,12 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
               convertedAt: new Date(timestamp),
             },
           });
+          conversionsTracked++;
         }
       }
     }
 
-    return json({ ok: true, tracked: true }, { headers });
+    return json({ ok: true, tracked: true, conversionsTracked }, { headers });
   }
 
   return json({ ok: true, tracked: false }, { headers });

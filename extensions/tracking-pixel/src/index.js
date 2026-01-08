@@ -2,31 +2,44 @@ import { register } from "@shopify/web-pixels-extension";
 
 register(({ configuration, analytics, browser }) => {
   const apiEndpoint = configuration.apiEndpoint;
-  const sessionKey = 'crofly_session';
+  const COOKIE_NAME = 'mw_sid'; // Must match tracker.js cookie name
 
-  // Helper to get or create session ID
-  async function getSessionId() {
+  // Helper to get session ID from cookie (set by tracker.js)
+  async function getSessionIdFromCookie() {
     try {
-      let sessionId = await browser.sessionStorage.getItem(sessionKey);
-      if (!sessionId) {
-        sessionId = 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-        await browser.sessionStorage.setItem(sessionKey, sessionId);
+      const cookie = await browser.cookie.get(COOKIE_NAME);
+      if (cookie && cookie.value) {
+        return cookie.value;
       }
-      return sessionId;
     } catch (e) {
-      return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+      console.error('Failed to get cookie:', e);
     }
+    return null;
+  }
+
+  // Fallback: generate a session ID if cookie not found
+  function generateSessionId() {
+    return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
   }
 
   // Send event to our API
   async function sendEvent(eventType, data) {
     if (!apiEndpoint) return;
 
-    const sessionId = await getSessionId();
+    // Try to get session ID from cookie first (this links to the product page visit)
+    let sessionId = await getSessionIdFromCookie();
+
+    // If no cookie, generate a fallback (conversion might still be attributed via product handle)
+    if (!sessionId) {
+      sessionId = generateSessionId();
+    }
+
     const payload = {
       eventType,
       sessionId,
       timestamp: Date.now(),
+      // Include a flag so API knows this came from pixel (for fallback attribution)
+      fromPixel: true,
       ...data,
     };
 

@@ -10,16 +10,51 @@
     apiEndpoint: window.__TRACKING_API_ENDPOINT__ || '',
     minTimeForReal: 5000, // 5 seconds minimum for "real" user
     sendInterval: 30000, // Send update every 30 seconds
-    sessionKey: 'crofly_session',
+    sessionKey: 'mw_session',
+    cookieName: 'mw_sid', // Cookie name for cross-context session tracking
+    cookieDays: 7, // Cookie expiry in days
   };
 
-  // Generate or retrieve session ID
+  // Cookie helpers
+  function setCookie(name, value, days) {
+    const expires = new Date();
+    expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+    document.cookie = name + '=' + encodeURIComponent(value) +
+      ';expires=' + expires.toUTCString() +
+      ';path=/;SameSite=Lax';
+  }
+
+  function getCookie(name) {
+    const nameEQ = name + '=';
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+      let c = ca[i].trim();
+      if (c.indexOf(nameEQ) === 0) {
+        return decodeURIComponent(c.substring(nameEQ.length));
+      }
+    }
+    return null;
+  }
+
+  // Generate or retrieve session ID (uses both cookie and sessionStorage)
   function getSessionId() {
-    let sessionId = sessionStorage.getItem(CONFIG.sessionKey);
+    // First check cookie (persists across checkout)
+    let sessionId = getCookie(CONFIG.cookieName);
+
+    // Then check sessionStorage
+    if (!sessionId) {
+      sessionId = sessionStorage.getItem(CONFIG.sessionKey);
+    }
+
+    // If still no session, create new one
     if (!sessionId) {
       sessionId = 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-      sessionStorage.setItem(CONFIG.sessionKey, sessionId);
     }
+
+    // Store in both places for redundancy
+    sessionStorage.setItem(CONFIG.sessionKey, sessionId);
+    setCookie(CONFIG.cookieName, sessionId, CONFIG.cookieDays);
+
     return sessionId;
   }
 
@@ -181,9 +216,19 @@
     addedToCart: false,
     addedToCartAt: null,
 
+    // Exit tracking
+    exitType: null,
+    lastActivityTime: Date.now(),
+    idleTimeout: 120000, // 2 minutes idle = idle exit
+
     // Sent flag
     hasSentInitial: false,
   };
+
+  // Track user activity for idle detection
+  function updateActivity() {
+    state.lastActivityTime = Date.now();
+  }
 
   // Event listeners
   function setupEventListeners() {
@@ -192,6 +237,7 @@
       state.hasMouseMoved = true;
       state.mouseMovementCount++;
       state.mouseMovements.push({ x: e.clientX, y: e.clientY, t: Date.now() });
+      updateActivity();
 
       // Keep only last 100 movements
       if (state.mouseMovements.length > 100) {
@@ -204,18 +250,42 @@
       state.hasScrolled = true;
       const depth = getScrollDepth();
       state.maxScrollDepth = Math.max(state.maxScrollDepth, depth);
+      updateActivity();
     }, { passive: true });
 
     // Keyboard
     document.addEventListener('keydown', function() {
       state.hasKeyPressed = true;
       state.keyPressCount++;
+      updateActivity();
     }, { passive: true });
 
     // Touch (mobile)
     document.addEventListener('touchstart', function() {
       state.hasTouched = true;
       state.touchEventCount++;
+      updateActivity();
+    }, { passive: true });
+
+    // Click tracking for exit type detection
+    document.addEventListener('click', function(e) {
+      updateActivity();
+      const target = e.target.closest('a');
+      if (target && target.href) {
+        const url = new URL(target.href, window.location.origin);
+        const currentHost = window.location.hostname;
+
+        // Check if it's a checkout/cart link
+        if (url.pathname.includes('/cart') || url.pathname.includes('/checkout')) {
+          state.exitType = 'checkout';
+        }
+        // Check if internal or external link
+        else if (url.hostname === currentHost) {
+          state.exitType = 'internal_link';
+        } else {
+          state.exitType = 'external_link';
+        }
+      }
     }, { passive: true });
 
     // Add to cart detection - listen for form submissions and button clicks
@@ -224,6 +294,7 @@
       if (form.action && form.action.includes('/cart/add')) {
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
+        state.exitType = 'checkout';
         sendTrackingData();
       }
     });
@@ -235,22 +306,46 @@
       if (typeof url === 'string' && url.includes('/cart/add')) {
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
+        state.exitType = 'checkout';
         sendTrackingData();
       }
       return originalFetch.apply(this, arguments);
     };
 
+    // Back button detection
+    window.addEventListener('popstate', function() {
+      state.exitType = 'back_button';
+      sendTrackingData();
+    });
+
     // Page visibility change (user leaving)
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'hidden') {
+        // If no exit type set, it's likely window closed or tab switched
+        if (!state.exitType) {
+          state.exitType = 'window_closed';
+        }
         sendTrackingData();
       }
     });
 
-    // Before unload
+    // Before unload - window/tab closing
     window.addEventListener('beforeunload', function() {
+      // If no exit type set yet, classify as window_closed
+      if (!state.exitType) {
+        state.exitType = 'window_closed';
+      }
       sendTrackingData();
     });
+
+    // Idle detection - check every 30 seconds
+    setInterval(function() {
+      const idleTime = Date.now() - state.lastActivityTime;
+      if (idleTime >= state.idleTimeout && state.exitType !== 'idle') {
+        state.exitType = 'idle';
+        sendTrackingData();
+      }
+    }, 30000);
   }
 
   // Build tracking payload
@@ -292,6 +387,9 @@
       // Device
       userAgent: state.userAgent,
       deviceType: state.deviceType,
+
+      // Exit tracking
+      exitType: state.exitType,
 
       // Timestamps
       startedAt: state.startTime,
