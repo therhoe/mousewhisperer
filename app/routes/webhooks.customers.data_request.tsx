@@ -14,19 +14,22 @@ import { authenticate } from "../shopify.server";
  * Therefore, we acknowledge the request but have no customer-specific data to return.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  try {
+    const { shop, topic, payload } = await authenticate.webhook(request);
 
-  console.log(`Received ${topic} webhook for ${shop}`);
-  console.log(`Customer data request for customer ID: ${payload.customer?.id}`);
+    console.log(`Received ${topic} webhook for ${shop}`);
+    console.log(`Customer data request for customer ID: ${payload.customer?.id}`);
 
-  // MouseWhisperer tracks anonymous visitor sessions on product pages.
-  // We do not store data linked to Shopify customer IDs, so there is no
-  // customer-specific data to return.
-  //
-  // The shop owner should be informed that this app:
-  // - Collects anonymous engagement metrics (scroll depth, time on page, etc.)
-  // - Stores IP addresses for geo-location (not linked to customer accounts)
-  // - Does not store emails, names, or personally identifiable customer data
+    // MouseWhisperer tracks anonymous visitor sessions on product pages.
+    // We do not store data linked to Shopify customer IDs, so there is no
+    // customer-specific data to return.
 
-  return new Response(null, { status: 200 });
+    return new Response(null, { status: 200 });
+  } catch (error) {
+    // Return 401 for HMAC verification failures (required by Shopify)
+    if (error instanceof Response) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    throw error;
+  }
 };

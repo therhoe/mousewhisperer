@@ -15,18 +15,24 @@ import { authenticate } from "../shopify.server";
  * Therefore, we acknowledge the request but have no customer-specific data to delete.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  try {
+    const { shop, topic, payload } = await authenticate.webhook(request);
 
-  console.log(`Received ${topic} webhook for ${shop}`);
-  console.log(`Customer redact request for customer ID: ${payload.customer?.id}`);
+    console.log(`Received ${topic} webhook for ${shop}`);
+    console.log(`Customer redact request for customer ID: ${payload.customer?.id}`);
 
-  // MouseWhisperer tracks anonymous visitor sessions.
-  // We cannot link our data to specific Shopify customers because:
-  // 1. We don't store Shopify customer IDs in our Visit records
-  // 2. Session IDs are randomly generated browser sessions, not customer accounts
-  // 3. IP addresses cannot be reliably matched to customer IDs
-  //
-  // No action is required as we have no customer-specific data to redact.
+    // MouseWhisperer tracks anonymous visitor sessions.
+    // We cannot link our data to specific Shopify customers because:
+    // 1. We don't store Shopify customer IDs in our Visit records
+    // 2. Session IDs are randomly generated browser sessions, not customer accounts
+    // 3. IP addresses cannot be reliably matched to customer IDs
 
-  return new Response(null, { status: 200 });
+    return new Response(null, { status: 200 });
+  } catch (error) {
+    // Return 401 for HMAC verification failures (required by Shopify)
+    if (error instanceof Response) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    throw error;
+  }
 };

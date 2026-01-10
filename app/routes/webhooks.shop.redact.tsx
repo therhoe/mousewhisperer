@@ -13,9 +13,20 @@ import db from "../db.server";
  * - All Projects for this shop (cascades to Snapshots and Visits)
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, topic } = await authenticate.webhook(request);
+  let shop: string;
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  try {
+    const authResult = await authenticate.webhook(request);
+    shop = authResult.shop;
+    console.log(`Received ${authResult.topic} webhook for ${shop}`);
+  } catch (error) {
+    // Return 401 for HMAC verification failures (required by Shopify)
+    if (error instanceof Response) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    throw error;
+  }
+
   console.log(`Deleting all data for shop: ${shop}`);
 
   try {
