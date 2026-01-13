@@ -356,7 +356,7 @@ export default function Index() {
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="start">
             <Text variant="headingMd" as="h2">
-              Get started with MouseWhisperer
+              Get started with Mouse Whisperer
             </Text>
             <Button variant="plain" onClick={handleDismissSetup}>
               Dismiss
@@ -380,7 +380,7 @@ export default function Index() {
                   Step 1: Enable the tracker in your theme
                 </Text>
                 <Text as="p" tone="subdued">
-                  Add the MouseWhisperer tracker to your online store theme. This invisible script will track visitor engagement on your product pages.
+                  Add the Mouse Whisperer tracker to your online store theme. This invisible script will track visitor engagement on your product pages.
                 </Text>
                 <Box paddingBlockStart="200">
                   <Button
@@ -403,7 +403,7 @@ export default function Index() {
                   Step 2: Create your first audit
                 </Text>
                 <Text as="p" tone="subdued">
-                  Select a product to start tracking. MouseWhisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
+                  Select a product to start tracking. Mouse Whisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
                 </Text>
                 {!hasProjects && (
                   <Box paddingBlockStart="200">
@@ -445,7 +445,7 @@ export default function Index() {
 
   return (
     <Page>
-      <TitleBar title="MouseWhisperer">
+      <TitleBar title="Mouse Whisperer">
         <button variant="primary" onClick={handleOpenPicker} disabled={isLoading}>
           Create New Audit
         </button>

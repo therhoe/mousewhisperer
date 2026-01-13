@@ -1,6 +1,6 @@
 # This file stores configurations for your Shopify app.
 
-name = "MouseWhisperer"
+name = "Mouse Whisperer"
 client_id = "be249e7dc1288f980804d0bf5e40cde0"
 application_url = "https://mousewhisperer.vercel.app"
 embedded = true
