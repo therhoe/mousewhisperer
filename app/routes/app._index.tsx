@@ -18,14 +18,38 @@ import {
   Modal,
   TextField,
   FormLayout,
+  Banner,
+  List,
+  Box,
+  Icon,
+  Divider,
+  CalloutCard,
 } from "@shopify/polaris";
+import {
+  CheckCircleIcon,
+  MinusCircleIcon,
+} from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+const APP_CLIENT_ID = "be249e7dc1288f980804d0bf5e40cde0";
+const THEME_BLOCK_HANDLE = "tracker";
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // Get or create shop settings
+  let shopSettings = await prisma.shopSettings.findUnique({
+    where: { shop },
+  });
+
+  if (!shopSettings) {
+    shopSettings = await prisma.shopSettings.create({
+      data: { shop },
+    });
+  }
 
   const projects = await prisma.project.findMany({
     where: { shop },
@@ -74,7 +98,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   });
 
-  return json({ projects: projectsWithStats });
+  return json({
+    projects: projectsWithStats,
+    shop,
+    setupGuideDismissed: shopSettings.setupGuideDismissed,
+  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -153,11 +181,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
+  if (actionType === "dismissSetup") {
+    await prisma.shopSettings.upsert({
+      where: { shop },
+      update: { setupGuideDismissed: true },
+      create: { shop, setupGuideDismissed: true },
+    });
+    return json({ success: true });
+  }
+
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
 export default function Index() {
-  const { projects } = useLoaderData<typeof loader>();
+  const { projects, shop, setupGuideDismissed } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -170,6 +207,19 @@ export default function Index() {
   const [targetVisitors, setTargetVisitors] = useState("1000");
 
   const isLoading = navigation.state !== "idle";
+
+  // Check if setup is complete (has at least one project)
+  const hasProjects = projects.length > 0;
+  const showSetupGuide = !setupGuideDismissed;
+
+  // Deeplink to enable theme extension
+  const themeEditorDeeplink = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${APP_CLIENT_ID}/${THEME_BLOCK_HANDLE}`;
+
+  const handleDismissSetup = useCallback(() => {
+    const formData = new FormData();
+    formData.append("action", "dismissSetup");
+    submit(formData, { method: "POST" });
+  }, [submit]);
 
   const resourceName = {
     singular: "project",
@@ -299,6 +349,100 @@ export default function Index() {
     </EmptyState>
   );
 
+  // Setup guide component
+  const setupGuideMarkup = showSetupGuide ? (
+    <Layout.Section>
+      <Card>
+        <BlockStack gap="400">
+          <InlineStack align="space-between" blockAlign="start">
+            <Text variant="headingMd" as="h2">
+              Get started with MouseWhisperer
+            </Text>
+            <Button variant="plain" onClick={handleDismissSetup}>
+              Dismiss
+            </Button>
+          </InlineStack>
+
+          <Text as="p" tone="subdued">
+            Follow these steps to start tracking visitor engagement on your product pages.
+          </Text>
+
+          <Divider />
+
+          <BlockStack gap="400">
+            {/* Step 1 */}
+            <InlineStack gap="300" blockAlign="start">
+              <Box>
+                <Icon source={hasProjects ? CheckCircleIcon : MinusCircleIcon} tone={hasProjects ? "success" : "subdued"} />
+              </Box>
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
+                  Step 1: Enable the tracker in your theme
+                </Text>
+                <Text as="p" tone="subdued">
+                  Add the MouseWhisperer tracker to your online store theme. This invisible script will track visitor engagement on your product pages.
+                </Text>
+                <Box paddingBlockStart="200">
+                  <Button
+                    url={themeEditorDeeplink}
+                    target="_blank"
+                  >
+                    Open Theme Editor
+                  </Button>
+                </Box>
+              </BlockStack>
+            </InlineStack>
+
+            {/* Step 2 */}
+            <InlineStack gap="300" blockAlign="start">
+              <Box>
+                <Icon source={hasProjects ? CheckCircleIcon : MinusCircleIcon} tone={hasProjects ? "success" : "subdued"} />
+              </Box>
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
+                  Step 2: Create your first audit
+                </Text>
+                <Text as="p" tone="subdued">
+                  Select a product to start tracking. MouseWhisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
+                </Text>
+                {!hasProjects && (
+                  <Box paddingBlockStart="200">
+                    <Button onClick={handleOpenPicker} variant="primary">
+                      Create New Audit
+                    </Button>
+                  </Box>
+                )}
+              </BlockStack>
+            </InlineStack>
+
+            {/* Step 3 */}
+            <InlineStack gap="300" blockAlign="start">
+              <Box>
+                <Icon source={MinusCircleIcon} tone="subdued" />
+              </Box>
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
+                  Step 3: Review your analytics
+                </Text>
+                <Text as="p" tone="subdued">
+                  Once visitors start landing on your tracked product pages, you'll see real-time engagement data including time on page, scroll depth, and conversion tracking.
+                </Text>
+              </BlockStack>
+            </InlineStack>
+          </BlockStack>
+
+          <Divider />
+
+          <Banner tone="info">
+            <p>
+              <strong>Tip:</strong> For best results, track products that receive regular traffic. The more visitors, the faster you'll get statistically significant insights.
+            </p>
+          </Banner>
+        </BlockStack>
+      </Card>
+    </Layout.Section>
+  ) : null;
+
   return (
     <Page>
       <TitleBar title="MouseWhisperer">
@@ -307,6 +451,7 @@ export default function Index() {
         </button>
       </TitleBar>
       <Layout>
+        {setupGuideMarkup}
         <Layout.Section>
           <Card padding="0">
             {projects.length === 0 ? (

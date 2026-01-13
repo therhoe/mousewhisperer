@@ -151,3 +151,12 @@ enum VisitorType {
   ZOMBIE    // Human but low engagement
   BOT       // Automated traffic
 }
+
+// Shop-level settings
+model ShopSettings {
+  id                    String   @id @default(cuid())
+  shop                  String   @unique
+  setupGuideDismissed   Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
