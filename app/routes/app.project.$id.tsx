@@ -27,6 +27,249 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { generateCSV, generatePDF } from "../utils/export.server";
 
+// Calculate stats using efficient database aggregations
+async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedAt?: { gte?: Date; lte?: Date } }) {
+  const whereClause = {
+    snapshotId,
+    ...(dateFilter.startedAt ? dateFilter : {}),
+  };
+
+  // Run all queries in parallel for maximum efficiency
+  const [
+    visitorTypeCounts,
+    atcCount,
+    convCount,
+    realUserMetrics,
+    sourceCategoryStats,
+    countryCounts,
+    cityCounts,
+    deviceCounts,
+    exitTypeCounts,
+    recentVisits,
+    atcBySource,
+    convBySource,
+  ] = await Promise.all([
+    // Count by visitor type
+    prisma.visit.groupBy({
+      by: ["visitorType"],
+      where: whereClause,
+      _count: true,
+    }),
+    // Count add-to-cart
+    prisma.visit.count({ where: { ...whereClause, addedToCart: true } }),
+    // Count conversions
+    prisma.visit.count({ where: { ...whereClause, converted: true } }),
+    // Get average time and scroll for REAL users only
+    prisma.visit.aggregate({
+      where: { ...whereClause, visitorType: "REAL" },
+      _avg: { timeOnPage: true, scrollDepth: true },
+    }),
+    // Group by source category with counts and sums
+    prisma.visit.groupBy({
+      by: ["sourceCategory", "visitorType"],
+      where: whereClause,
+      _count: true,
+      _sum: { timeOnPage: true, scrollDepth: true },
+    }),
+    // Top countries
+    prisma.visit.groupBy({
+      by: ["country"],
+      where: whereClause,
+      _count: true,
+      orderBy: { _count: { country: "desc" } },
+      take: 5,
+    }),
+    // Top cities
+    prisma.visit.groupBy({
+      by: ["city", "region", "country"],
+      where: { ...whereClause, city: { not: null } },
+      _count: true,
+      orderBy: { _count: { city: "desc" } },
+      take: 5,
+    }),
+    // Device breakdown
+    prisma.visit.groupBy({
+      by: ["deviceType"],
+      where: whereClause,
+      _count: true,
+      orderBy: { _count: { deviceType: "desc" } },
+    }),
+    // Exit type breakdown
+    prisma.visit.groupBy({
+      by: ["exitType"],
+      where: whereClause,
+      _count: true,
+      orderBy: { _count: { exitType: "desc" } },
+    }),
+    // Recent visits (limited to 50)
+    prisma.visit.findMany({
+      where: whereClause,
+      orderBy: { startedAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        sessionId: true,
+        visitorType: true,
+        source: true,
+        medium: true,
+        campaign: true,
+        sourceCategory: true,
+        timeOnPage: true,
+        scrollDepth: true,
+        mouseMovements: true,
+        keyPresses: true,
+        touchEvents: true,
+        country: true,
+        city: true,
+        region: true,
+        deviceType: true,
+        botScore: true,
+        addedToCart: true,
+        converted: true,
+        startedAt: true,
+        endedAt: true,
+        exitType: true,
+      },
+    }),
+    // ATC by source
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { ...whereClause, addedToCart: true },
+      _count: true,
+    }),
+    // Conversions by source
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { ...whereClause, converted: true },
+      _count: true,
+    }),
+  ]);
+
+  // Process visitor type counts
+  let realCount = 0, zombieCount = 0, botCount = 0, totalSessions = 0;
+  visitorTypeCounts.forEach((item) => {
+    totalSessions += item._count;
+    if (item.visitorType === "REAL") realCount = item._count;
+    else if (item.visitorType === "ZOMBIE") zombieCount = item._count;
+    else if (item.visitorType === "BOT") botCount = item._count;
+  });
+
+  const addToCartCount = atcCount;
+  const conversionCount = convCount;
+
+  const avgTimeOnPage = realUserMetrics._avg.timeOnPage
+    ? Math.round(realUserMetrics._avg.timeOnPage / 1000)
+    : 0;
+  const avgScrollDepth = realUserMetrics._avg.scrollDepth
+    ? Math.round(realUserMetrics._avg.scrollDepth)
+    : 0;
+
+  // Process source category stats
+  const sourceMap = new Map<string, {
+    sessions: number;
+    real: number;
+    zombie: number;
+    bot: number;
+    avgTime: number;
+    avgScroll: number;
+    atc: number;
+    conversions: number;
+  }>();
+
+  sourceCategoryStats.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    if (!sourceMap.has(category)) {
+      sourceMap.set(category, {
+        sessions: 0, real: 0, zombie: 0, bot: 0, avgTime: 0, avgScroll: 0, atc: 0, conversions: 0,
+      });
+    }
+    const stats = sourceMap.get(category)!;
+    stats.sessions += item._count;
+    if (item.visitorType === "REAL") {
+      stats.real += item._count;
+      stats.avgTime += item._sum.timeOnPage || 0;
+      stats.avgScroll += item._sum.scrollDepth || 0;
+    } else if (item.visitorType === "ZOMBIE") {
+      stats.zombie += item._count;
+    } else if (item.visitorType === "BOT") {
+      stats.bot += item._count;
+    }
+  });
+
+  atcBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.atc = item._count;
+  });
+
+  convBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.conversions = item._count;
+  });
+
+  const sourceStats = Array.from(sourceMap.entries()).map(([category, stats]) => ({
+    category,
+    sessions: stats.sessions,
+    real: stats.real,
+    zombie: stats.zombie,
+    bot: stats.bot,
+    avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
+    avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
+    atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
+    convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
+  })).sort((a, b) => b.sessions - a.sessions);
+
+  // Process top countries
+  const topCountries = countryCounts.map((item) => ({
+    country: item.country || "Unknown",
+    count: item._count,
+  }));
+
+  // Process top cities
+  const topCities = cityCounts.map((item) => ({
+    city: `${item.city}, ${item.region || item.country || ""}`,
+    count: item._count,
+  }));
+
+  // Process device breakdown
+  const deviceBreakdown = deviceCounts.map((item) => ({
+    device: item.deviceType || "Unknown",
+    count: item._count,
+    percent: totalSessions > 0 ? Math.round((item._count / totalSessions) * 100) : 0,
+  }));
+
+  // Process exit paths
+  const exitPaths = exitTypeCounts.map((item) => ({
+    type: item.exitType || "unknown",
+    count: item._count,
+    percent: totalSessions > 0 ? Math.round((item._count / totalSessions) * 100) : 0,
+    label: formatExitType(item.exitType || "unknown"),
+  }));
+
+  return {
+    totalSessions,
+    realCount,
+    zombieCount,
+    botCount,
+    realPercent: totalSessions > 0 ? Math.round((realCount / totalSessions) * 100) : 0,
+    zombiePercent: totalSessions > 0 ? Math.round((zombieCount / totalSessions) * 100) : 0,
+    botPercent: totalSessions > 0 ? Math.round((botCount / totalSessions) * 100) : 0,
+    addToCartCount,
+    conversionCount,
+    avgTimeOnPage,
+    avgScrollDepth,
+    atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
+    convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
+    sourceStats,
+    topCountries,
+    topCities,
+    deviceBreakdown,
+    recentVisits,
+    exitPaths,
+  };
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -53,7 +296,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     dateFilter.startedAt = { ...dateFilter.startedAt, lte: endDate };
   }
 
-  // Step 1: Get project and snapshot metadata (without visits - much faster)
+  // Get project and snapshot metadata (without visits - much faster)
   const project = await prisma.project.findFirst({
     where: { id: projectId, shop },
     include: {
@@ -88,257 +331,35 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     selectedSnapshotMeta = project.snapshots[0];
   }
 
-  // Step 2: Only fetch visits for selected snapshot(s) - not all snapshots
-  const snapshotIdsToFetch: string[] = [];
+  // Calculate stats using efficient database aggregations
+  let stats = null;
   if (selectedSnapshotMeta) {
-    snapshotIdsToFetch.push(selectedSnapshotMeta.id);
+    stats = await getSnapshotStatsFromDB(selectedSnapshotMeta.id, dateFilter);
   }
-
-  // Add comparison snapshot IDs if in compare mode
-  if (compareMode && compareIdsParam) {
-    const compareIds = compareIdsParam.split(",");
-    snapshotIdsToFetch.push(...compareIds.filter(id => !snapshotIdsToFetch.includes(id)));
-  }
-
-  // Step 3: Fetch visits only for needed snapshots with optimized field selection
-  const visitsMap = new Map<string, any[]>();
-
-  if (snapshotIdsToFetch.length > 0) {
-    const visits = await prisma.visit.findMany({
-      where: {
-        snapshotId: { in: snapshotIdsToFetch },
-        ...(dateFilter.startedAt ? dateFilter : {}),
-      },
-      orderBy: { startedAt: "desc" },
-      select: {
-        id: true,
-        snapshotId: true,
-        sessionId: true,
-        visitorType: true,
-        source: true,
-        medium: true,
-        campaign: true,
-        sourceCategory: true,
-        timeOnPage: true,
-        scrollDepth: true,
-        mouseMovements: true,
-        keyPresses: true,
-        touchEvents: true,
-        country: true,
-        city: true,
-        region: true,
-        deviceType: true,
-        botScore: true,
-        addedToCart: true,
-        converted: true,
-        startedAt: true,
-        endedAt: true,
-        exitType: true,
-      },
-    });
-
-    // Group visits by snapshot ID
-    visits.forEach((visit) => {
-      if (!visitsMap.has(visit.snapshotId)) {
-        visitsMap.set(visit.snapshotId, []);
-      }
-      visitsMap.get(visit.snapshotId)!.push(visit);
-    });
-  }
-
-  // Create selectedSnapshot with visits attached
-  const selectedSnapshot = selectedSnapshotMeta ? {
-    ...selectedSnapshotMeta,
-    visits: visitsMap.get(selectedSnapshotMeta.id) || [],
-  } : null;
-
-  // Calculate stats for a snapshot
-  const calculateSnapshotStats = (snapshot: typeof project.snapshots[0]) => {
-    const visits = snapshot.visits;
-    const totalSessions = visits.length;
-    const realUsers = visits.filter((v) => v.visitorType === "REAL");
-    const zombies = visits.filter((v) => v.visitorType === "ZOMBIE");
-    const bots = visits.filter((v) => v.visitorType === "BOT");
-
-    const realCount = realUsers.length;
-    const zombieCount = zombies.length;
-    const botCount = bots.length;
-
-    const addToCartCount = visits.filter((v) => v.addedToCart).length;
-    const conversionCount = visits.filter((v) => v.converted).length;
-
-    const avgTimeOnPage = realUsers.length > 0
-      ? Math.round(realUsers.reduce((sum, v) => sum + v.timeOnPage, 0) / realUsers.length / 1000)
-      : 0;
-    const avgScrollDepth = realUsers.length > 0
-      ? Math.round(realUsers.reduce((sum, v) => sum + v.scrollDepth, 0) / realUsers.length)
-      : 0;
-
-    // Group by source category
-    const sourceCategories = new Map<string, {
-      sessions: number;
-      real: number;
-      zombie: number;
-      bot: number;
-      avgTime: number;      // Sum of timeOnPage for REAL users only
-      avgScroll: number;    // Sum of scrollDepth for REAL users only
-      atc: number;
-      conversions: number;
-    }>();
-
-    visits.forEach((visit) => {
-      const category = visit.sourceCategory || "Unknown";
-      if (!sourceCategories.has(category)) {
-        sourceCategories.set(category, {
-          sessions: 0, real: 0, zombie: 0, bot: 0, avgTime: 0, avgScroll: 0, atc: 0, conversions: 0,
-        });
-      }
-
-      const stats = sourceCategories.get(category)!;
-      stats.sessions++;
-      if (visit.visitorType === "REAL") {
-        stats.real++;
-        // Only count time/scroll for real users (consistent with overall avgTimeOnPage)
-        stats.avgTime += visit.timeOnPage;
-        stats.avgScroll += visit.scrollDepth;
-      } else if (visit.visitorType === "ZOMBIE") {
-        stats.zombie++;
-      } else if (visit.visitorType === "BOT") {
-        stats.bot++;
-      }
-      if (visit.addedToCart) stats.atc++;
-      if (visit.converted) stats.conversions++;
-    });
-
-    const sourceStats = Array.from(sourceCategories.entries()).map(([category, stats]) => ({
-      category,
-      sessions: stats.sessions,
-      real: stats.real,
-      zombie: stats.zombie,
-      bot: stats.bot,
-      // Divide by real users count, not total sessions
-      avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
-      avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
-      atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
-      convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
-    })).sort((a, b) => b.sessions - a.sessions);
-
-    // Calculate geo stats
-    const countryStats = new Map<string, number>();
-    const cityStats = new Map<string, number>();
-    visits.forEach((visit) => {
-      const country = visit.country || "Unknown";
-      countryStats.set(country, (countryStats.get(country) || 0) + 1);
-
-      if (visit.city) {
-        const cityKey = `${visit.city}, ${visit.region || visit.country || ""}`;
-        cityStats.set(cityKey, (cityStats.get(cityKey) || 0) + 1);
-      }
-    });
-    const topCountries = Array.from(countryStats.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([country, count]) => ({ country, count }));
-    const topCities = Array.from(cityStats.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([city, count]) => ({ city, count }));
-
-    // Calculate device stats
-    const deviceStats = new Map<string, number>();
-    visits.forEach((visit) => {
-      const device = visit.deviceType || "Unknown";
-      deviceStats.set(device, (deviceStats.get(device) || 0) + 1);
-    });
-    const deviceBreakdown = Array.from(deviceStats.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([device, count]) => ({ device, count, percent: Math.round((count / totalSessions) * 100) }));
-
-    // Prepare recent visits for detail table (last 50)
-    const recentVisits = visits.slice(0, 50).map((v) => ({
-      id: v.id,
-      sessionId: v.sessionId,
-      visitorType: v.visitorType,
-      source: v.source,
-      medium: v.medium,
-      campaign: v.campaign,
-      sourceCategory: v.sourceCategory,
-      timeOnPage: v.timeOnPage,
-      scrollDepth: v.scrollDepth,
-      mouseMovements: v.mouseMovements,
-      keyPresses: v.keyPresses,
-      touchEvents: v.touchEvents,
-      country: v.country,
-      city: v.city,
-      region: v.region,
-      deviceType: v.deviceType,
-      botScore: v.botScore,
-      addedToCart: v.addedToCart,
-      converted: v.converted,
-      startedAt: v.startedAt,
-      endedAt: v.endedAt,
-      exitType: v.exitType,
-    }));
-
-    // Calculate exit path stats
-    const exitPathStats = new Map<string, number>();
-    visits.forEach((visit) => {
-      const exitType = visit.exitType || "unknown";
-      exitPathStats.set(exitType, (exitPathStats.get(exitType) || 0) + 1);
-    });
-    const exitPaths = Array.from(exitPathStats.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => ({
-        type,
-        count,
-        percent: totalSessions > 0 ? Math.round((count / totalSessions) * 100) : 0,
-        label: formatExitType(type),
-      }));
-
-    return {
-      totalSessions,
-      realCount,
-      zombieCount,
-      botCount,
-      realPercent: totalSessions > 0 ? Math.round((realCount / totalSessions) * 100) : 0,
-      zombiePercent: totalSessions > 0 ? Math.round((zombieCount / totalSessions) * 100) : 0,
-      botPercent: totalSessions > 0 ? Math.round((botCount / totalSessions) * 100) : 0,
-      addToCartCount,
-      conversionCount,
-      avgTimeOnPage,
-      avgScrollDepth,
-      atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
-      convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
-      sourceStats,
-      topCountries,
-      topCities,
-      deviceBreakdown,
-      recentVisits,
-      exitPaths,
-    };
-  };
-
-  // Calculate stats for selected snapshot
-  const stats = selectedSnapshot ? calculateSnapshotStats(selectedSnapshot) : null;
 
   // Calculate comparison data if in compare mode
   let comparisonData: Array<{
     id: string;
     name: string;
     number: number;
-    stats: ReturnType<typeof calculateSnapshotStats>;
+    stats: Awaited<ReturnType<typeof getSnapshotStatsFromDB>>;
   }> = [];
 
   if (compareMode && compareIdsParam) {
     const compareIds = compareIdsParam.split(",");
-    comparisonData = project.snapshots
-      .filter((s) => compareIds.includes(s.id))
-      .map((s) => ({
-        id: s.id,
-        name: s.name || `Snapshot ${s.number}`,
-        number: s.number,
-        stats: calculateSnapshotStats({ ...s, visits: visitsMap.get(s.id) || [] }),
-      }));
+    const comparePromises = compareIds.map(async (id) => {
+      const snapshotMeta = project.snapshots.find((s) => s.id === id);
+      if (!snapshotMeta) return null;
+      const snapshotStats = await getSnapshotStatsFromDB(id, dateFilter);
+      return {
+        id,
+        name: snapshotMeta.name || `Snapshot ${snapshotMeta.number}`,
+        number: snapshotMeta.number,
+        stats: snapshotStats,
+      };
+    });
+    const results = await Promise.all(comparePromises);
+    comparisonData = results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
   return json({
@@ -358,15 +379,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       createdAt: s.createdAt,
       completedAt: s.completedAt,
     })),
-    selectedSnapshot: selectedSnapshot ? {
-      id: selectedSnapshot.id,
-      number: selectedSnapshot.number,
-      name: selectedSnapshot.name,
-      status: selectedSnapshot.status,
-      targetVisitors: selectedSnapshot.targetVisitors,
-      realCount: selectedSnapshot._count.visits,
-      createdAt: selectedSnapshot.createdAt,
-      completedAt: selectedSnapshot.completedAt,
+    selectedSnapshot: selectedSnapshotMeta ? {
+      id: selectedSnapshotMeta.id,
+      number: selectedSnapshotMeta.number,
+      name: selectedSnapshotMeta.name,
+      status: selectedSnapshotMeta.status,
+      targetVisitors: selectedSnapshotMeta.targetVisitors,
+      realCount: selectedSnapshotMeta._count.visits,
+      createdAt: selectedSnapshotMeta.createdAt,
+      completedAt: selectedSnapshotMeta.completedAt,
     } : null,
     stats,
     comparisonData,
@@ -375,7 +396,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       startDate: startDateParam,
       endDate: endDateParam,
     },
-    visits: selectedSnapshot?.visits || [],
   });
 };
 
