@@ -24,6 +24,7 @@ import {
   Icon,
   Divider,
   CalloutCard,
+  ChoiceList,
 } from "@shopify/polaris";
 import {
   CheckCircleIcon,
@@ -86,6 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: project.id,
       productTitle: project.productTitle,
       productHandle: project.productHandle,
+      resourceType: project.resourceType,
       status: displaySnapshot?.status || "NO_SNAPSHOT",
       snapshotName: displaySnapshot?.name || `Snapshot ${displaySnapshot?.number || 1}`,
       snapshotCount: project.snapshots.length,
@@ -115,14 +117,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = formData.get("productId") as string;
     const productTitle = formData.get("productTitle") as string;
     const productHandle = formData.get("productHandle") as string;
+    const resourceType = (formData.get("resourceType") as "PRODUCT" | "COLLECTION") || "PRODUCT";
     const snapshotName = formData.get("snapshotName") as string | null;
     const targetVisitors = parseInt(formData.get("targetVisitors") as string) || 1000;
 
-    // Check if project already exists for this product with an active snapshot
+    // Check if project already exists for this resource with an active snapshot
     const existing = await prisma.project.findFirst({
       where: {
         shop,
         productId,
+        resourceType,
         snapshots: {
           some: {
             status: "ACTIVE",
@@ -132,12 +136,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (existing) {
-      return json({ error: "An active audit already exists for this product" }, { status: 400 });
+      const resourceLabel = resourceType === "COLLECTION" ? "collection" : "product";
+      return json({ error: `An active audit already exists for this ${resourceLabel}` }, { status: 400 });
     }
 
     // Check if project exists (but no active snapshot)
     let project = await prisma.project.findFirst({
-      where: { shop, productId },
+      where: { shop, productId, resourceType },
       include: { _count: { select: { snapshots: true } } },
     });
 
@@ -157,6 +162,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await prisma.project.create({
         data: {
           shop,
+          resourceType,
           productId,
           productTitle,
           productHandle,
@@ -198,6 +204,8 @@ export default function Index() {
   const submit = useSubmit();
   const navigation = useNavigation();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
+  const [resourceType, setResourceType] = useState<"product" | "collection">("product");
   const [selectedProduct, setSelectedProduct] = useState<{
     id: string;
     title: string;
@@ -229,20 +237,30 @@ export default function Index() {
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(projects);
 
-  const handleOpenPicker = useCallback(async () => {
+  // Opens the type selection modal first
+  const handleOpenPicker = useCallback(() => {
+    setResourceType("product");
+    setIsTypeModalOpen(true);
+  }, []);
+
+  // After selecting type, open the actual resource picker
+  const handleSelectType = useCallback(async () => {
+    setIsTypeModalOpen(false);
+
     try {
+      const pickerType = resourceType === "collection" ? "collection" : "product";
       const selected = await shopify.resourcePicker({
-        type: "product",
+        type: pickerType,
         multiple: false,
-        filter: { variants: false, draft: false },
+        ...(pickerType === "product" ? { filter: { variants: false, draft: false } } : {}),
       });
 
       if (selected && selected.length > 0) {
-        const product = selected[0];
+        const resource = selected[0];
         setSelectedProduct({
-          id: product.id,
-          title: product.title,
-          handle: product.handle,
+          id: resource.id,
+          title: resource.title,
+          handle: resource.handle,
         });
         setSnapshotName("");
         setTargetVisitors("1000");
@@ -251,7 +269,7 @@ export default function Index() {
     } catch (error) {
       console.error("Resource picker error:", error);
     }
-  }, []);
+  }, [resourceType]);
 
   const handleCreateProject = useCallback(() => {
     if (!selectedProduct) return;
@@ -261,16 +279,21 @@ export default function Index() {
     formData.append("productId", selectedProduct.id);
     formData.append("productTitle", selectedProduct.title);
     formData.append("productHandle", selectedProduct.handle);
+    formData.append("resourceType", resourceType.toUpperCase());
     formData.append("snapshotName", snapshotName);
     formData.append("targetVisitors", targetVisitors);
     submit(formData, { method: "POST" });
     setIsModalOpen(false);
     setSelectedProduct(null);
-  }, [selectedProduct, snapshotName, targetVisitors, submit]);
+  }, [selectedProduct, resourceType, snapshotName, targetVisitors, submit]);
 
   const handleCloseModal = useCallback(() => {
     setIsModalOpen(false);
     setSelectedProduct(null);
+  }, []);
+
+  const handleCloseTypeModal = useCallback(() => {
+    setIsTypeModalOpen(false);
   }, []);
 
   const getStatusBadge = (status: string) => {
@@ -297,11 +320,16 @@ export default function Index() {
     >
       <IndexTable.Cell>
         <BlockStack gap="100">
-          <Text variant="bodyMd" fontWeight="bold" as="span">
-            <Link to={`/app/project/${project.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-              {project.productTitle}
-            </Link>
-          </Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Text variant="bodyMd" fontWeight="bold" as="span">
+              <Link to={`/app/project/${project.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                {project.productTitle}
+              </Link>
+            </Text>
+            <Badge tone={project.resourceType === "COLLECTION" ? "info" : "success"}>
+              {project.resourceType === "COLLECTION" ? "Collection" : "Product"}
+            </Badge>
+          </InlineStack>
           <Text as="span" variant="bodySm" tone="subdued">
             {project.snapshotName} {project.snapshotCount > 1 && `(${project.snapshotCount} snapshots)`}
           </Text>
@@ -345,7 +373,7 @@ export default function Index() {
       }}
       image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
     >
-      <p>Select a product to start tracking visitor engagement and traffic quality.</p>
+      <p>Select a product or collection to start tracking visitor engagement and traffic quality.</p>
     </EmptyState>
   );
 
@@ -364,7 +392,7 @@ export default function Index() {
           </InlineStack>
 
           <Text as="p" tone="subdued">
-            Follow these steps to start tracking visitor engagement on your product pages.
+            Follow these steps to start tracking visitor engagement on your product and collection pages.
           </Text>
 
           <Divider />
@@ -380,7 +408,7 @@ export default function Index() {
                   Step 1: Enable the tracker in your theme
                 </Text>
                 <Text as="p" tone="subdued">
-                  Add the Mouse Whisperer tracker to your online store theme. This invisible script will track visitor engagement on your product pages.
+                  Add the Mouse Whisperer tracker to your online store theme. This invisible script will track visitor engagement on your product and collection pages.
                 </Text>
                 <Box paddingBlockStart="200">
                   <Button
@@ -403,7 +431,7 @@ export default function Index() {
                   Step 2: Create your first audit
                 </Text>
                 <Text as="p" tone="subdued">
-                  Select a product to start tracking. Mouse Whisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
+                  Select a product or collection to start tracking. Mouse Whisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
                 </Text>
                 {!hasProjects && (
                   <Box paddingBlockStart="200">
@@ -425,7 +453,7 @@ export default function Index() {
                   Step 3: Review your analytics
                 </Text>
                 <Text as="p" tone="subdued">
-                  Once visitors start landing on your tracked product pages, you'll see real-time engagement data including time on page, scroll depth, and conversion tracking.
+                  Once visitors start landing on your tracked pages, you'll see real-time engagement data including time on page, scroll depth, and conversion tracking.
                 </Text>
               </BlockStack>
             </InlineStack>
@@ -435,7 +463,7 @@ export default function Index() {
 
           <Banner tone="info">
             <p>
-              <strong>Tip:</strong> For best results, track products that receive regular traffic. The more visitors, the faster you'll get statistically significant insights.
+              <strong>Tip:</strong> For best results, track pages that receive regular traffic. The more visitors, the faster you'll get statistically significant insights.
             </p>
           </Banner>
         </BlockStack>
@@ -465,7 +493,7 @@ export default function Index() {
                 }
                 onSelectionChange={handleSelectionChange}
                 headings={[
-                  { title: "Product" },
+                  { title: "Page" },
                   { title: "Status" },
                   { title: "Progress" },
                   { title: "Real Users" },
@@ -481,6 +509,44 @@ export default function Index() {
         </Layout.Section>
       </Layout>
 
+      {/* Type Selection Modal */}
+      <Modal
+        open={isTypeModalOpen}
+        onClose={handleCloseTypeModal}
+        title="What do you want to track?"
+        primaryAction={{
+          content: "Continue",
+          onAction: handleSelectType,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: handleCloseTypeModal,
+          },
+        ]}
+      >
+        <Modal.Section>
+          <ChoiceList
+            title="Select page type"
+            choices={[
+              {
+                label: "Product page",
+                value: "product",
+                helpText: "Track visitor engagement on a product page (/products/...)",
+              },
+              {
+                label: "Collection page",
+                value: "collection",
+                helpText: "Track visitor engagement on a collection page (/collections/...)",
+              },
+            ]}
+            selected={[resourceType]}
+            onChange={(value) => setResourceType(value[0] as "product" | "collection")}
+          />
+        </Modal.Section>
+      </Modal>
+
+      {/* Create Audit Modal */}
       <Modal
         open={isModalOpen}
         onClose={handleCloseModal}

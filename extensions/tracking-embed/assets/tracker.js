@@ -1,8 +1,24 @@
 (function() {
   'use strict';
 
-  // Only run on product pages
-  if (!window.location.pathname.includes('/products/')) {
+  // Detect page type (product or collection)
+  function getPageInfo() {
+    const productMatch = window.location.pathname.match(/\/products\/([^/?#]+)/);
+    if (productMatch) {
+      return { handle: productMatch[1], type: 'product' };
+    }
+
+    const collectionMatch = window.location.pathname.match(/\/collections\/([^/?#]+)/);
+    if (collectionMatch) {
+      return { handle: collectionMatch[1], type: 'collection' };
+    }
+
+    return null;
+  }
+
+  // Only run on product or collection pages
+  const pageInfo = getPageInfo();
+  if (!pageInfo) {
     return;
   }
 
@@ -58,10 +74,14 @@
     return sessionId;
   }
 
-  // Get product handle from URL
-  function getProductHandle() {
-    const match = window.location.pathname.match(/\/products\/([^/?]+)/);
-    return match ? match[1] : null;
+  // Get resource handle from URL (product or collection)
+  function getResourceHandle() {
+    return pageInfo ? pageInfo.handle : null;
+  }
+
+  // Get resource type (product or collection)
+  function getResourceType() {
+    return pageInfo ? pageInfo.type : null;
   }
 
   // Parse traffic source from UTM params and referrer
@@ -185,7 +205,8 @@
   // Main tracking state
   const state = {
     sessionId: getSessionId(),
-    productHandle: getProductHandle(),
+    productHandle: getResourceHandle(),  // Works for both products and collections
+    resourceType: getResourceType(),      // 'product' or 'collection'
     startTime: Date.now(),
 
     // Engagement signals
@@ -356,6 +377,7 @@
     return {
       sessionId: state.sessionId,
       productHandle: state.productHandle,
+      resourceType: state.resourceType,  // 'product' or 'collection'
 
       // Traffic source
       source: state.trafficSource.source,

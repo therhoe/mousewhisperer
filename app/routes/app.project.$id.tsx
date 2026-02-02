@@ -53,16 +53,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     dateFilter.startedAt = { ...dateFilter.startedAt, lte: endDate };
   }
 
+  // Step 1: Get project and snapshot metadata (without visits - much faster)
   const project = await prisma.project.findFirst({
     where: { id: projectId, shop },
     include: {
       snapshots: {
         orderBy: { number: "desc" },
-        include: {
-          visits: {
-            where: dateFilter.startedAt ? dateFilter : undefined,
-            orderBy: { startedAt: "desc" },
-          },
+        select: {
+          id: true,
+          number: true,
+          name: true,
+          status: true,
+          targetVisitors: true,
+          createdAt: true,
+          completedAt: true,
           _count: {
             select: { visits: { where: { visitorType: "REAL" } } },
           },
@@ -76,13 +80,77 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   // Find active or specified snapshot
-  let selectedSnapshot = snapshotIdParam
+  let selectedSnapshotMeta = snapshotIdParam
     ? project.snapshots.find((s) => s.id === snapshotIdParam)
     : project.snapshots.find((s) => s.status === "ACTIVE") || project.snapshots[0];
 
-  if (!selectedSnapshot && project.snapshots.length > 0) {
-    selectedSnapshot = project.snapshots[0];
+  if (!selectedSnapshotMeta && project.snapshots.length > 0) {
+    selectedSnapshotMeta = project.snapshots[0];
   }
+
+  // Step 2: Only fetch visits for selected snapshot(s) - not all snapshots
+  const snapshotIdsToFetch: string[] = [];
+  if (selectedSnapshotMeta) {
+    snapshotIdsToFetch.push(selectedSnapshotMeta.id);
+  }
+
+  // Add comparison snapshot IDs if in compare mode
+  if (compareMode && compareIdsParam) {
+    const compareIds = compareIdsParam.split(",");
+    snapshotIdsToFetch.push(...compareIds.filter(id => !snapshotIdsToFetch.includes(id)));
+  }
+
+  // Step 3: Fetch visits only for needed snapshots with optimized field selection
+  const visitsMap = new Map<string, any[]>();
+
+  if (snapshotIdsToFetch.length > 0) {
+    const visits = await prisma.visit.findMany({
+      where: {
+        snapshotId: { in: snapshotIdsToFetch },
+        ...(dateFilter.startedAt ? dateFilter : {}),
+      },
+      orderBy: { startedAt: "desc" },
+      select: {
+        id: true,
+        snapshotId: true,
+        sessionId: true,
+        visitorType: true,
+        source: true,
+        medium: true,
+        campaign: true,
+        sourceCategory: true,
+        timeOnPage: true,
+        scrollDepth: true,
+        mouseMovements: true,
+        keyPresses: true,
+        touchEvents: true,
+        country: true,
+        city: true,
+        region: true,
+        deviceType: true,
+        botScore: true,
+        addedToCart: true,
+        converted: true,
+        startedAt: true,
+        endedAt: true,
+        exitType: true,
+      },
+    });
+
+    // Group visits by snapshot ID
+    visits.forEach((visit) => {
+      if (!visitsMap.has(visit.snapshotId)) {
+        visitsMap.set(visit.snapshotId, []);
+      }
+      visitsMap.get(visit.snapshotId)!.push(visit);
+    });
+  }
+
+  // Create selectedSnapshot with visits attached
+  const selectedSnapshot = selectedSnapshotMeta ? {
+    ...selectedSnapshotMeta,
+    visits: visitsMap.get(selectedSnapshotMeta.id) || [],
+  } : null;
 
   // Calculate stats for a snapshot
   const calculateSnapshotStats = (snapshot: typeof project.snapshots[0]) => {
@@ -112,8 +180,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       real: number;
       zombie: number;
       bot: number;
-      avgTime: number;
-      avgScroll: number;
+      avgTime: number;      // Sum of timeOnPage for REAL users only
+      avgScroll: number;    // Sum of scrollDepth for REAL users only
       atc: number;
       conversions: number;
     }>();
@@ -128,13 +196,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
       const stats = sourceCategories.get(category)!;
       stats.sessions++;
-      if (visit.visitorType === "REAL") stats.real++;
-      else if (visit.visitorType === "ZOMBIE") stats.zombie++;
-      else if (visit.visitorType === "BOT") stats.bot++;
+      if (visit.visitorType === "REAL") {
+        stats.real++;
+        // Only count time/scroll for real users (consistent with overall avgTimeOnPage)
+        stats.avgTime += visit.timeOnPage;
+        stats.avgScroll += visit.scrollDepth;
+      } else if (visit.visitorType === "ZOMBIE") {
+        stats.zombie++;
+      } else if (visit.visitorType === "BOT") {
+        stats.bot++;
+      }
       if (visit.addedToCart) stats.atc++;
       if (visit.converted) stats.conversions++;
-      stats.avgTime += visit.timeOnPage;
-      stats.avgScroll += visit.scrollDepth;
     });
 
     const sourceStats = Array.from(sourceCategories.entries()).map(([category, stats]) => ({
@@ -143,8 +216,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       real: stats.real,
       zombie: stats.zombie,
       bot: stats.bot,
-      avgTime: stats.sessions > 0 ? Math.round(stats.avgTime / stats.sessions / 1000) : 0,
-      avgScroll: stats.sessions > 0 ? Math.round(stats.avgScroll / stats.sessions) : 0,
+      // Divide by real users count, not total sessions
+      avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
+      avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
       atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
       convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
     })).sort((a, b) => b.sessions - a.sessions);
@@ -263,7 +337,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         id: s.id,
         name: s.name || `Snapshot ${s.number}`,
         number: s.number,
-        stats: calculateSnapshotStats(s),
+        stats: calculateSnapshotStats({ ...s, visits: visitsMap.get(s.id) || [] }),
       }));
   }
 
@@ -479,13 +553,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
         const s = sourceCategories.get(category)!;
         s.sessions++;
-        if (visit.visitorType === "REAL") s.real++;
-        else if (visit.visitorType === "ZOMBIE") s.zombie++;
-        else if (visit.visitorType === "BOT") s.bot++;
+        if (visit.visitorType === "REAL") {
+          s.real++;
+          // Only count time/scroll for real users
+          s.avgTime += visit.timeOnPage;
+          s.avgScroll += visit.scrollDepth;
+        } else if (visit.visitorType === "ZOMBIE") {
+          s.zombie++;
+        } else if (visit.visitorType === "BOT") {
+          s.bot++;
+        }
         if (visit.addedToCart) s.atc++;
         if (visit.converted) s.conversions++;
-        s.avgTime += visit.timeOnPage;
-        s.avgScroll += visit.scrollDepth;
       });
 
       const sourceStats = Array.from(sourceCategories.entries()).map(([category, s]) => ({
@@ -494,8 +573,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         real: s.real,
         zombie: s.zombie,
         bot: s.bot,
-        avgTime: s.sessions > 0 ? Math.round(s.avgTime / s.sessions / 1000) : 0,
-        avgScroll: s.sessions > 0 ? Math.round(s.avgScroll / s.sessions) : 0,
+        // Divide by real users count, not total sessions
+        avgTime: s.real > 0 ? Math.round(s.avgTime / s.real / 1000) : 0,
+        avgScroll: s.real > 0 ? Math.round(s.avgScroll / s.real) : 0,
         atcRate: s.real > 0 ? Math.round((s.atc / s.real) * 100) : 0,
         convRate: s.real > 0 ? Math.round((s.conversions / s.real) * 100) : 0,
       })).sort((a, b) => b.sessions - a.sessions);
@@ -1310,7 +1390,7 @@ export default function ProjectDetails() {
                       <IndexTable.Row id={visit.id} key={visit.id} position={index}>
                         <IndexTable.Cell>
                           <Text as="span" variant="bodySm">
-                            {visit.startedAt ? new Date(visit.startedAt).toLocaleString() : "-"}
+                            {visit.startedAt ? new Date(visit.startedAt).toLocaleDateString() : "-"}
                           </Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>

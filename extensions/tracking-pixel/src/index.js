@@ -80,14 +80,34 @@ register(({ configuration, analytics, browser }) => {
     const { checkout } = event.data;
 
     if (checkout) {
-      // Get all product handles from the order
-      const products = checkout.lineItems?.map(item => ({
-        productId: item.variant?.product?.id,
-        productHandle: item.variant?.product?.handle || item.variant?.product?.url?.split('/products/')[1]?.split('?')[0],
-        productTitle: item.variant?.product?.title,
-        quantity: item.quantity,
-        price: item.variant?.price?.amount,
-      })) || [];
+      // Extract product info from line items - handle various Shopify event structures
+      const products = checkout.lineItems?.map(item => {
+        // Try multiple paths to get product ID (Shopify GID)
+        const productId = item.variant?.product?.id
+          || item.product?.id
+          || item.merchandise?.product?.id;
+
+        // Try multiple paths to get product handle
+        const productHandle = item.variant?.product?.handle
+          || item.product?.handle
+          || item.merchandise?.product?.handle
+          || extractHandleFromUrl(item.variant?.product?.url)
+          || extractHandleFromUrl(item.product?.url);
+
+        // Try to get product title
+        const productTitle = item.variant?.product?.title
+          || item.product?.title
+          || item.merchandise?.product?.title
+          || item.title;
+
+        return {
+          productId,
+          productHandle,
+          productTitle,
+          quantity: item.quantity,
+          price: item.variant?.price?.amount || item.price?.amount,
+        };
+      }).filter(p => p.productId || p.productHandle) || [];
 
       await sendEvent('conversion', {
         orderId: checkout.order?.id,
@@ -99,6 +119,13 @@ register(({ configuration, analytics, browser }) => {
       });
     }
   });
+
+  // Helper to extract handle from URL
+  function extractHandleFromUrl(url) {
+    if (!url) return null;
+    const match = url.match(/\/products\/([^/?#]+)/);
+    return match ? match[1] : null;
+  }
 
   // Also track checkout started for funnel analysis
   analytics.subscribe('checkout_started', async (event) => {

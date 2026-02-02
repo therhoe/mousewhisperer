@@ -100,6 +100,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   const {
     sessionId,
     productHandle,
+    resourceType,  // 'product' or 'collection' (optional, defaults to 'product')
     source,
     medium,
     campaign,
@@ -133,6 +134,9 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   // Decode URL-encoded product handle (e.g., %E2%84%A2 -> ™)
   const decodedProductHandle = decodeURIComponent(productHandle);
 
+  // Normalize resource type (default to PRODUCT for backwards compatibility)
+  const normalizedResourceType = (resourceType || 'product').toUpperCase() as "PRODUCT" | "COLLECTION";
+
   // Get client IP and geo-location data
   const clientIP = getClientIP(request);
   const geoData = await getGeoData(clientIP);
@@ -154,10 +158,11 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     timeOnPage: timeOnPage || 0,
   });
 
-  // Find project with an active snapshot for this product handle
+  // Find project with an active snapshot for this handle and resource type
   const project = await prisma.project.findFirst({
     where: {
       productHandle: decodedProductHandle,
+      resourceType: normalizedResourceType,
       snapshots: {
         some: {
           status: "ACTIVE",
@@ -332,50 +337,75 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
 
     // Update all visits for products in this order
     for (const product of products || []) {
-      if (product.productHandle) {
-        // Decode URL-encoded product handle
-        const decodedHandle = decodeURIComponent(product.productHandle);
+      // Build project match condition - try productId first (more reliable), then handle
+      const projectMatch: any = {};
+      if (product.productId) {
+        projectMatch.productId = product.productId;
+      } else if (product.productHandle) {
+        projectMatch.productHandle = decodeURIComponent(product.productHandle);
+      } else {
+        // No way to identify the product, skip
+        continue;
+      }
 
-        // First try: exact session ID match
-        let visit = await prisma.visit.findFirst({
+      // First try: exact session ID match
+      let visit = await prisma.visit.findFirst({
+        where: {
+          sessionId,
+          snapshot: {
+            project: projectMatch,
+          },
+        },
+      });
+
+      // Fallback: if no exact match, find most recent unconverted visit
+      // that added this product to cart in the last 7 days
+      if (!visit) {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        visit = await prisma.visit.findFirst({
           where: {
-            sessionId,
             snapshot: {
-              project: { productHandle: decodedHandle },
+              project: projectMatch,
+              status: { in: ["ACTIVE", "COMPLETED"] },
             },
+            addedToCart: true,
+            converted: false,
+            startedAt: { gte: sevenDaysAgo },
+          },
+          orderBy: { startedAt: "desc" }, // Most recent first
+        });
+      }
+
+      // Second fallback: find any unconverted visit for this product in the last 7 days
+      // (even without addedToCart - some conversions happen without ATC detection)
+      if (!visit) {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        visit = await prisma.visit.findFirst({
+          where: {
+            snapshot: {
+              project: projectMatch,
+              status: { in: ["ACTIVE", "COMPLETED"] },
+            },
+            converted: false,
+            startedAt: { gte: sevenDaysAgo },
+          },
+          orderBy: { startedAt: "desc" }, // Most recent first
+        });
+      }
+
+      if (visit) {
+        await prisma.visit.update({
+          where: { id: visit.id },
+          data: {
+            converted: true,
+            convertedAt: new Date(timestamp),
           },
         });
-
-        // Fallback: if no exact match, find most recent unconverted visit
-        // that added this product to cart in the last 7 days
-        if (!visit) {
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-          visit = await prisma.visit.findFirst({
-            where: {
-              snapshot: {
-                project: { productHandle: decodedHandle },
-                status: { in: ["ACTIVE", "COMPLETED"] },
-              },
-              addedToCart: true,
-              converted: false,
-              startedAt: { gte: sevenDaysAgo },
-            },
-            orderBy: { startedAt: "desc" }, // Most recent first
-          });
-        }
-
-        if (visit) {
-          await prisma.visit.update({
-            where: { id: visit.id },
-            data: {
-              converted: true,
-              convertedAt: new Date(timestamp),
-            },
-          });
-          conversionsTracked++;
-        }
+        conversionsTracked++;
       }
     }
 

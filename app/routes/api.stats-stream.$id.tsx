@@ -56,13 +56,18 @@ async function getSnapshotStats(snapshotId: string) {
 
     const stats = sourceCategories.get(category)!;
     stats.sessions++;
-    if (visit.visitorType === "REAL") stats.real++;
-    else if (visit.visitorType === "ZOMBIE") stats.zombie++;
-    else if (visit.visitorType === "BOT") stats.bot++;
+    if (visit.visitorType === "REAL") {
+      stats.real++;
+      // Only count time/scroll for real users (consistent with overall avgTimeOnPage)
+      stats.avgTime += visit.timeOnPage;
+      stats.avgScroll += visit.scrollDepth;
+    } else if (visit.visitorType === "ZOMBIE") {
+      stats.zombie++;
+    } else if (visit.visitorType === "BOT") {
+      stats.bot++;
+    }
     if (visit.addedToCart) stats.atc++;
     if (visit.converted) stats.conversions++;
-    stats.avgTime += visit.timeOnPage;
-    stats.avgScroll += visit.scrollDepth;
   });
 
   const sourceStats = Array.from(sourceCategories.entries()).map(([category, stats]) => ({
@@ -71,8 +76,9 @@ async function getSnapshotStats(snapshotId: string) {
     real: stats.real,
     zombie: stats.zombie,
     bot: stats.bot,
-    avgTime: stats.sessions > 0 ? Math.round(stats.avgTime / stats.sessions / 1000) : 0,
-    avgScroll: stats.sessions > 0 ? Math.round(stats.avgScroll / stats.sessions) : 0,
+    // Divide by real users count, not total sessions
+    avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
+    avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
     atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
     convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
   })).sort((a, b) => b.sessions - a.sessions);

@@ -28,21 +28,29 @@ model Session {
   refreshTokenExpires DateTime?
 }
 
-// A tracking project/audit for a specific product
+// Resource type for tracking (product page or collection page)
+enum ResourceType {
+  PRODUCT
+  COLLECTION
+}
+
+// A tracking project/audit for a specific product or collection
 model Project {
-  id              String   @id @default(cuid())
-  shop            String   // Shopify shop domain
-  productId       String   // Shopify product GID
-  productTitle    String
-  productHandle   String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id              String       @id @default(cuid())
+  shop            String       // Shopify shop domain
+  resourceType    ResourceType @default(PRODUCT) // Type of page being tracked
+  productId       String       // Shopify resource GID (product or collection)
+  productTitle    String       // Resource title
+  productHandle   String       // URL handle for matching
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   snapshots       Snapshot[]
 
   @@index([shop])
   @@index([productId])
   @@index([productHandle])
+  @@index([resourceType, productHandle])
 }
 
 // A snapshot/measurement period within a project
@@ -143,6 +151,10 @@ model Visit {
   @@index([sessionId])
   @@index([country])
   @@index([startedAt])
+  // Compound indexes for optimized queries
+  @@index([snapshotId, visitorType])  // Filter by snapshot + type
+  @@index([snapshotId, startedAt])    // Sort visits by time within snapshot
+  @@index([snapshotId, converted])    // Conversion lookups
 }
 
 enum VisitorType {
