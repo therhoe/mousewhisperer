@@ -126,6 +126,10 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     endedAt,
     exitType,
     exitUrl,
+    searchQuery,
+    appliedFilters,
+    sortBy,
+    filterInteractions,
   } = data;
 
   if (!sessionId || !productHandle) {
@@ -256,6 +260,11 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       endedAt: endedAt ? new Date(endedAt) : null,
       exitType: exitType || null,
       exitUrl: exitUrl || null,
+      // Search & filter tracking
+      searchQuery: searchQuery || null,
+      appliedFilters: appliedFilters ? String(appliedFilters).slice(0, 5000) : null,
+      sortBy: sortBy || null,
+      filterInteractions: filterInteractions || 0,
       // Geo-location data
       ipAddress: clientIP,
       country: geoData.country,
@@ -283,6 +292,11 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       endedAt: endedAt ? new Date(endedAt) : null,
       exitType: exitType || null,
       exitUrl: exitUrl || null,
+      // Search & filter tracking (update with latest values)
+      searchQuery: searchQuery || undefined,
+      appliedFilters: appliedFilters ? String(appliedFilters).slice(0, 5000) : undefined,
+      sortBy: sortBy || undefined,
+      filterInteractions: filterInteractions || 0,
       // Update geo only if we have new data
       ...(geoData.country && { country: geoData.country }),
       ...(geoData.countryCode && { countryCode: geoData.countryCode }),

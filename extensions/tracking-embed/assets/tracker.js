@@ -211,7 +211,46 @@
     return linearCount / (sample.length - 2) > 0.8;
   }
 
+  // Extract search query, filters, and sort from URL params
+  function extractSearchAndFilters() {
+    var params = new URLSearchParams(window.location.search);
+    var searchQuery = params.get('q') || null;
+    var sortBy = params.get('sort_by') || null;
+    var filters = {};
+    var hasFilters = false;
+
+    params.forEach(function(value, key) {
+      // Shopify filter params: filter.v.* (variant), filter.p.* (product), filter.m.* (metafield)
+      if (key.indexOf('filter.') === 0) {
+        if (!filters[key]) filters[key] = [];
+        filters[key].push(value);
+        hasFilters = true;
+      }
+    });
+
+    return {
+      searchQuery: searchQuery,
+      appliedFilters: hasFilters ? JSON.stringify(filters) : null,
+      sortBy: sortBy,
+    };
+  }
+
+  // Check referrer for search query (e.g., navigated from /search?q=term)
+  function getSearchQueryFromReferrer() {
+    try {
+      if (!document.referrer) return null;
+      var refUrl = new URL(document.referrer);
+      // Only check same-domain referrer
+      if (refUrl.hostname.replace(/^www\./, '') !== getStoreHost()) return null;
+      if (refUrl.pathname === '/search') {
+        return refUrl.searchParams.get('q') || null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   // Main tracking state
+  var initialSearchFilters = extractSearchAndFilters();
   var state = {
     sessionId: getSessionId(),
     productHandle: pageInfo.handle,
@@ -257,6 +296,13 @@
     exitUrl: null,
     lastActivityTime: Date.now(),
     idleTimeout: 120000, // 2 minutes idle = idle exit
+
+    // Search & filter tracking
+    searchQuery: initialSearchFilters.searchQuery || getSearchQueryFromReferrer(),
+    appliedFilters: initialSearchFilters.appliedFilters,
+    sortBy: initialSearchFilters.sortBy,
+    filterInteractions: 0,
+    lastUrl: window.location.href,
 
     // Interval IDs (for cleanup)
     sendIntervalId: null,
@@ -387,8 +433,36 @@
       return originalFetch.apply(this, arguments);
     };
 
-    // Back button detection
+    // URL change monitoring — detect AJAX filter/sort changes on collection pages
+    function onUrlChange() {
+      var newUrl = window.location.href;
+      if (newUrl !== state.lastUrl) {
+        state.lastUrl = newUrl;
+        var updated = extractSearchAndFilters();
+        if (updated.appliedFilters || updated.sortBy || updated.searchQuery) {
+          state.filterInteractions++;
+          state.appliedFilters = updated.appliedFilters || state.appliedFilters;
+          state.sortBy = updated.sortBy || state.sortBy;
+          state.searchQuery = updated.searchQuery || state.searchQuery;
+        }
+      }
+    }
+
+    // Monkey-patch pushState/replaceState to detect Shopify AJAX filter navigation
+    var origPushState = history.pushState;
+    var origReplaceState = history.replaceState;
+    history.pushState = function() {
+      origPushState.apply(this, arguments);
+      onUrlChange();
+    };
+    history.replaceState = function() {
+      origReplaceState.apply(this, arguments);
+      onUrlChange();
+    };
+
+    // Back/forward button detection
     window.addEventListener('popstate', function() {
+      onUrlChange();
       state.exitType = 'back_button';
       sendTrackingData();
     });
@@ -476,6 +550,12 @@
       // Exit tracking
       exitType: state.exitType,
       exitUrl: state.exitUrl,
+
+      // Search & filter tracking
+      searchQuery: state.searchQuery,
+      appliedFilters: state.appliedFilters,
+      sortBy: state.sortBy,
+      filterInteractions: state.filterInteractions,
 
       // Timestamps
       startedAt: state.startTime,

@@ -142,6 +142,12 @@ model Visit {
   exitType        String?  // window_closed, back_button, idle, internal_link, external_link, checkout
   exitUrl         String?  // URL the visitor navigated to when exiting
 
+  // Search & filter tracking
+  searchQuery             String?  // Search term from URL ?q= or referrer
+  appliedFilters          String?  // JSON of active filters (filter.v.*, filter.p.*)
+  sortBy                  String?  // Sort preference (e.g., "price-ascending")
+  filterInteractions      Int      @default(0) // Number of filter changes during visit
+
   // Device info
   userAgent       String?
   deviceType      String?  // desktop, mobile, tablet

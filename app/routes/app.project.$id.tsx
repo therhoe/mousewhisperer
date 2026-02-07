@@ -49,6 +49,9 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     topExitUrls,
     atcBySource,
     convBySource,
+    topSearchQueries,
+    sortPreferences,
+    filterUsageCount,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -131,6 +134,10 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
         endedAt: true,
         exitType: true,
         exitUrl: true,
+        searchQuery: true,
+        appliedFilters: true,
+        sortBy: true,
+        filterInteractions: true,
       },
     }),
     // Top exit URLs (for link-based exits)
@@ -152,6 +159,25 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
       by: ["sourceCategory"],
       where: { ...whereClause, converted: true },
       _count: true,
+    }),
+    // Top search queries
+    prisma.visit.groupBy({
+      by: ["searchQuery"],
+      where: { ...whereClause, searchQuery: { not: null } },
+      _count: true,
+      orderBy: { _count: { searchQuery: "desc" } },
+      take: 10,
+    }),
+    // Sort preferences
+    prisma.visit.groupBy({
+      by: ["sortBy"],
+      where: { ...whereClause, sortBy: { not: null } },
+      _count: true,
+      orderBy: { _count: { sortBy: "desc" } },
+    }),
+    // Filter usage count
+    prisma.visit.count({
+      where: { ...whereClause, appliedFilters: { not: null } },
     }),
   ]);
 
@@ -263,6 +289,19 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     count: item._count,
   }));
 
+  // Process search stats
+  const searchStats = {
+    topQueries: topSearchQueries.map((item) => ({
+      query: item.searchQuery || "",
+      count: item._count,
+    })),
+    sortPreferences: sortPreferences.map((item) => ({
+      sort: item.sortBy || "",
+      count: item._count,
+    })),
+    filterUsageCount,
+  };
+
   return {
     totalSessions,
     realCount,
@@ -284,6 +323,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     recentVisits,
     exitPaths,
     exitUrls,
+    searchStats,
   };
 }
 
@@ -1383,6 +1423,59 @@ export default function ProjectDetails() {
               </Card>
             </Layout.Section>
 
+            {/* Search & Filters */}
+            {((displayStats?.searchStats?.topQueries || []).length > 0 ||
+              (displayStats?.searchStats?.sortPreferences || []).length > 0 ||
+              (displayStats?.searchStats?.filterUsageCount || 0) > 0) && (
+            <Layout.Section variant="oneThird">
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Search & Filters</Text>
+
+                  {/* Filter usage */}
+                  {(displayStats?.searchStats?.filterUsageCount || 0) > 0 && (
+                    <InlineStack align="space-between">
+                      <Text as="span">Visits using filters</Text>
+                      <Badge>{String(displayStats.searchStats.filterUsageCount)}</Badge>
+                    </InlineStack>
+                  )}
+
+                  {/* Top search queries */}
+                  {(displayStats?.searchStats?.topQueries || []).length > 0 && (
+                    <>
+                      <Divider />
+                      <Text as="h3" variant="headingSm">Top Search Queries</Text>
+                      <BlockStack gap="200">
+                        {(displayStats?.searchStats?.topQueries || []).map((item: any) => (
+                          <InlineStack key={item.query} align="space-between">
+                            <Text as="span" variant="bodySm" truncate>"{item.query}"</Text>
+                            <Badge>{String(item.count)}</Badge>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </>
+                  )}
+
+                  {/* Sort preferences */}
+                  {(displayStats?.searchStats?.sortPreferences || []).length > 0 && (
+                    <>
+                      <Divider />
+                      <Text as="h3" variant="headingSm">Sort Preferences</Text>
+                      <BlockStack gap="200">
+                        {(displayStats?.searchStats?.sortPreferences || []).map((item: any) => (
+                          <InlineStack key={item.sort} align="space-between">
+                            <Text as="span" variant="bodySm">{item.sort.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
+                            <Badge>{String(item.count)}</Badge>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </>
+                  )}
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+            )}
+
             {/* Traffic by Source Table */}
             <Layout.Section>
               <Card padding="0">
@@ -1431,6 +1524,7 @@ export default function ProjectDetails() {
                       { title: "Mouse" },
                       { title: "Bot Score" },
                       { title: "Exit" },
+                      { title: "Search/Filters" },
                       { title: "ATC" },
                     ]}
                     selectable={false}
@@ -1492,6 +1586,33 @@ export default function ProjectDetails() {
                                   try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; }
                                 })()}
                               </Text>
+                            )}
+                          </BlockStack>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <BlockStack gap="050">
+                            {visit.searchQuery && (
+                              <Text as="span" variant="bodySm" tone="subdued">Q: {visit.searchQuery}</Text>
+                            )}
+                            {visit.sortBy && (
+                              <Text as="span" variant="bodySm" tone="subdued">Sort: {visit.sortBy}</Text>
+                            )}
+                            {visit.appliedFilters && (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {(() => {
+                                  try {
+                                    const filters = JSON.parse(visit.appliedFilters);
+                                    const count = Object.keys(filters).length;
+                                    return `${count} filter${count !== 1 ? "s" : ""}`;
+                                  } catch { return "Filters"; }
+                                })()}
+                              </Text>
+                            )}
+                            {visit.filterInteractions > 0 && (
+                              <Text as="span" variant="bodySm" tone="subdued">{visit.filterInteractions} changes</Text>
+                            )}
+                            {!visit.searchQuery && !visit.sortBy && !visit.appliedFilters && (
+                              <Text as="span" tone="subdued">-</Text>
                             )}
                           </BlockStack>
                         </IndexTable.Cell>

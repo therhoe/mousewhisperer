@@ -15,6 +15,9 @@ async function getSnapshotStats(snapshotId: string) {
     exitTypeCounts,
     recentVisits,
     topExitUrls,
+    topSearchQueries,
+    sortPreferences,
+    filterUsageCount,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -106,6 +109,10 @@ async function getSnapshotStats(snapshotId: string) {
         endedAt: true,
         exitType: true,
         exitUrl: true,
+        searchQuery: true,
+        appliedFilters: true,
+        sortBy: true,
+        filterInteractions: true,
       },
     }),
     // Top exit URLs
@@ -115,6 +122,25 @@ async function getSnapshotStats(snapshotId: string) {
       _count: true,
       orderBy: { _count: { exitUrl: "desc" } },
       take: 10,
+    }),
+    // Top search queries
+    prisma.visit.groupBy({
+      by: ["searchQuery"],
+      where: { snapshotId, searchQuery: { not: null } },
+      _count: true,
+      orderBy: { _count: { searchQuery: "desc" } },
+      take: 10,
+    }),
+    // Sort preferences
+    prisma.visit.groupBy({
+      by: ["sortBy"],
+      where: { snapshotId, sortBy: { not: null } },
+      _count: true,
+      orderBy: { _count: { sortBy: "desc" } },
+    }),
+    // Filter usage count
+    prisma.visit.count({
+      where: { snapshotId, appliedFilters: { not: null } },
     }),
   ]);
 
@@ -237,6 +263,19 @@ async function getSnapshotStats(snapshotId: string) {
     count: item._count,
   }));
 
+  // Process search stats
+  const searchStats = {
+    topQueries: topSearchQueries.map((item) => ({
+      query: item.searchQuery || "",
+      count: item._count,
+    })),
+    sortPreferences: sortPreferences.map((item) => ({
+      sort: item.sortBy || "",
+      count: item._count,
+    })),
+    filterUsageCount,
+  };
+
   return {
     totalSessions,
     realCount,
@@ -257,6 +296,7 @@ async function getSnapshotStats(snapshotId: string) {
     deviceBreakdown,
     exitPaths,
     exitUrls,
+    searchStats,
     recentVisits,
   };
 }
