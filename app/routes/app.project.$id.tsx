@@ -978,6 +978,7 @@ export default function ProjectDetails() {
   if (snapshots.length === 0) {
     return (
       <Page
+        fullWidth
         backAction={{ content: "Dashboard", url: "/app" }}
         title={project.productTitle}
       >
@@ -1034,6 +1035,7 @@ export default function ProjectDetails() {
   if (compareMode && comparisonData.length >= 2) {
     return (
       <Page
+        fullWidth
         backAction={{ content: "Dashboard", url: "/app" }}
         title={project.productTitle}
         subtitle="Snapshot Comparison"
@@ -1112,6 +1114,7 @@ export default function ProjectDetails() {
 
   return (
     <Page
+      fullWidth
       backAction={{ content: "Dashboard", url: "/app" }}
       title={project.productTitle}
       titleMetadata={selectedSnapshot && getStatusBadge(selectedSnapshot.status)}
@@ -1185,43 +1188,7 @@ export default function ProjectDetails() {
 
         {selectedSnapshot && displayStats && (
           <>
-            {/* Date Filter Section */}
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Date Range</Text>
-                  <InlineStack gap="300" align="start" blockAlign="end">
-                    <Select
-                      label="Quick Select"
-                      options={DATE_PRESETS}
-                      value={datePreset}
-                      onChange={handleDatePresetChange}
-                    />
-                    {datePreset === "custom" && (
-                      <>
-                        <TextField
-                          label="Start Date"
-                          type="date"
-                          value={startDate}
-                          onChange={setStartDate}
-                          autoComplete="off"
-                        />
-                        <TextField
-                          label="End Date"
-                          type="date"
-                          value={endDate}
-                          onChange={setEndDate}
-                          autoComplete="off"
-                        />
-                        <div style={{ paddingTop: "24px" }}>
-                          <Button onClick={applyCustomDateFilter}>Apply</Button>
-                        </div>
-                      </>
-                    )}
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-            </Layout.Section>
+            {/* Date Filter Section — hidden for now */}
 
             {/* Stats Overview */}
             <Layout.Section>

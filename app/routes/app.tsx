@@ -10,7 +10,42 @@ import { authenticate } from "../shopify.server";
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
+
+  // Ensure the web pixel is activated with the correct apiEndpoint setting.
+  // This is required for conversion tracking (checkout_completed events).
+  // The mutation is idempotent — if the pixel already exists, we ignore the error.
+  const appUrl = process.env.SHOPIFY_APP_URL || "https://mousewhisperer.vercel.app";
+  const trackingEndpoint = `${appUrl}/api/track`;
+
+  try {
+    await admin.graphql(
+      `#graphql
+        mutation webPixelCreate($webPixel: WebPixelInput!) {
+          webPixelCreate(webPixel: $webPixel) {
+            userErrors {
+              code
+              field
+              message
+            }
+            webPixel {
+              id
+              settings
+            }
+          }
+        }
+      `,
+      {
+        variables: {
+          webPixel: {
+            settings: JSON.stringify({ apiEndpoint: trackingEndpoint }),
+          },
+        },
+      },
+    );
+  } catch {
+    // Pixel already exists or other non-critical error — safe to ignore
+  }
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
