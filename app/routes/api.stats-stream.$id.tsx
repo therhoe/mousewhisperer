@@ -14,6 +14,7 @@ async function getSnapshotStats(snapshotId: string) {
     deviceCounts,
     exitTypeCounts,
     recentVisits,
+    topExitUrls,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -104,7 +105,16 @@ async function getSnapshotStats(snapshotId: string) {
         startedAt: true,
         endedAt: true,
         exitType: true,
+        exitUrl: true,
       },
+    }),
+    // Top exit URLs
+    prisma.visit.groupBy({
+      by: ["exitUrl"],
+      where: { snapshotId, exitUrl: { not: null } },
+      _count: true,
+      orderBy: { _count: { exitUrl: "desc" } },
+      take: 10,
     }),
   ]);
 
@@ -221,6 +231,12 @@ async function getSnapshotStats(snapshotId: string) {
     label: formatExitType(item.exitType || "unknown"),
   }));
 
+  // Process top exit URLs
+  const exitUrls = topExitUrls.map((item) => ({
+    url: item.exitUrl || "",
+    count: item._count,
+  }));
+
   return {
     totalSessions,
     realCount,
@@ -240,13 +256,14 @@ async function getSnapshotStats(snapshotId: string) {
     topCities,
     deviceBreakdown,
     exitPaths,
+    exitUrls,
     recentVisits,
   };
 }
 
 function formatExitType(type: string): string {
   const labels: Record<string, string> = {
-    window_closed: "Closed Window/Tab",
+    window_closed: "Closed Tab",
     back_button: "Back Button",
     idle: "Idle (2+ min)",
     internal_link: "Internal Link",

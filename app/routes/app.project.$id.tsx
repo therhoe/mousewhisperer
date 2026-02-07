@@ -46,6 +46,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     deviceCounts,
     exitTypeCounts,
     recentVisits,
+    topExitUrls,
     atcBySource,
     convBySource,
   ] = await Promise.all([
@@ -129,7 +130,16 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
         startedAt: true,
         endedAt: true,
         exitType: true,
+        exitUrl: true,
       },
+    }),
+    // Top exit URLs (for link-based exits)
+    prisma.visit.groupBy({
+      by: ["exitUrl"],
+      where: { ...whereClause, exitUrl: { not: null } },
+      _count: true,
+      orderBy: { _count: { exitUrl: "desc" } },
+      take: 10,
     }),
     // ATC by source
     prisma.visit.groupBy({
@@ -247,6 +257,12 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     label: formatExitType(item.exitType || "unknown"),
   }));
 
+  // Process top exit URLs
+  const exitUrls = topExitUrls.map((item) => ({
+    url: item.exitUrl || "",
+    count: item._count,
+  }));
+
   return {
     totalSessions,
     realCount,
@@ -267,6 +283,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     deviceBreakdown,
     recentVisits,
     exitPaths,
+    exitUrls,
   };
 }
 
@@ -621,7 +638,7 @@ function formatTime(seconds: number): string {
 
 function formatExitType(type: string): string {
   const labels: Record<string, string> = {
-    window_closed: "Closed Window/Tab",
+    window_closed: "Closed Tab",
     back_button: "Back Button",
     idle: "Idle (2+ min)",
     internal_link: "Internal Link",
@@ -630,6 +647,30 @@ function formatExitType(type: string): string {
     unknown: "Unknown",
   };
   return labels[type] || type;
+}
+
+function getSourceIcon(category: string): string {
+  const icons: Record<string, string> = {
+    "Direct": "\u{1F310}",        // globe
+    "Internal": "\u{1F3E0}",      // house
+    "Paid Search": "\u{1F4B0}",   // money bag
+    "Paid Social": "\u{1F4B3}",   // credit card
+    "Organic Search": "\u{1F50D}", // magnifying glass
+    "Organic Social": "\u{1F4F1}", // mobile phone
+    "Referral": "\u{1F517}",      // link
+    "Email": "\u{2709}\uFE0F",    // envelope
+    "Unknown": "\u{2753}",        // question mark
+  };
+  return icons[category] || "\u{1F310}";
+}
+
+function getDeviceIcon(device: string): string {
+  const icons: Record<string, string> = {
+    "desktop": "\u{1F5A5}\uFE0F",  // desktop monitor
+    "mobile": "\u{1F4F1}",         // mobile phone
+    "tablet": "\u{1F4BB}",         // laptop (closest to tablet)
+  };
+  return icons[(device || "").toLowerCase()] || "\u{2753}";
 }
 
 function StatCard({ title, value, subtitle, tone }: {
@@ -954,7 +995,7 @@ export default function ProjectDetails() {
     <IndexTable.Row id={source.category} key={source.category} position={index}>
       <IndexTable.Cell>
         <Text variant="bodyMd" fontWeight="semibold" as="span">
-          {source.category}
+          {getSourceIcon(source.category)} {source.category}
         </Text>
       </IndexTable.Cell>
       <IndexTable.Cell>{source.sessions}</IndexTable.Cell>
@@ -1317,6 +1358,27 @@ export default function ProjectDetails() {
                       ))}
                     </BlockStack>
                   )}
+                  {(displayStats?.exitUrls || []).length > 0 && (
+                    <>
+                      <Divider />
+                      <Text as="h3" variant="headingSm">Top Exit URLs</Text>
+                      <BlockStack gap="200">
+                        {(displayStats?.exitUrls || []).map((item: any) => {
+                          let displayUrl = item.url;
+                          try {
+                            const parsed = new URL(item.url);
+                            displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
+                          } catch {}
+                          return (
+                            <InlineStack key={item.url} align="space-between">
+                              <Text as="span" variant="bodySm" truncate>{displayUrl}</Text>
+                              <Badge>{String(item.count)}</Badge>
+                            </InlineStack>
+                          );
+                        })}
+                      </BlockStack>
+                    </>
+                  )}
                 </BlockStack>
               </Card>
             </Layout.Section>
@@ -1362,8 +1424,8 @@ export default function ProjectDetails() {
                       { title: "Time" },
                       { title: "Type" },
                       { title: "Source" },
-                      { title: "Location" },
-                      { title: "Device" },
+                      { title: "UTM" },
+                      { title: "" },
                       { title: "Duration" },
                       { title: "Scroll" },
                       { title: "Mouse" },
@@ -1388,8 +1450,12 @@ export default function ProjectDetails() {
                           </Badge>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
+                          <Text as="span" variant="bodySm" fontWeight="semibold">
+                            {getSourceIcon(visit.sourceCategory || "Direct")} {visit.sourceCategory || "Direct"}
+                          </Text>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
                           <BlockStack gap="050">
-                            <Text as="span" variant="bodySm" fontWeight="semibold">{visit.sourceCategory || "Direct"}</Text>
                             {visit.source && (
                               <Text as="span" variant="bodySm" tone="subdued">
                                 {visit.source}{visit.medium ? ` / ${visit.medium}` : ""}
@@ -1397,23 +1463,13 @@ export default function ProjectDetails() {
                             )}
                             {visit.campaign && (
                               <Text as="span" variant="bodySm" tone="subdued">
-                                Campaign: {visit.campaign}
+                                {visit.campaign}
                               </Text>
                             )}
                           </BlockStack>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
-                          <BlockStack gap="050">
-                            <Text as="span" variant="bodySm">{visit.country || "-"}</Text>
-                            {visit.city && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {visit.city}{visit.region ? `, ${visit.region}` : ""}
-                              </Text>
-                            )}
-                          </BlockStack>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{visit.deviceType || "-"}</Text>
+                          <Text as="span" variant="bodySm">{getDeviceIcon(visit.deviceType || "")}</Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           <Text as="span" variant="bodySm">{formatTime(Math.round(visit.timeOnPage / 1000))}</Text>
@@ -1428,7 +1484,16 @@ export default function ProjectDetails() {
                           <Text as="span" variant="bodySm">{visit.botScore || 0}</Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{formatExitType(visit.exitType || "unknown")}</Text>
+                          <BlockStack gap="050">
+                            <Text as="span" variant="bodySm">{formatExitType(visit.exitType || "unknown")}</Text>
+                            {visit.exitUrl && (
+                              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                                {(() => {
+                                  try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; }
+                                })()}
+                              </Text>
+                            )}
+                          </BlockStack>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           {visit.addedToCart ? <Badge tone="success">Yes</Badge> : <Text as="span" tone="subdued">-</Text>}

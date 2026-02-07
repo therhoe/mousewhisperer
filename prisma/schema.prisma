@@ -140,6 +140,7 @@ model Visit {
 
   // Exit tracking
   exitType        String?  // window_closed, back_button, idle, internal_link, external_link, checkout
+  exitUrl         String?  // URL the visitor navigated to when exiting
 
   // Device info
   userAgent       String?

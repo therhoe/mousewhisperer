@@ -3,12 +3,12 @@
 
   // Detect page type (product or collection)
   function getPageInfo() {
-    const productMatch = window.location.pathname.match(/\/products\/([^/?#]+)/);
+    var productMatch = window.location.pathname.match(/\/products\/([^/?#]+)/);
     if (productMatch) {
       return { handle: productMatch[1], type: 'product' };
     }
 
-    const collectionMatch = window.location.pathname.match(/\/collections\/([^/?#]+)/);
+    var collectionMatch = window.location.pathname.match(/\/collections\/([^/?#]+)/);
     if (collectionMatch) {
       return { handle: collectionMatch[1], type: 'collection' };
     }
@@ -17,23 +17,24 @@
   }
 
   // Only run on product or collection pages
-  const pageInfo = getPageInfo();
+  var pageInfo = getPageInfo();
   if (!pageInfo) {
     return;
   }
 
-  const CONFIG = {
+  var CONFIG = {
     apiEndpoint: window.__TRACKING_API_ENDPOINT__ || '',
     minTimeForReal: 5000, // 5 seconds minimum for "real" user
     sendInterval: 30000, // Send update every 30 seconds
     sessionKey: 'mw_session',
     cookieName: 'mw_sid', // Cookie name for cross-context session tracking
     cookieDays: 7, // Cookie expiry in days
+    maxActiveTime: 1800000, // 30 minutes max active time (ms)
   };
 
   // Cookie helpers
   function setCookie(name, value, days) {
-    const expires = new Date();
+    var expires = new Date();
     expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
     document.cookie = name + '=' + encodeURIComponent(value) +
       ';expires=' + expires.toUTCString() +
@@ -41,10 +42,10 @@
   }
 
   function getCookie(name) {
-    const nameEQ = name + '=';
-    const ca = document.cookie.split(';');
-    for (let i = 0; i < ca.length; i++) {
-      let c = ca[i].trim();
+    var nameEQ = name + '=';
+    var ca = document.cookie.split(';');
+    for (var i = 0; i < ca.length; i++) {
+      var c = ca[i].trim();
       if (c.indexOf(nameEQ) === 0) {
         return decodeURIComponent(c.substring(nameEQ.length));
       }
@@ -55,7 +56,7 @@
   // Generate or retrieve session ID (uses both cookie and sessionStorage)
   function getSessionId() {
     // First check cookie (persists across checkout)
-    let sessionId = getCookie(CONFIG.cookieName);
+    var sessionId = getCookie(CONFIG.cookieName);
 
     // Then check sessionStorage
     if (!sessionId) {
@@ -74,31 +75,39 @@
     return sessionId;
   }
 
-  // Get resource handle from URL (product or collection)
-  function getResourceHandle() {
-    return pageInfo ? pageInfo.handle : null;
+  // Get current store hostname for same-domain detection
+  function getStoreHost() {
+    return window.location.hostname.replace(/^www\./, '').toLowerCase();
   }
 
-  // Get resource type (product or collection)
-  function getResourceType() {
-    return pageInfo ? pageInfo.type : null;
-  }
+  // Known social media platforms (used for source classification)
+  var SOCIAL_PLATFORMS = /facebook|fb\.com|instagram|twitter|x\.com|tiktok|pinterest|linkedin|snapchat|reddit|tumblr|youtube/i;
 
   // Parse traffic source from UTM params and referrer
   function getTrafficSource() {
-    const params = new URLSearchParams(window.location.search);
-    const referrer = document.referrer;
+    var params = new URLSearchParams(window.location.search);
+    var referrer = document.referrer;
 
-    const source = params.get('utm_source');
-    const medium = params.get('utm_medium');
-    const campaign = params.get('utm_campaign');
+    var source = params.get('utm_source');
+    var medium = params.get('utm_medium');
+    var campaign = params.get('utm_campaign');
 
-    let sourceCategory = 'Direct';
+    var sourceCategory = 'Direct';
+    var storeHost = getStoreHost();
 
     if (source && medium) {
-      // UTM-based classification
-      const mediumLower = medium.toLowerCase();
-      if (['cpc', 'ppc', 'paid', 'paidsearch'].includes(mediumLower)) {
+      // UTM-based classification — check source + medium together
+      var sourceLower = source.toLowerCase();
+      var mediumLower = medium.toLowerCase();
+
+      // Check if the source is a social platform first
+      var isSocialSource = SOCIAL_PLATFORMS.test(sourceLower);
+
+      if (isSocialSource && ['cpc', 'ppc', 'paid', 'paidsearch', 'paid_social', 'paidsocial', 'paid-social'].includes(mediumLower)) {
+        // Facebook/Instagram/TikTok etc. with CPC = Paid Social, NOT Paid Search
+        sourceCategory = 'Paid Social';
+      } else if (['cpc', 'ppc', 'paid', 'paidsearch'].includes(mediumLower)) {
+        // Non-social CPC (Google, Bing, etc.) = Paid Search
         sourceCategory = 'Paid Search';
       } else if (['paid_social', 'paidsocial', 'paid-social'].includes(mediumLower)) {
         sourceCategory = 'Paid Social';
@@ -114,20 +123,20 @@
     } else if (referrer) {
       // Referrer-based classification
       try {
-        const refHost = new URL(referrer).hostname.toLowerCase();
+        var refHost = new URL(referrer).hostname.replace(/^www\./, '').toLowerCase();
 
+        // Same domain = Internal navigation (e.g., homepage -> product page)
+        if (refHost === storeHost || refHost.endsWith('.' + storeHost) || storeHost.endsWith('.' + refHost)) {
+          sourceCategory = 'Internal';
+        }
         // Search engines
-        if (/google\./i.test(refHost)) sourceCategory = 'Organic Search';
+        else if (/google\./i.test(refHost)) sourceCategory = 'Organic Search';
         else if (/bing\./i.test(refHost)) sourceCategory = 'Organic Search';
         else if (/yahoo\./i.test(refHost)) sourceCategory = 'Organic Search';
         else if (/duckduckgo/i.test(refHost)) sourceCategory = 'Organic Search';
+        else if (/baidu/i.test(refHost)) sourceCategory = 'Organic Search';
         // Social
-        else if (/facebook|fb\.com/i.test(refHost)) sourceCategory = 'Organic Social';
-        else if (/instagram/i.test(refHost)) sourceCategory = 'Organic Social';
-        else if (/twitter|x\.com/i.test(refHost)) sourceCategory = 'Organic Social';
-        else if (/tiktok/i.test(refHost)) sourceCategory = 'Organic Social';
-        else if (/pinterest/i.test(refHost)) sourceCategory = 'Organic Social';
-        else if (/linkedin/i.test(refHost)) sourceCategory = 'Organic Social';
+        else if (SOCIAL_PLATFORMS.test(refHost)) sourceCategory = 'Organic Social';
         // Email
         else if (/mail|outlook|klaviyo/i.test(refHost)) sourceCategory = 'Email';
         // Everything else is referral
@@ -149,7 +158,7 @@
   function parseSourceFromReferrer(referrer) {
     if (!referrer) return 'direct';
     try {
-      const host = new URL(referrer).hostname.replace('www.', '');
+      var host = new URL(referrer).hostname.replace('www.', '');
       return host.split('.')[0]; // e.g., "google" from "google.com"
     } catch (e) {
       return 'unknown';
@@ -158,22 +167,22 @@
 
   // Get scroll depth as percentage
   function getScrollDepth() {
-    const docHeight = Math.max(
+    var docHeight = Math.max(
       document.body.scrollHeight,
       document.documentElement.scrollHeight
     );
-    const winHeight = window.innerHeight;
-    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    var winHeight = window.innerHeight;
+    var scrollTop = window.scrollY || document.documentElement.scrollTop;
 
     if (docHeight <= winHeight) return 100;
 
-    const scrollPercent = Math.round((scrollTop / (docHeight - winHeight)) * 100);
+    var scrollPercent = Math.round((scrollTop / (docHeight - winHeight)) * 100);
     return Math.min(100, Math.max(0, scrollPercent));
   }
 
   // Detect device type
   function getDeviceType() {
-    const ua = navigator.userAgent;
+    var ua = navigator.userAgent;
     if (/tablet|ipad|playbook|silk/i.test(ua)) return 'tablet';
     if (/mobile|iphone|ipod|android|blackberry|opera mini|iemobile/i.test(ua)) return 'mobile';
     return 'desktop';
@@ -184,17 +193,17 @@
     if (movements.length < 10) return false;
 
     // Sample some movements and check if they're too linear
-    const sample = movements.slice(-20);
-    let linearCount = 0;
+    var sample = movements.slice(-20);
+    var linearCount = 0;
 
-    for (let i = 2; i < sample.length; i++) {
-      const dx1 = sample[i-1].x - sample[i-2].x;
-      const dy1 = sample[i-1].y - sample[i-2].y;
-      const dx2 = sample[i].x - sample[i-1].x;
-      const dy2 = sample[i].y - sample[i-1].y;
+    for (var i = 2; i < sample.length; i++) {
+      var dx1 = sample[i-1].x - sample[i-2].x;
+      var dy1 = sample[i-1].y - sample[i-2].y;
+      var dx2 = sample[i].x - sample[i-1].x;
+      var dy2 = sample[i].y - sample[i-1].y;
 
       // Check if direction is almost identical (cross product near zero)
-      const cross = Math.abs(dx1 * dy2 - dy1 * dx2);
+      var cross = Math.abs(dx1 * dy2 - dy1 * dx2);
       if (cross < 10) linearCount++;
     }
 
@@ -203,11 +212,17 @@
   }
 
   // Main tracking state
-  const state = {
+  var state = {
     sessionId: getSessionId(),
-    productHandle: getResourceHandle(),  // Works for both products and collections
-    resourceType: getResourceType(),      // 'product' or 'collection'
+    productHandle: pageInfo.handle,
+    resourceType: pageInfo.type,
     startTime: Date.now(),
+
+    // Active time tracking — only counts time while page is visible and user is active
+    activeTime: 0,
+    lastTickTime: Date.now(),
+    isPageVisible: !document.hidden,
+    isStopped: false, // once stopped (idle/exit), no more updates
 
     // Engagement signals
     hasMouseMoved: false,
@@ -239,15 +254,47 @@
 
     // Exit tracking
     exitType: null,
+    exitUrl: null,
     lastActivityTime: Date.now(),
     idleTimeout: 120000, // 2 minutes idle = idle exit
+
+    // Interval IDs (for cleanup)
+    sendIntervalId: null,
+    idleIntervalId: null,
+    timeTickIntervalId: null,
 
     // Sent flag
     hasSentInitial: false,
   };
 
+  // Accumulate active time — called every second
+  function tickActiveTime() {
+    if (state.isStopped) return;
+    var now = Date.now();
+    // Only count time if page is visible and user is not idle
+    var idleTime = now - state.lastActivityTime;
+    if (state.isPageVisible && idleTime < state.idleTimeout) {
+      state.activeTime += (now - state.lastTickTime);
+    }
+    state.lastTickTime = now;
+    // Cap at max active time
+    if (state.activeTime > CONFIG.maxActiveTime) {
+      state.activeTime = CONFIG.maxActiveTime;
+    }
+  }
+
+  // Stop all tracking — called on idle or final exit
+  function stopTracking() {
+    if (state.isStopped) return;
+    state.isStopped = true;
+    if (state.sendIntervalId) clearInterval(state.sendIntervalId);
+    if (state.idleIntervalId) clearInterval(state.idleIntervalId);
+    if (state.timeTickIntervalId) clearInterval(state.timeTickIntervalId);
+  }
+
   // Track user activity for idle detection
   function updateActivity() {
+    if (state.isStopped) return;
     state.lastActivityTime = Date.now();
   }
 
@@ -269,7 +316,7 @@
     // Scroll
     document.addEventListener('scroll', function() {
       state.hasScrolled = true;
-      const depth = getScrollDepth();
+      var depth = getScrollDepth();
       state.maxScrollDepth = Math.max(state.maxScrollDepth, depth);
       updateActivity();
     }, { passive: true });
@@ -288,30 +335,37 @@
       updateActivity();
     }, { passive: true });
 
-    // Click tracking for exit type detection
+    // Click tracking for exit type and exit URL detection
     document.addEventListener('click', function(e) {
       updateActivity();
-      const target = e.target.closest('a');
+      var target = e.target.closest('a');
       if (target && target.href) {
-        const url = new URL(target.href, window.location.origin);
-        const currentHost = window.location.hostname;
+        try {
+          var url = new URL(target.href, window.location.origin);
+          var currentHost = window.location.hostname;
 
-        // Check if it's a checkout/cart link
-        if (url.pathname.includes('/cart') || url.pathname.includes('/checkout')) {
-          state.exitType = 'checkout';
-        }
-        // Check if internal or external link
-        else if (url.hostname === currentHost) {
-          state.exitType = 'internal_link';
-        } else {
-          state.exitType = 'external_link';
+          // Capture the exit URL
+          state.exitUrl = target.href;
+
+          // Check if it's a checkout/cart link
+          if (url.pathname.includes('/cart') || url.pathname.includes('/checkout')) {
+            state.exitType = 'checkout';
+          }
+          // Check if internal or external link
+          else if (url.hostname === currentHost) {
+            state.exitType = 'internal_link';
+          } else {
+            state.exitType = 'external_link';
+          }
+        } catch (err) {
+          // Invalid URL, ignore
         }
       }
     }, { passive: true });
 
     // Add to cart detection - listen for form submissions and button clicks
     document.addEventListener('submit', function(e) {
-      const form = e.target;
+      var form = e.target;
       if (form.action && form.action.includes('/cart/add')) {
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
@@ -321,9 +375,9 @@
     });
 
     // Also listen for AJAX add-to-cart (common in modern themes)
-    const originalFetch = window.fetch;
+    var originalFetch = window.fetch;
     window.fetch = function() {
-      const url = arguments[0];
+      var url = arguments[0];
       if (typeof url === 'string' && url.includes('/cart/add')) {
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
@@ -339,45 +393,54 @@
       sendTrackingData();
     });
 
-    // Page visibility change (user leaving)
+    // Page visibility change — pause/resume active time tracking
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'hidden') {
+        state.isPageVisible = false;
+        // Tick one last time before going hidden
+        tickActiveTime();
         // If no exit type set, it's likely window closed or tab switched
         if (!state.exitType) {
           state.exitType = 'window_closed';
         }
         sendTrackingData();
+      } else {
+        state.isPageVisible = true;
+        state.lastTickTime = Date.now();
       }
     });
 
     // Before unload - window/tab closing
     window.addEventListener('beforeunload', function() {
-      // If no exit type set yet, classify as window_closed
+      tickActiveTime(); // Final tick
       if (!state.exitType) {
         state.exitType = 'window_closed';
       }
       sendTrackingData();
+      stopTracking();
     });
 
     // Idle detection - check every 30 seconds
-    setInterval(function() {
-      const idleTime = Date.now() - state.lastActivityTime;
+    state.idleIntervalId = setInterval(function() {
+      var idleTime = Date.now() - state.lastActivityTime;
       if (idleTime >= state.idleTimeout && state.exitType !== 'idle') {
+        tickActiveTime(); // Final tick
         state.exitType = 'idle';
         sendTrackingData();
+        stopTracking(); // Stop all intervals — no more updates after idle
       }
     }, 30000);
   }
 
   // Build tracking payload
   function buildPayload() {
-    const timeOnPage = Date.now() - state.startTime;
-    const linearMovement = isLinearMovement(state.mouseMovements);
+    tickActiveTime(); // Ensure active time is up to date
+    var linearMovement = isLinearMovement(state.mouseMovements);
 
     return {
       sessionId: state.sessionId,
       productHandle: state.productHandle,
-      resourceType: state.resourceType,  // 'product' or 'collection'
+      resourceType: state.resourceType,
 
       // Traffic source
       source: state.trafficSource.source,
@@ -386,8 +449,8 @@
       referrer: state.trafficSource.referrer,
       sourceCategory: state.trafficSource.sourceCategory,
 
-      // Engagement metrics
-      timeOnPage: timeOnPage,
+      // Engagement metrics — use activeTime instead of wall clock
+      timeOnPage: state.activeTime,
       scrollDepth: state.maxScrollDepth,
       mouseMovements: state.mouseMovementCount,
       keyPresses: state.keyPressCount,
@@ -412,6 +475,7 @@
 
       // Exit tracking
       exitType: state.exitType,
+      exitUrl: state.exitUrl,
 
       // Timestamps
       startedAt: state.startTime,
@@ -423,7 +487,7 @@
   function sendTrackingData() {
     if (!CONFIG.apiEndpoint) return;
 
-    const payload = buildPayload();
+    var payload = buildPayload();
 
     // Use sendBeacon for reliability when page is unloading
     if (navigator.sendBeacon) {
@@ -445,15 +509,20 @@
 
     setupEventListeners();
 
+    // Tick active time every second for accurate measurement
+    state.timeTickIntervalId = setInterval(tickActiveTime, 1000);
+
     // Send initial ping after 1 second
     setTimeout(function() {
       state.hasSentInitial = true;
       sendTrackingData();
     }, 1000);
 
-    // Send periodic updates
-    setInterval(function() {
-      sendTrackingData();
+    // Send periodic updates (stops automatically on idle/exit)
+    state.sendIntervalId = setInterval(function() {
+      if (!state.isStopped) {
+        sendTrackingData();
+      }
     }, CONFIG.sendInterval);
   }
 

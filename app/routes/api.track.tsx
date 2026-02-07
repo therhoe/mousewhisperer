@@ -125,6 +125,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     startedAt,
     endedAt,
     exitType,
+    exitUrl,
   } = data;
 
   if (!sessionId || !productHandle) {
@@ -145,6 +146,10 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   const datacenterCheck = clientIP ? isDatacenterIP(clientIP) : { isDatacenter: false, provider: null };
   const datacenterIP = datacenterCheck.isDatacenter;
 
+  // Cap timeOnPage at 30 minutes (1,800,000ms) server-side as a safety net
+  const MAX_TIME_ON_PAGE = 1800000;
+  const cappedTimeOnPage = Math.min(timeOnPage || 0, MAX_TIME_ON_PAGE);
+
   // Calculate bot score
   const botScore = calculateBotScore({
     isWebdriver: isWebdriver || false,
@@ -155,7 +160,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     hasTouched: hasTouched || false,
     hasScrolled: hasScrolled || false,
     hasKeyPressed: hasKeyPressed || false,
-    timeOnPage: timeOnPage || 0,
+    timeOnPage: cappedTimeOnPage,
   });
 
   // Find project with an active snapshot for this handle and resource type
@@ -200,7 +205,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
 
   // Classify visitor (now includes datacenterIP signal)
   const visitorType = classifyVisitor({
-    timeOnPage: timeOnPage || 0,
+    timeOnPage: cappedTimeOnPage,
     scrollDepth: scrollDepth || 0,
     hasMouseMoved: hasMouseMoved || false,
     hasScrolled: hasScrolled || false,
@@ -229,7 +234,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       campaign,
       referrer,
       sourceCategory,
-      timeOnPage: timeOnPage || 0,
+      timeOnPage: cappedTimeOnPage,
       scrollDepth: scrollDepth || 0,
       mouseMovements: mouseMovements || 0,
       keyPresses: keyPresses || 0,
@@ -250,6 +255,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       startedAt: startedAt ? new Date(startedAt) : new Date(),
       endedAt: endedAt ? new Date(endedAt) : null,
       exitType: exitType || null,
+      exitUrl: exitUrl || null,
       // Geo-location data
       ipAddress: clientIP,
       country: geoData.country,
@@ -260,7 +266,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     },
     update: {
       visitorType,
-      timeOnPage: timeOnPage || 0,
+      timeOnPage: cappedTimeOnPage,
       scrollDepth: scrollDepth || 0,
       mouseMovements: mouseMovements || 0,
       keyPresses: keyPresses || 0,
@@ -276,6 +282,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : null,
       endedAt: endedAt ? new Date(endedAt) : null,
       exitType: exitType || null,
+      exitUrl: exitUrl || null,
       // Update geo only if we have new data
       ...(geoData.country && { country: geoData.country }),
       ...(geoData.countryCode && { countryCode: geoData.countryCode }),
