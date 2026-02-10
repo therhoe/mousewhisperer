@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "@remix-run/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -13,7 +13,9 @@ import {
   Banner,
   Box,
   Layout,
-  Badge,
+  Popover,
+  ActionList,
+  Modal,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -365,6 +367,49 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
+function SolvedStamp() {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 10px",
+        borderRadius: 12,
+        fontSize: 12,
+        fontWeight: 700,
+        letterSpacing: "0.5px",
+        textTransform: "uppercase",
+        color: "#1a7b3d",
+        background: "#e3f5eb",
+        border: "1.5px solid #b0dfc2",
+      }}
+    >
+      <span style={{ fontSize: 14 }}>&#10003;</span> Solved
+    </span>
+  );
+}
+
+function EngagementPill({ icon, label, active }: { icon: string; label: string; active?: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "4px 10px",
+        borderRadius: 16,
+        fontSize: 13,
+        color: active ? "var(--p-color-text-emphasis)" : "var(--p-color-text-secondary)",
+        background: active ? "var(--p-color-bg-fill-info-secondary)" : "var(--p-color-bg-surface-secondary)",
+        fontWeight: active ? 600 : 400,
+      }}
+    >
+      {icon} {label}
+    </span>
+  );
+}
+
 export default function InsightDetail() {
   const { insight, answers, hasProfile, hasMeTooed, hasBookmarked } =
     useLoaderData<typeof loader>();
@@ -375,6 +420,10 @@ export default function InsightDetail() {
   const bookmarkFetcher = useFetcher();
   const viewFetcher = useFetcher();
   const viewTracked = useRef(false);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const toggleMenu = useCallback(() => setMenuOpen((o) => !o), []);
 
   // Increment view count once per page visit
   useEffect(() => {
@@ -402,10 +451,18 @@ export default function InsightDetail() {
     ? bookmarkFetcher.formData.get("hasBookmarked") === "false"
     : hasBookmarked;
 
+  const handleDeleteInsight = () => {
+    deleteFetcher.submit(
+      { _action: "delete-insight" },
+      { method: "post" },
+    );
+    setDeleteConfirm(false);
+  };
+
   return (
     <Page
       backAction={{ content: "Insights", url: "/app/insights" }}
-      title={insight.title}
+      title=""
     >
       <TitleBar title={insight.title} />
 
@@ -415,11 +472,12 @@ export default function InsightDetail() {
             {/* Insight header */}
             <Card>
               <BlockStack gap="300">
+                {/* Top bar: author info + actions */}
                 <InlineStack align="space-between" blockAlign="center" wrap>
                   <InlineStack gap="200" blockAlign="center">
-                    <Text as="span" variant="headingLg">
+                    <span style={{ fontSize: "1.5rem" }}>
                       {insight.profile.avatarEmoji || "🐭"}
-                    </Text>
+                    </span>
                     <BlockStack gap="0">
                       <Text as="span" variant="bodySm" fontWeight="semibold">
                         {insight.profile.displayName}
@@ -430,36 +488,77 @@ export default function InsightDetail() {
                         </Text>
                       )}
                     </BlockStack>
-                  </InlineStack>
-
-                  <InlineStack gap="200" blockAlign="center">
-                    <CategoryBadge category={insight.category} />
-                    {insight.hasAcceptedAnswer && (
-                      <Badge tone="success">Solved</Badge>
-                    )}
                     <Text as="span" variant="bodySm" tone="subdued">
                       {timeAgo(insight.createdAt)}
                     </Text>
                   </InlineStack>
+
+                  <InlineStack gap="200" blockAlign="center">
+                    <CategoryBadge category={insight.category} />
+                    {insight.hasAcceptedAnswer && <SolvedStamp />}
+                    {insight.isOwner && (
+                      <Popover
+                        active={menuOpen}
+                        activator={
+                          <Button variant="plain" size="slim" onClick={toggleMenu}>
+                            ···
+                          </Button>
+                        }
+                        onClose={() => setMenuOpen(false)}
+                      >
+                        <ActionList
+                          items={[
+                            {
+                              content: "Delete insight",
+                              destructive: true,
+                              onAction: () => {
+                                setMenuOpen(false);
+                                setDeleteConfirm(true);
+                              },
+                            },
+                          ]}
+                        />
+                      </Popover>
+                    )}
+                  </InlineStack>
                 </InlineStack>
+
+                {/* Title */}
+                <Text as="h1" variant="headingLg">
+                  {insight.title}
+                </Text>
 
                 <RichTextDisplay html={insight.content} />
 
                 {/* Engagement bar */}
                 <Divider />
-                <InlineStack gap="300" blockAlign="center" wrap>
+                <InlineStack gap="200" blockAlign="center" wrap>
                   {/* Me too */}
                   {hasProfile && (
                     <meTooFetcher.Form method="post">
                       <input type="hidden" name="_action" value="toggle-metoo" />
                       <input type="hidden" name="hasMeTooed" value={String(hasMeTooed)} />
-                      <Button
-                        submit
-                        variant={optimisticMeTooed ? "primary" : "secondary"}
-                        size="slim"
+                      <button
+                        type="submit"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          padding: "4px 12px",
+                          borderRadius: 16,
+                          fontSize: 13,
+                          fontWeight: optimisticMeTooed ? 600 : 400,
+                          color: optimisticMeTooed ? "#fff" : "var(--p-color-text-secondary)",
+                          background: optimisticMeTooed
+                            ? "var(--p-color-bg-fill-emphasis)"
+                            : "var(--p-color-bg-surface-secondary)",
+                          border: "none",
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                        }}
                       >
-                        🙋 I have this too {optimisticMeTooCount > 0 ? `(${optimisticMeTooCount})` : ""}
-                      </Button>
+                        🙋 I have this too{optimisticMeTooCount > 0 ? ` (${optimisticMeTooCount})` : ""}
+                      </button>
                     </meTooFetcher.Form>
                   )}
 
@@ -468,28 +567,32 @@ export default function InsightDetail() {
                     <bookmarkFetcher.Form method="post">
                       <input type="hidden" name="_action" value="toggle-bookmark" />
                       <input type="hidden" name="hasBookmarked" value={String(hasBookmarked)} />
-                      <Button submit variant="plain" size="slim">
+                      <button
+                        type="submit"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          padding: "4px 10px",
+                          borderRadius: 16,
+                          fontSize: 13,
+                          fontWeight: optimisticBookmarked ? 600 : 400,
+                          color: optimisticBookmarked ? "var(--p-color-text-emphasis)" : "var(--p-color-text-secondary)",
+                          background: optimisticBookmarked
+                            ? "var(--p-color-bg-fill-info-secondary)"
+                            : "var(--p-color-bg-surface-secondary)",
+                          border: "none",
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
                         {optimisticBookmarked ? "🔖 Bookmarked" : "☆ Bookmark"}
-                      </Button>
+                      </button>
                     </bookmarkFetcher.Form>
                   )}
 
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    👁 {insight.viewCount} views
-                  </Text>
-
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    💬 {insight.answerCount} answers
-                  </Text>
-
-                  {insight.isOwner && (
-                    <deleteFetcher.Form method="post">
-                      <input type="hidden" name="_action" value="delete-insight" />
-                      <Button submit variant="plain" tone="critical" size="slim">
-                        Delete
-                      </Button>
-                    </deleteFetcher.Form>
-                  )}
+                  <EngagementPill icon="👁" label={`${insight.viewCount} views`} />
+                  <EngagementPill icon="💬" label={`${insight.answerCount} answers`} />
                 </InlineStack>
               </BlockStack>
             </Card>
@@ -501,15 +604,24 @@ export default function InsightDetail() {
 
             <Divider />
 
-            {/* Answers */}
-            <Text as="h2" variant="headingMd">
-              {insight.answerCount} {insight.answerCount === 1 ? "Answer" : "Answers"}
-            </Text>
+            {/* Answers header */}
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                {insight.answerCount} {insight.answerCount === 1 ? "Answer" : "Answers"}
+              </Text>
+              {insight.hasAcceptedAnswer && (
+                <SolvedStamp />
+              )}
+            </InlineStack>
 
             {answers.length === 0 && (
-              <Text as="p" tone="subdued">
-                No answers yet. Be the first to help!
-              </Text>
+              <Card>
+                <BlockStack gap="200" inlineAlign="center">
+                  <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
+                    No answers yet. Be the first to help!
+                  </Text>
+                </BlockStack>
+              </Card>
             )}
 
             {answers.map((answer: any) => (
@@ -570,6 +682,25 @@ export default function InsightDetail() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+
+      {/* Delete insight confirmation */}
+      <Modal
+        open={deleteConfirm}
+        onClose={() => setDeleteConfirm(false)}
+        title="Delete this insight?"
+        primaryAction={{
+          content: "Delete",
+          destructive: true,
+          onAction: handleDeleteInsight,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setDeleteConfirm(false) }]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            This action cannot be undone. The insight, all its answers, and votes will be permanently removed.
+          </Text>
+        </Modal.Section>
+      </Modal>
 
       <Box paddingBlockEnd="800" />
     </Page>
