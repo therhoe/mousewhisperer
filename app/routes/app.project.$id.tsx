@@ -1398,30 +1398,35 @@ export default function ProjectDetails() {
                       ))}
                     </BlockStack>
                   )}
-                  {(displayStats?.exitUrls || []).length > 0 && (
-                    <>
-                      <Divider />
-                      <Text as="h3" variant="headingSm">Top Exit URLs</Text>
-                      <BlockStack gap="200">
-                        {(displayStats?.exitUrls || []).map((item: any) => {
-                          let displayUrl = item.url;
-                          try {
-                            const parsed = new URL(item.url);
-                            displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
-                          } catch {}
-                          return (
-                            <InlineStack key={item.url} align="space-between">
-                              <Text as="span" variant="bodySm" truncate>{displayUrl}</Text>
-                              <Badge>{String(item.count)}</Badge>
-                            </InlineStack>
-                          );
-                        })}
-                      </BlockStack>
-                    </>
-                  )}
                 </BlockStack>
               </Card>
             </Layout.Section>
+
+            {/* Top Exit URLs */}
+            {(displayStats?.exitUrls || []).length > 0 && (
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Top Exit URLs</Text>
+                  <BlockStack gap="200">
+                    {(displayStats?.exitUrls || []).map((item: any) => {
+                      let displayUrl = item.url;
+                      try {
+                        const parsed = new URL(item.url);
+                        displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
+                      } catch {}
+                      return (
+                        <InlineStack key={item.url} align="space-between">
+                          <Text as="span" variant="bodySm">{displayUrl}</Text>
+                          <Badge>{String(item.count)}</Badge>
+                        </InlineStack>
+                      );
+                    })}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+            )}
 
             {/* Search & Filters */}
             {((displayStats?.searchStats?.topQueries || []).length > 0 ||
