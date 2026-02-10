@@ -8,28 +8,45 @@ register(({ configuration, analytics, browser }) => {
   async function getSessionIdFromCookie() {
     try {
       const cookie = await browser.cookie.get(COOKIE_NAME);
-      if (cookie && cookie.value) {
-        return cookie.value;
+      // browser.cookie.get returns the value string directly, not an object
+      if (cookie) {
+        return cookie;
       }
     } catch (e) {
-      console.error('Failed to get cookie:', e);
+      // Cookie access may fail in sandboxed context
     }
     return null;
   }
 
-  // Fallback: generate a session ID if cookie not found
+  // Extract session ID from cart/checkout attributes (most reliable method)
+  function getSessionIdFromAttributes(attributes) {
+    if (!attributes || !Array.isArray(attributes)) return null;
+    for (let i = 0; i < attributes.length; i++) {
+      if (attributes[i].key === '_mw_sid' && attributes[i].value) {
+        return attributes[i].value;
+      }
+    }
+    return null;
+  }
+
+  // Fallback: generate a session ID if no other source found
   function generateSessionId() {
     return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
   }
 
   // Send event to our API
-  async function sendEvent(eventType, data) {
+  async function sendEvent(eventType, data, checkoutAttributes) {
     if (!apiEndpoint) return;
 
-    // Try to get session ID from cookie first (this links to the product page visit)
-    let sessionId = await getSessionIdFromCookie();
+    // Priority 1: Get session ID from cart attributes (written by tracker.js)
+    let sessionId = getSessionIdFromAttributes(checkoutAttributes);
 
-    // If no cookie, generate a fallback (conversion might still be attributed via product handle)
+    // Priority 2: Try cookie
+    if (!sessionId) {
+      sessionId = await getSessionIdFromCookie();
+    }
+
+    // Priority 3: Generate fallback (conversion attributed via product handle)
     if (!sessionId) {
       sessionId = generateSessionId();
     }
@@ -38,7 +55,6 @@ register(({ configuration, analytics, browser }) => {
       eventType,
       sessionId,
       timestamp: Date.now(),
-      // Include a flag so API knows this came from pixel (for fallback attribution)
       fromPixel: true,
       ...data,
     };
@@ -71,7 +87,7 @@ register(({ configuration, analytics, browser }) => {
         quantity: cartLine.quantity,
         price: cartLine.merchandise.price?.amount,
         currency: cartLine.merchandise.price?.currencyCode,
-      });
+      }, null);
     }
   });
 
@@ -109,6 +125,7 @@ register(({ configuration, analytics, browser }) => {
         };
       }).filter(p => p.productId || p.productHandle) || [];
 
+      // Pass checkout.attributes so sendEvent can extract the session ID
       await sendEvent('conversion', {
         orderId: checkout.order?.id,
         orderNumber: checkout.order?.name,
@@ -116,7 +133,7 @@ register(({ configuration, analytics, browser }) => {
         currency: checkout.currencyCode,
         products,
         email: checkout.email,
-      });
+      }, checkout.attributes);
     }
   });
 
@@ -143,7 +160,7 @@ register(({ configuration, analytics, browser }) => {
         totalPrice: checkout.totalPrice?.amount,
         currency: checkout.currencyCode,
         products,
-      });
+      }, checkout.attributes);
     }
   });
 });

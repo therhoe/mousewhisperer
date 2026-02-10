@@ -311,6 +311,7 @@
 
     // Sent flag
     hasSentInitial: false,
+    cartAttributeWritten: false,
   };
 
   // Accumulate active time — called every second
@@ -409,6 +410,27 @@
       }
     }, { passive: true });
 
+    // Save reference to original fetch BEFORE monkey-patching
+    var originalFetch = window.fetch;
+
+    // Write session ID to cart attributes so the web pixel can read it at checkout
+    function writeSessionToCart() {
+      if (state.cartAttributeWritten) return;
+      state.cartAttributeWritten = true;
+      try {
+        originalFetch.call(window, '/cart/update.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attributes: {
+              '_mw_sid': state.sessionId,
+              '_mw_product': state.productHandle,
+            }
+          })
+        }).catch(function() {});
+      } catch (e) {}
+    }
+
     // Add to cart detection - listen for form submissions and button clicks
     document.addEventListener('submit', function(e) {
       var form = e.target;
@@ -416,19 +438,22 @@
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
         state.exitType = 'checkout';
+        writeSessionToCart();
         sendTrackingData();
       }
     });
 
     // Also listen for AJAX add-to-cart (common in modern themes)
-    var originalFetch = window.fetch;
     window.fetch = function() {
       var url = arguments[0];
       if (typeof url === 'string' && url.includes('/cart/add')) {
         state.addedToCart = true;
         state.addedToCartAt = Date.now();
         state.exitType = 'checkout';
-        sendTrackingData();
+        // Write session to cart after the add-to-cart completes
+        var result = originalFetch.apply(this, arguments);
+        result.then(function() { writeSessionToCart(); }).catch(function() {});
+        return result;
       }
       return originalFetch.apply(this, arguments);
     };
