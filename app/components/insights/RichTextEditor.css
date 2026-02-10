@@ -1,0 +1,90 @@
+.rte-wrapper {
+  border: var(--p-border-width-025) solid var(--p-color-border);
+  border-radius: var(--p-border-radius-200);
+  overflow: hidden;
+}
+
+.rte-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: var(--p-border-width-025) solid var(--p-color-border);
+  background: var(--p-color-bg-surface-secondary);
+  flex-wrap: wrap;
+}
+
+.rte-toolbar button {
+  padding: 4px 8px;
+  border: var(--p-border-width-025) solid var(--p-color-border);
+  border-radius: var(--p-border-radius-100);
+  background: var(--p-color-bg-surface);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--p-color-text);
+}
+
+.rte-toolbar button:hover {
+  background: var(--p-color-bg-surface-hover);
+}
+
+.rte-toolbar button.is-active {
+  background: var(--p-color-bg-surface-selected);
+  border-color: var(--p-color-border-emphasis);
+  color: var(--p-color-text-emphasis);
+}
+
+.rte-editor .tiptap {
+  padding: 12px;
+  min-height: 150px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--p-color-text);
+}
+
+.rte-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--p-color-text-secondary);
+  pointer-events: none;
+  height: 0;
+}
+
+.rte-editor .tiptap ul,
+.rte-editor .tiptap ol {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.rte-editor .tiptap blockquote {
+  border-left: 3px solid var(--p-color-border-emphasis);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--p-color-text-secondary);
+}
+
+.rte-editor .tiptap code {
+  background: var(--p-color-bg-surface-secondary);
+  padding: 2px 4px;
+  border-radius: var(--p-border-radius-050);
+  font-size: 13px;
+}
+
+.rte-editor .tiptap pre {
+  background: var(--p-color-bg-surface-secondary);
+  padding: 12px;
+  border-radius: var(--p-border-radius-100);
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.rte-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+}
+
+.rte-editor .tiptap a {
+  color: var(--p-color-text-link);
+  text-decoration: underline;
+}

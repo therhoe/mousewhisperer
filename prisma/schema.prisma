@@ -173,6 +173,80 @@ enum VisitorType {
   BOT       // Automated traffic
 }
 
+// ─── Insights Board ───────────────────────────────────────────
+
+enum InsightCategory {
+  HIGH_BOT_TRAFFIC
+  LOW_ENGAGEMENT
+  SOURCE_QUALITY
+  CONVERSION_DROP
+  GENERAL
+}
+
+model InsightProfile {
+  id            String   @id @default(cuid())
+  shop          String   @unique
+  displayName   String
+  storeCategory String?
+  avatarEmoji   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  insights      Insight[]
+  answers       InsightAnswer[]
+  votes         InsightVote[]
+}
+
+model Insight {
+  id            String          @id @default(cuid())
+  profileId     String
+  profile       InsightProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title         String
+  content       String          // sanitized HTML
+  category      InsightCategory
+  snapshotStats Json?           // anonymized metrics
+  answerCount   Int             @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  answers       InsightAnswer[]
+
+  @@index([profileId])
+  @@index([category])
+  @@index([createdAt])
+  @@index([answerCount])
+  @@index([category, createdAt])
+}
+
+model InsightAnswer {
+  id          String         @id @default(cuid())
+  insightId   String
+  insight     Insight        @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  profileId   String
+  profile     InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  content     String         // sanitized HTML
+  upvoteCount Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  votes       InsightVote[]
+
+  @@index([insightId])
+  @@index([profileId])
+  @@index([insightId, upvoteCount])
+}
+
+model InsightVote {
+  id        String         @id @default(cuid())
+  answerId  String
+  answer    InsightAnswer  @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  profileId String
+  profile   InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([answerId, profileId])
+}
+
 // Shop-level settings
 model ShopSettings {
   id                    String   @id @default(cuid())
