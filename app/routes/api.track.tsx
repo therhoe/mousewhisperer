@@ -99,6 +99,7 @@ export const loader = async ({ request }: { request: Request }) => {
 async function handleEngagementTrack(data: any, headers: Record<string, string>, request: Request) {
   const {
     sessionId,
+    pageViewId,
     productHandle,
     resourceType,  // 'product' or 'collection' (optional, defaults to 'product')
     source,
@@ -135,6 +136,9 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   if (!sessionId || !productHandle) {
     return json({ error: "Missing required fields" }, { status: 400, headers });
   }
+
+  // Generate pageViewId server-side if not provided (backward compat with old tracker)
+  const resolvedPageViewId = pageViewId || ('pv_srv_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now());
 
   // Decode URL-encoded product handle (e.g., %E2%84%A2 -> ™)
   const decodedProductHandle = decodeURIComponent(productHandle);
@@ -224,14 +228,15 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   // Upsert visit record linked to snapshot (not project directly)
   await prisma.visit.upsert({
     where: {
-      sessionId_snapshotId: {
-        sessionId,
+      pageViewId_snapshotId: {
+        pageViewId: resolvedPageViewId,
         snapshotId: activeSnapshot.id,
       },
     },
     create: {
       snapshotId: activeSnapshot.id,
       sessionId,
+      pageViewId: resolvedPageViewId,
       visitorType,
       source,
       medium,
@@ -287,8 +292,8 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       linearMovement: linearMovement || false,
       datacenterIP,
       botScore,
-      addedToCart: addedToCart || false,
-      addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : null,
+      // Protect addedToCart — never overwrite true with false
+      ...(addedToCart ? { addedToCart: true, addedToCartAt: addedToCartAt ? new Date(addedToCartAt) : undefined } : {}),
       endedAt: endedAt ? new Date(endedAt) : null,
       exitType: exitType || null,
       exitUrl: exitUrl || null,
@@ -369,15 +374,30 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
         continue;
       }
 
-      // First try: exact session ID match
+      // First try: exact session ID match — prefer the visit where addedToCart happened
       let visit = await prisma.visit.findFirst({
         where: {
           sessionId,
           snapshot: {
             project: projectMatch,
           },
+          addedToCart: true,
         },
+        orderBy: { startedAt: "desc" },
       });
+
+      // If no ATC visit in this session, find most recent visit in this session
+      if (!visit) {
+        visit = await prisma.visit.findFirst({
+          where: {
+            sessionId,
+            snapshot: {
+              project: projectMatch,
+            },
+          },
+          orderBy: { startedAt: "desc" },
+        });
+      }
 
       // Fallback: if no exact match, find most recent unconverted visit
       // that added this product to cart in the last 7 days

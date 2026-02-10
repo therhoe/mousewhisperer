@@ -253,6 +253,7 @@
   var initialSearchFilters = extractSearchAndFilters();
   var state = {
     sessionId: getSessionId(),
+    pageViewId: 'pv_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now(),
     productHandle: pageInfo.handle,
     resourceType: pageInfo.type,
     startTime: Date.now(),
@@ -538,6 +539,7 @@
 
     return {
       sessionId: state.sessionId,
+      pageViewId: state.pageViewId,
       productHandle: state.productHandle,
       resourceType: state.resourceType,
 

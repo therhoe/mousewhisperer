@@ -92,8 +92,9 @@ model Visit {
   // Visitor classification
   visitorType     VisitorType @default(PENDING)
 
-  // Session tracking
-  sessionId       String   // Unique session identifier
+  // Session & page view tracking
+  sessionId       String   // Session identifier (persists across page loads)
+  pageViewId      String   // Unique per page load (each visit = new pageViewId)
 
   // Traffic source
   source          String?  // e.g., "google", "facebook", "direct"
@@ -152,7 +153,7 @@ model Visit {
   userAgent       String?
   deviceType      String?  // desktop, mobile, tablet
 
-  @@unique([sessionId, snapshotId])
+  @@unique([pageViewId, snapshotId])
   @@index([snapshotId])
   @@index([visitorType])
   @@index([sourceCategory])
