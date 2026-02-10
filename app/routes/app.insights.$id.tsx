@@ -12,6 +12,7 @@ import {
   Banner,
   Box,
   Layout,
+  Badge,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -48,10 +49,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         select: { id: true, displayName: true, avatarEmoji: true, storeCategory: true, shop: true },
       },
       answers: {
-        orderBy: { upvoteCount: "desc" },
+        orderBy: [{ isAccepted: "desc" }, { upvoteCount: "desc" }],
         include: {
           profile: {
-            select: { id: true, displayName: true, avatarEmoji: true, shop: true },
+            select: { id: true, displayName: true, avatarEmoji: true, shop: true, reputation: true },
           },
         },
       },
@@ -62,33 +63,54 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Insight not found", { status: 404 });
   }
 
-  // Compute hasVoted for each answer
+  // Increment view count (fire-and-forget)
+  prisma.insight.update({
+    where: { id: params.id },
+    data: { viewCount: { increment: 1 } },
+  }).catch(() => {});
+
+  // Fetch user-specific state
   let votedAnswerIds = new Set<string>();
+  let hasMeTooed = false;
+  let hasBookmarked = false;
+
   if (profile) {
-    const votes = await prisma.insightVote.findMany({
-      where: {
-        profileId: profile.id,
-        answerId: { in: insight.answers.map((a) => a.id) },
-      },
-      select: { answerId: true },
-    });
+    const [votes, meToo, bookmark] = await Promise.all([
+      prisma.insightVote.findMany({
+        where: {
+          profileId: profile.id,
+          answerId: { in: insight.answers.map((a) => a.id) },
+        },
+        select: { answerId: true },
+      }),
+      prisma.insightMeToo.findFirst({
+        where: { insightId: params.id!, profileId: profile.id },
+      }),
+      prisma.insightBookmark.findFirst({
+        where: { insightId: params.id!, profileId: profile.id },
+      }),
+    ]);
     votedAnswerIds = new Set(votes.map((v) => v.answerId));
+    hasMeTooed = !!meToo;
+    hasBookmarked = !!bookmark;
   }
+
+  const isInsightOwner = insight.profile.shop === shop;
 
   const answers = insight.answers.map((a) => ({
     ...a,
     hasVoted: votedAnswerIds.has(a.id),
     isOwner: a.profile.shop === shop,
+    isInsightOwner,
   }));
 
   return json({
-    insight: {
-      ...insight,
-      isOwner: insight.profile.shop === shop,
-    },
+    insight: { ...insight, isOwner: isInsightOwner },
     answers,
     hasProfile: !!profile,
     profileId: profile?.id,
+    hasMeTooed,
+    hasBookmarked,
   });
 };
 
@@ -125,6 +147,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           where: { id: params.id },
           data: { answerCount: { increment: 1 } },
         }),
+        // +1 reputation for posting an answer
+        prisma.insightProfile.update({
+          where: { id: profile.id },
+          data: { reputation: { increment: 1 } },
+        }),
       ]);
 
       return json({ ok: true });
@@ -134,8 +161,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const answerId = formData.get("answerId") as string;
       const hasVoted = formData.get("hasVoted") === "true";
 
+      const answer = await prisma.insightAnswer.findUnique({
+        where: { id: answerId },
+        select: { profileId: true },
+      });
+
       if (hasVoted) {
-        // Remove vote
         await prisma.$transaction([
           prisma.insightVote.delete({
             where: { answerId_profileId: { answerId, profileId: profile.id } },
@@ -144,9 +175,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             where: { id: answerId },
             data: { upvoteCount: { decrement: 1 } },
           }),
+          // -5 reputation from answer author
+          ...(answer
+            ? [
+                prisma.insightProfile.update({
+                  where: { id: answer.profileId },
+                  data: { reputation: { decrement: 5 } },
+                }),
+              ]
+            : []),
         ]);
       } else {
-        // Add vote
         await prisma.$transaction([
           prisma.insightVote.create({
             data: { answerId, profileId: profile.id },
@@ -155,6 +194,129 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             where: { id: answerId },
             data: { upvoteCount: { increment: 1 } },
           }),
+          // +5 reputation to answer author
+          ...(answer
+            ? [
+                prisma.insightProfile.update({
+                  where: { id: answer.profileId },
+                  data: { reputation: { increment: 5 } },
+                }),
+              ]
+            : []),
+        ]);
+      }
+
+      return json({ ok: true });
+    }
+
+    case "toggle-metoo": {
+      const hasMeTooed = formData.get("hasMeTooed") === "true";
+
+      if (hasMeTooed) {
+        await prisma.$transaction([
+          prisma.insightMeToo.delete({
+            where: { insightId_profileId: { insightId: params.id!, profileId: profile.id } },
+          }),
+          prisma.insight.update({
+            where: { id: params.id },
+            data: { meTooCount: { decrement: 1 } },
+          }),
+        ]);
+      } else {
+        await prisma.$transaction([
+          prisma.insightMeToo.create({
+            data: { insightId: params.id!, profileId: profile.id },
+          }),
+          prisma.insight.update({
+            where: { id: params.id },
+            data: { meTooCount: { increment: 1 } },
+          }),
+        ]);
+      }
+
+      return json({ ok: true });
+    }
+
+    case "toggle-bookmark": {
+      const hasBookmarked = formData.get("hasBookmarked") === "true";
+
+      if (hasBookmarked) {
+        await prisma.insightBookmark.delete({
+          where: { insightId_profileId: { insightId: params.id!, profileId: profile.id } },
+        });
+      } else {
+        await prisma.insightBookmark.create({
+          data: { insightId: params.id!, profileId: profile.id },
+        });
+      }
+
+      return json({ ok: true });
+    }
+
+    case "accept-answer": {
+      const answerId = formData.get("answerId") as string;
+      const isAccepted = formData.get("isAccepted") === "true";
+
+      // Only insight owner can accept
+      const insight = await prisma.insight.findUnique({
+        where: { id: params.id },
+        include: { profile: { select: { shop: true } } },
+      });
+      if (!insight || insight.profile.shop !== shop) {
+        return json({ error: "Unauthorized" }, { status: 403 });
+      }
+
+      const answer = await prisma.insightAnswer.findUnique({
+        where: { id: answerId },
+        select: { profileId: true },
+      });
+
+      if (isAccepted) {
+        // Un-accept
+        await prisma.$transaction([
+          prisma.insightAnswer.update({
+            where: { id: answerId },
+            data: { isAccepted: false },
+          }),
+          prisma.insight.update({
+            where: { id: params.id },
+            data: { hasAcceptedAnswer: false },
+          }),
+          // -10 reputation from answer author
+          ...(answer
+            ? [
+                prisma.insightProfile.update({
+                  where: { id: answer.profileId },
+                  data: { reputation: { decrement: 10 } },
+                }),
+              ]
+            : []),
+        ]);
+      } else {
+        // Un-accept any previously accepted answer first
+        await prisma.insightAnswer.updateMany({
+          where: { insightId: params.id!, isAccepted: true },
+          data: { isAccepted: false },
+        });
+
+        await prisma.$transaction([
+          prisma.insightAnswer.update({
+            where: { id: answerId },
+            data: { isAccepted: true },
+          }),
+          prisma.insight.update({
+            where: { id: params.id },
+            data: { hasAcceptedAnswer: true },
+          }),
+          // +10 reputation to answer author
+          ...(answer
+            ? [
+                prisma.insightProfile.update({
+                  where: { id: answer.profileId },
+                  data: { reputation: { increment: 10 } },
+                }),
+              ]
+            : []),
         ]);
       }
 
@@ -201,12 +363,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function InsightDetail() {
-  const { insight, answers, hasProfile } = useLoaderData<typeof loader>();
+  const { insight, answers, hasProfile, hasMeTooed, hasBookmarked } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const deleteFetcher = useFetcher();
+  const meTooFetcher = useFetcher();
+  const bookmarkFetcher = useFetcher();
 
   const isSubmitting = navigation.state === "submitting";
+
+  // Optimistic me-too
+  const optimisticMeTooed = meTooFetcher.formData
+    ? meTooFetcher.formData.get("hasMeTooed") === "false"
+    : hasMeTooed;
+  const optimisticMeTooCount = meTooFetcher.formData
+    ? insight.meTooCount + (meTooFetcher.formData.get("hasMeTooed") === "false" ? 1 : -1)
+    : insight.meTooCount;
+
+  // Optimistic bookmark
+  const optimisticBookmarked = bookmarkFetcher.formData
+    ? bookmarkFetcher.formData.get("hasBookmarked") === "false"
+    : hasBookmarked;
 
   return (
     <Page
@@ -240,6 +418,9 @@ export default function InsightDetail() {
 
                   <InlineStack gap="200" blockAlign="center">
                     <CategoryBadge category={insight.category} />
+                    {insight.hasAcceptedAnswer && (
+                      <Badge tone="success">Solved</Badge>
+                    )}
                     <Text as="span" variant="bodySm" tone="subdued">
                       {timeAgo(insight.createdAt)}
                     </Text>
@@ -248,19 +429,52 @@ export default function InsightDetail() {
 
                 <RichTextDisplay html={insight.content} />
 
-                {insight.isOwner && (
-                  <deleteFetcher.Form method="post">
-                    <input type="hidden" name="_action" value="delete-insight" />
-                    <Button
-                      submit
-                      variant="plain"
-                      tone="critical"
-                      size="slim"
-                    >
-                      Delete insight
-                    </Button>
-                  </deleteFetcher.Form>
-                )}
+                {/* Engagement bar */}
+                <Divider />
+                <InlineStack gap="300" blockAlign="center" wrap>
+                  {/* Me too */}
+                  {hasProfile && (
+                    <meTooFetcher.Form method="post">
+                      <input type="hidden" name="_action" value="toggle-metoo" />
+                      <input type="hidden" name="hasMeTooed" value={String(hasMeTooed)} />
+                      <Button
+                        submit
+                        variant={optimisticMeTooed ? "primary" : "secondary"}
+                        size="slim"
+                      >
+                        🙋 I have this too {optimisticMeTooCount > 0 ? `(${optimisticMeTooCount})` : ""}
+                      </Button>
+                    </meTooFetcher.Form>
+                  )}
+
+                  {/* Bookmark */}
+                  {hasProfile && (
+                    <bookmarkFetcher.Form method="post">
+                      <input type="hidden" name="_action" value="toggle-bookmark" />
+                      <input type="hidden" name="hasBookmarked" value={String(hasBookmarked)} />
+                      <Button submit variant="plain" size="slim">
+                        {optimisticBookmarked ? "🔖 Bookmarked" : "☆ Bookmark"}
+                      </Button>
+                    </bookmarkFetcher.Form>
+                  )}
+
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    👁 {insight.viewCount} views
+                  </Text>
+
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    💬 {insight.answerCount} answers
+                  </Text>
+
+                  {insight.isOwner && (
+                    <deleteFetcher.Form method="post">
+                      <input type="hidden" name="_action" value="delete-insight" />
+                      <Button submit variant="plain" tone="critical" size="slim">
+                        Delete
+                      </Button>
+                    </deleteFetcher.Form>
+                  )}
+                </InlineStack>
               </BlockStack>
             </Card>
 
@@ -289,8 +503,10 @@ export default function InsightDetail() {
                 content={answer.content}
                 upvoteCount={answer.upvoteCount}
                 hasVoted={answer.hasVoted}
+                isAccepted={answer.isAccepted}
                 createdAt={answer.createdAt}
                 isOwner={answer.isOwner}
+                isInsightOwner={answer.isInsightOwner}
                 profile={answer.profile}
               />
             ))}
@@ -325,14 +541,14 @@ export default function InsightDetail() {
               </Card>
             ) : (
               <Banner
-                title="Create a profile to answer"
+                title="Create a profile to participate"
                 tone="info"
                 action={{
                   content: "Create profile",
                   url: `/app/insights/profile?returnTo=/app/insights/${insight.id}`,
                 }}
               >
-                <p>Set up your community profile to post answers and vote.</p>
+                <p>Set up your community profile to post answers, vote, and more.</p>
               </Banner>
             )}
           </BlockStack>

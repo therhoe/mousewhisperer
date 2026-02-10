@@ -1,4 +1,4 @@
-import { Card, BlockStack, InlineStack, Text, Box } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Badge, Icon } from "@shopify/polaris";
 import { Link } from "@remix-run/react";
 import { CategoryBadge } from "./CategoryBadge";
 import type { InsightCategory } from "@prisma/client";
@@ -6,8 +6,13 @@ import type { InsightCategory } from "@prisma/client";
 interface InsightCardProps {
   id: string;
   title: string;
+  contentPreview: string;
   category: InsightCategory;
   answerCount: number;
+  meTooCount: number;
+  viewCount: number;
+  hasAcceptedAnswer: boolean;
+  isBookmarked: boolean;
   createdAt: string;
   profile: {
     displayName: string;
@@ -28,11 +33,24 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
-export function InsightCard({ id, title, category, answerCount, createdAt, profile }: InsightCardProps) {
+export function InsightCard({
+  id,
+  title,
+  contentPreview,
+  category,
+  answerCount,
+  meTooCount,
+  viewCount,
+  hasAcceptedAnswer,
+  isBookmarked,
+  createdAt,
+  profile,
+}: InsightCardProps) {
   return (
     <Link to={`/app/insights/${id}`} style={{ textDecoration: "none", color: "inherit" }}>
       <Card>
-        <BlockStack gap="200">
+        <BlockStack gap="300">
+          {/* Author row */}
           <InlineStack align="space-between" blockAlign="center">
             <InlineStack gap="200" blockAlign="center">
               <Text as="span" variant="bodyLg">{profile.avatarEmoji || "🐭"}</Text>
@@ -52,13 +70,40 @@ export function InsightCard({ id, title, category, answerCount, createdAt, profi
             </Text>
           </InlineStack>
 
-          <Text as="h3" variant="headingSm">{title}</Text>
+          {/* Title + badges */}
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="h3" variant="headingSm">{title}</Text>
+            {hasAcceptedAnswer && (
+              <Badge tone="success">Solved</Badge>
+            )}
+          </InlineStack>
 
-          <InlineStack gap="300" blockAlign="center">
-            <CategoryBadge category={category} />
-            <Text as="span" variant="bodySm" tone="subdued">
-              {answerCount} {answerCount === 1 ? "answer" : "answers"}
+          {/* Content preview */}
+          {contentPreview && (
+            <Text as="p" variant="bodySm" tone="subdued" truncate>
+              {contentPreview}
             </Text>
+          )}
+
+          {/* Footer stats */}
+          <InlineStack gap="400" blockAlign="center" wrap>
+            <CategoryBadge category={category} />
+            <InlineStack gap="100" blockAlign="center">
+              <Text as="span" variant="bodySm" tone="subdued">
+                🙋 {meTooCount}
+              </Text>
+            </InlineStack>
+            <Text as="span" variant="bodySm" tone="subdued">
+              💬 {answerCount}
+            </Text>
+            <Text as="span" variant="bodySm" tone="subdued">
+              👁 {viewCount}
+            </Text>
+            {isBookmarked && (
+              <Text as="span" variant="bodySm" tone="subdued">
+                🔖
+              </Text>
+            )}
           </InlineStack>
         </BlockStack>
       </Card>

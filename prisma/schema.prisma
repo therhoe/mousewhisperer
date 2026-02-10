@@ -189,12 +189,15 @@ model InsightProfile {
   displayName   String
   storeCategory String?
   avatarEmoji   String?
+  reputation    Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   insights      Insight[]
   answers       InsightAnswer[]
   votes         InsightVote[]
+  meToos        InsightMeToo[]
+  bookmarks     InsightBookmark[]
 }
 
 model Insight {
@@ -206,15 +209,21 @@ model Insight {
   category      InsightCategory
   snapshotStats Json?           // anonymized metrics
   answerCount   Int             @default(0)
+  meTooCount    Int             @default(0)
+  viewCount     Int             @default(0)
+  hasAcceptedAnswer Boolean     @default(false)
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   answers       InsightAnswer[]
+  meToos        InsightMeToo[]
+  bookmarks     InsightBookmark[]
 
   @@index([profileId])
   @@index([category])
   @@index([createdAt])
   @@index([answerCount])
+  @@index([meTooCount])
   @@index([category, createdAt])
 }
 
@@ -226,6 +235,7 @@ model InsightAnswer {
   profile     InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   content     String         // sanitized HTML
   upvoteCount Int            @default(0)
+  isAccepted  Boolean        @default(false)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
@@ -245,6 +255,28 @@ model InsightVote {
   createdAt DateTime       @default(now())
 
   @@unique([answerId, profileId])
+}
+
+model InsightMeToo {
+  id        String         @id @default(cuid())
+  insightId String
+  insight   Insight        @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  profileId String
+  profile   InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([insightId, profileId])
+}
+
+model InsightBookmark {
+  id        String         @id @default(cuid())
+  insightId String
+  insight   Insight        @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  profileId String
+  profile   InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([insightId, profileId])
 }
 
 // Shop-level settings
