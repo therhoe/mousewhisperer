@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "@remix-run/react";
+import { useEffect, useRef } from "react";
 import {
   Page,
   Card,
@@ -63,12 +64,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Insight not found", { status: 404 });
   }
 
-  // Increment view count (fire-and-forget)
-  prisma.insight.update({
-    where: { id: params.id },
-    data: { viewCount: { increment: 1 } },
-  }).catch(() => {});
-
   // Fetch user-specific state
   let votedAnswerIds = new Set<string>();
   let hasMeTooed = false;
@@ -127,6 +122,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const actionType = formData.get("_action") as string;
 
   switch (actionType) {
+    case "increment-view": {
+      await prisma.insight.update({
+        where: { id: params.id },
+        data: { viewCount: { increment: 1 } },
+      });
+      return json({ ok: true });
+    }
+
     case "post-answer": {
       const content = formData.get("content") as string;
       if (!content || content === "<p></p>" || content.trim().length === 0) {
@@ -370,6 +373,19 @@ export default function InsightDetail() {
   const deleteFetcher = useFetcher();
   const meTooFetcher = useFetcher();
   const bookmarkFetcher = useFetcher();
+  const viewFetcher = useFetcher();
+  const viewTracked = useRef(false);
+
+  // Increment view count once per page visit
+  useEffect(() => {
+    if (!viewTracked.current) {
+      viewTracked.current = true;
+      viewFetcher.submit(
+        { _action: "increment-view" },
+        { method: "post" },
+      );
+    }
+  }, []);
 
   const isSubmitting = navigation.state === "submitting";
 

@@ -15,7 +15,7 @@ import {
   Tabs,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { InsightCard } from "../components/insights/InsightCard";
@@ -169,28 +169,36 @@ export default function InsightsFeed() {
   ];
   const selectedTab = tabs.findIndex((t) => t.id === filters.tab);
 
-  const updateFilter = (key: string, value: string) => {
-    const params = new URLSearchParams(searchParams);
-    if (value) {
-      params.set(key, value);
-    } else {
-      params.delete(key);
-    }
-    params.delete("cursor");
-    setSearchParams(params);
-  };
-
-  const handleTabChange = useCallback(
-    (index: number) => updateFilter("tab", tabs[index].id),
-    [searchParams],
+  const updateFilter = useCallback(
+    (key: string, value: string) => {
+      const params = new URLSearchParams(searchParams);
+      if (value) {
+        params.set(key, value);
+      } else {
+        params.delete(key);
+      }
+      params.delete("cursor");
+      navigate(`/app/insights?${params.toString()}`);
+    },
+    [searchParams, navigate],
   );
 
-  const loadMore = () => {
+  const handleTabChange = useCallback(
+    (index: number) => {
+      const params = new URLSearchParams(searchParams);
+      params.set("tab", tabs[index].id);
+      params.delete("cursor");
+      navigate(`/app/insights?${params.toString()}`);
+    },
+    [searchParams, navigate],
+  );
+
+  const loadMore = useCallback(() => {
     if (!nextCursor) return;
     const params = new URLSearchParams(searchParams);
     params.set("cursor", nextCursor);
-    setSearchParams(params);
-  };
+    navigate(`/app/insights?${params.toString()}`);
+  }, [searchParams, nextCursor, navigate]);
 
   return (
     <Page fullWidth>
