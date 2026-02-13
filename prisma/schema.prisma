@@ -279,6 +279,33 @@ model InsightBookmark {
   @@unique([insightId, profileId])
 }
 
+// ─── Notifications ──────────────────────────────────────────
+
+enum NotificationType {
+  INSIGHT_ANSWERED
+  ANSWER_UPVOTED
+  ANSWER_ACCEPTED
+  INSIGHT_METOOED
+  SNAPSHOT_COMPLETED
+  HIGH_BOT_TRAFFIC
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  shop        String
+  type        NotificationType
+  title       String
+  message     String
+  linkUrl     String?
+  isRead      Boolean          @default(false)
+  referenceId String?          // for de-duplication (e.g. snapshotId)
+  createdAt   DateTime         @default(now())
+
+  @@index([shop, isRead])
+  @@index([shop, createdAt])
+  @@unique([shop, type, referenceId])
+}
+
 // Shop-level settings
 model ShopSettings {
   id                    String   @id @default(cuid())

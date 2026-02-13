@@ -21,7 +21,9 @@ import {
   Modal,
   FormLayout,
   Banner,
+  Thumbnail,
 } from "@shopify/polaris";
+import { ImageIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -328,7 +330,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const projectId = params.id;
   const url = new URL(request.url);
@@ -419,11 +421,70 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     comparisonData = results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
+  // For collection audits, enrich exit URLs with product data
+  let topProductsClicked: Array<{
+    handle: string;
+    title: string;
+    imageUrl: string | null;
+    imageAlt: string | null;
+    count: number;
+  }> = [];
+
+  if (project.resourceType === "COLLECTION" && stats && stats.exitUrls.length > 0) {
+    const handleMap = new Map<string, number>();
+    stats.exitUrls.forEach((item: { url: string; count: number }) => {
+      const match = item.url.match(/\/products\/([^/?#]+)/);
+      if (match) {
+        const handle = decodeURIComponent(match[1]);
+        handleMap.set(handle, (handleMap.get(handle) || 0) + item.count);
+      }
+    });
+
+    const uniqueProducts = Array.from(handleMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    if (uniqueProducts.length > 0) {
+      const aliasedQueries = uniqueProducts
+        .map(([handle], i) =>
+          `p${i}: productByHandle(handle: "${handle}") { title featuredImage { url altText } }`
+        )
+        .join("\n        ");
+
+      try {
+        const response = await admin.graphql(`{\n        ${aliasedQueries}\n      }`);
+        const responseJson = await response.json();
+        const data = responseJson.data;
+
+        topProductsClicked = uniqueProducts.map(([handle, count], i) => {
+          const product = data?.[`p${i}`];
+          return {
+            handle,
+            title: product?.title || handle.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+            imageUrl: product?.featuredImage?.url || null,
+            imageAlt: product?.featuredImage?.altText || null,
+            count,
+          };
+        });
+      } catch (error) {
+        console.error("Failed to fetch product data:", error);
+        topProductsClicked = uniqueProducts.map(([handle, count]) => ({
+          handle,
+          title: handle.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          imageUrl: null,
+          imageAlt: null,
+          count,
+        }));
+      }
+    }
+  }
+
   return json({
     project: {
       id: project.id,
       productTitle: project.productTitle,
       productHandle: project.productHandle,
+      resourceType: project.resourceType,
       createdAt: project.createdAt,
     },
     snapshots: project.snapshots.map((s) => ({
@@ -453,6 +514,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       startDate: startDateParam,
       endDate: endDateParam,
     },
+    topProductsClicked,
   });
 };
 
@@ -738,7 +800,7 @@ function StatCard({ title, value, subtitle, tone }: {
   );
 }
 
-function ConversionFunnel({ stats }: { stats: any }) {
+function ConversionFunnel({ stats, isCollection = false }: { stats: any; isCollection?: boolean }) {
   const stages: Array<{
     label: string;
     value: number;
@@ -748,8 +810,8 @@ function ConversionFunnel({ stats }: { stats: any }) {
   }> = [
     { label: "All Sessions", value: stats.totalSessions, percent: 100, progressTone: "primary" },
     { label: "Real Users", value: stats.realCount, percent: stats.realPercent, badgeTone: "info", progressTone: "highlight" },
-    { label: "Added to Cart", value: stats.addToCartCount, percent: stats.atcPercent || 0, badgeTone: "warning", progressTone: "highlight" },
-    { label: "Conversions", value: stats.conversionCount, percent: stats.convPercent || 0, badgeTone: "success", progressTone: "success" },
+    { label: isCollection ? "Quick Add" : "Added to Cart", value: stats.addToCartCount, percent: stats.atcPercent || 0, badgeTone: "warning", progressTone: "highlight" },
+    { label: isCollection ? "Product" : "Conversions", value: stats.conversionCount, percent: stats.convPercent || 0, badgeTone: "success", progressTone: "success" },
   ];
 
   return (
@@ -781,11 +843,15 @@ const DATE_PRESETS = [
 ];
 
 export default function ProjectDetails() {
-  const { project, snapshots, selectedSnapshot, stats, comparisonData, compareMode, dateFilter } = useLoaderData<typeof loader>();
+  const { project, snapshots, selectedSnapshot, stats, comparisonData, compareMode, dateFilter, topProductsClicked } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isLoading = navigation.state !== "idle";
+
+  const isCollection = project.resourceType === "COLLECTION";
+  const atcLabel = isCollection ? "Quick Add" : "Add to Cart";
+  const convLabel = isCollection ? "Product" : "Conversions";
 
   // Date filter state
   const [datePreset, setDatePreset] = useState(() => {
@@ -807,6 +873,9 @@ export default function ProjectDetails() {
   // Real-time stats state
   const [liveStats, setLiveStats] = useState(stats);
   const [isLive, setIsLive] = useState(false);
+
+  // Source filter (clicking Traffic by Source rows filters Recent Visits)
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
 
   // SSE connection for real-time updates
   useEffect(() => {
@@ -1030,9 +1099,18 @@ export default function ProjectDetails() {
 
   const sourceStats = displayStats?.sourceStats || [];
   const topCountries = displayStats?.topCountries || [];
+  const filteredRecentVisits = sourceFilter
+    ? (displayStats?.recentVisits || []).filter((v: any) => (v.sourceCategory || "Unknown") === sourceFilter)
+    : (displayStats?.recentVisits || []);
 
   const rowMarkup = sourceStats.map((source: any, index: number) => (
-    <IndexTable.Row id={source.category} key={source.category} position={index}>
+    <IndexTable.Row
+      id={source.category}
+      key={source.category}
+      position={index}
+      onClick={() => setSourceFilter(sourceFilter === source.category ? null : source.category)}
+      selected={sourceFilter === source.category}
+    >
       <IndexTable.Cell>
         <Text variant="bodyMd" fontWeight="semibold" as="span">
           {getSourceIcon(source.category)} {source.category}
@@ -1161,13 +1239,13 @@ export default function ProjectDetails() {
                     ))}
                   </IndexTable.Row>
                   <IndexTable.Row id="atc" position={4}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Add to Cart</Text></IndexTable.Cell>
+                    <IndexTable.Cell><Text fontWeight="semibold" as="span">{atcLabel}</Text></IndexTable.Cell>
                     {comparisonData.map((s) => (
                       <IndexTable.Cell key={s.id}>{s.stats.addToCartCount}</IndexTable.Cell>
                     ))}
                   </IndexTable.Row>
                   <IndexTable.Row id="conv" position={5}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Conversions</Text></IndexTable.Cell>
+                    <IndexTable.Cell><Text fontWeight="semibold" as="span">{convLabel}</Text></IndexTable.Cell>
                     {comparisonData.map((s) => (
                       <IndexTable.Cell key={s.id}>{s.stats.conversionCount}</IndexTable.Cell>
                     ))}
@@ -1276,7 +1354,7 @@ export default function ProjectDetails() {
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Overall Totals</Text>
-                  <InlineStack gap="400" wrap>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
                     <StatCard title="Sessions" value={displayStats.totalSessions} />
                     <StatCard
                       title="Real Users"
@@ -1296,9 +1374,11 @@ export default function ProjectDetails() {
                       subtitle={`${displayStats.botPercent}%`}
                       tone="critical"
                     />
-                    <StatCard title="Add to Cart" value={displayStats.addToCartCount} />
-                    <StatCard title="Conversions" value={displayStats.conversionCount} />
-                  </InlineStack>
+                    <StatCard title={atcLabel} value={displayStats.addToCartCount} />
+                    <StatCard title={convLabel} value={displayStats.conversionCount} />
+                    <StatCard title="Avg Time" value={formatTime(displayStats.avgTimeOnPage)} />
+                    <StatCard title="Avg Scroll" value={`${displayStats.avgScrollDepth}%`} />
+                  </div>
                 </BlockStack>
               </Card>
             </Layout.Section>
@@ -1308,7 +1388,7 @@ export default function ProjectDetails() {
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Conversion Funnel</Text>
-                  <ConversionFunnel stats={displayStats} />
+                  <ConversionFunnel stats={displayStats} isCollection={isCollection} />
                 </BlockStack>
               </Card>
             </Layout.Section>
@@ -1402,9 +1482,41 @@ export default function ProjectDetails() {
               </Card>
             </Layout.Section>
 
+            {/* Top Products Clicked (Collection audits only) */}
+            {isCollection && (topProductsClicked || []).length > 0 && (
+              <Layout.Section>
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">Top Products Clicked</Text>
+                    <BlockStack gap="300">
+                      {(topProductsClicked || []).map((product: any, index: number) => (
+                        <InlineStack key={product.handle} align="space-between" blockAlign="center">
+                          <InlineStack gap="300" blockAlign="center">
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {index + 1}.
+                            </Text>
+                            <Thumbnail
+                              source={product.imageUrl || ImageIcon}
+                              alt={product.imageAlt || product.title}
+                              size="small"
+                            />
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">
+                              {product.title}
+                            </Text>
+                          </InlineStack>
+                          <Badge>{String(product.count)}</Badge>
+                        </InlineStack>
+                      ))}
+                    </BlockStack>
+                  </BlockStack>
+                </Card>
+              </Layout.Section>
+            )}
+
             {/* Top Exit URLs */}
             {(displayStats?.exitUrls || []).length > 0 && (
             <Layout.Section>
+              <div style={{ minHeight: 200 }}>
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Top Exit URLs</Text>
@@ -1425,6 +1537,7 @@ export default function ProjectDetails() {
                   </BlockStack>
                 </BlockStack>
               </Card>
+              </div>
             </Layout.Section>
             )}
 
@@ -1432,52 +1545,56 @@ export default function ProjectDetails() {
             {((displayStats?.searchStats?.topQueries || []).length > 0 ||
               (displayStats?.searchStats?.sortPreferences || []).length > 0 ||
               (displayStats?.searchStats?.filterUsageCount || 0) > 0) && (
-            <Layout.Section variant="oneThird">
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Search & Filters</Text>
-
-                  {/* Filter usage */}
-                  {(displayStats?.searchStats?.filterUsageCount || 0) > 0 && (
-                    <InlineStack align="space-between">
-                      <Text as="span">Visits using filters</Text>
-                      <Badge>{String(displayStats.searchStats.filterUsageCount)}</Badge>
-                    </InlineStack>
-                  )}
-
-                  {/* Top search queries */}
-                  {(displayStats?.searchStats?.topQueries || []).length > 0 && (
-                    <>
-                      <Divider />
-                      <Text as="h3" variant="headingSm">Top Search Queries</Text>
-                      <BlockStack gap="200">
-                        {(displayStats?.searchStats?.topQueries || []).map((item: any) => (
-                          <InlineStack key={item.query} align="space-between">
-                            <Text as="span" variant="bodySm" truncate>"{item.query}"</Text>
-                            <Badge>{String(item.count)}</Badge>
-                          </InlineStack>
-                        ))}
+            <Layout.Section>
+              <div style={{ display: "flex", gap: 16 }}>
+                {(displayStats?.searchStats?.filterUsageCount || 0) > 0 && (
+                  <div style={{ flex: 1 }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text as="h2" variant="headingMd">Filter Usage</Text>
+                        <InlineStack align="space-between">
+                          <Text as="span">Visits using filters</Text>
+                          <Badge>{String(displayStats.searchStats.filterUsageCount)}</Badge>
+                        </InlineStack>
                       </BlockStack>
-                    </>
-                  )}
-
-                  {/* Sort preferences */}
-                  {(displayStats?.searchStats?.sortPreferences || []).length > 0 && (
-                    <>
-                      <Divider />
-                      <Text as="h3" variant="headingSm">Sort Preferences</Text>
-                      <BlockStack gap="200">
-                        {(displayStats?.searchStats?.sortPreferences || []).map((item: any) => (
-                          <InlineStack key={item.sort} align="space-between">
-                            <Text as="span" variant="bodySm">{item.sort.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
-                            <Badge>{String(item.count)}</Badge>
-                          </InlineStack>
-                        ))}
+                    </Card>
+                  </div>
+                )}
+                {(displayStats?.searchStats?.topQueries || []).length > 0 && (
+                  <div style={{ flex: 1 }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text as="h2" variant="headingMd">Top Search Queries</Text>
+                        <BlockStack gap="200">
+                          {(displayStats?.searchStats?.topQueries || []).map((item: any) => (
+                            <InlineStack key={item.query} align="space-between">
+                              <Text as="span" variant="bodySm" truncate>"{item.query}"</Text>
+                              <Badge>{String(item.count)}</Badge>
+                            </InlineStack>
+                          ))}
+                        </BlockStack>
                       </BlockStack>
-                    </>
-                  )}
-                </BlockStack>
-              </Card>
+                    </Card>
+                  </div>
+                )}
+                {(displayStats?.searchStats?.sortPreferences || []).length > 0 && (
+                  <div style={{ flex: 1 }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text as="h2" variant="headingMd">Sort Preferences</Text>
+                        <BlockStack gap="200">
+                          {(displayStats?.searchStats?.sortPreferences || []).map((item: any) => (
+                            <InlineStack key={item.sort} align="space-between">
+                              <Text as="span" variant="bodySm">{item.sort.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
+                              <Badge>{String(item.count)}</Badge>
+                            </InlineStack>
+                          ))}
+                        </BlockStack>
+                      </BlockStack>
+                    </Card>
+                  </div>
+                )}
+              </div>
             </Layout.Section>
             )}
 
@@ -1498,8 +1615,8 @@ export default function ProjectDetails() {
                     { title: "Bot" },
                     { title: "Avg Time" },
                     { title: "Avg Scroll" },
-                    { title: "ATC %" },
-                    { title: "Conv %" },
+                    { title: isCollection ? "QA %" : "ATC %" },
+                    { title: isCollection ? "Prod %" : "Conv %" },
                   ]}
                   selectable={false}
                 >
@@ -1508,39 +1625,41 @@ export default function ProjectDetails() {
               </Card>
             </Layout.Section>
 
+            {/* Source filter indicator */}
+            {sourceFilter && (
+              <Layout.Section>
+                <Banner tone="info" onDismiss={() => setSourceFilter(null)}>
+                  <p>Showing visits from <strong>{sourceFilter}</strong></p>
+                </Banner>
+              </Layout.Section>
+            )}
+
             {/* Detailed Visits Table */}
             <Layout.Section>
               <Card padding="0">
                 <Box padding="400">
-                  <Text as="h2" variant="headingMd">Recent Visits (Last 50)</Text>
+                  <Text as="h2" variant="headingMd">
+                    Recent Visits {sourceFilter ? `\u2014 ${sourceFilter}` : "(Last 50)"}
+                  </Text>
                 </Box>
                 <div style={{ overflowX: "auto" }}>
                   <IndexTable
                     resourceName={{ singular: "visit", plural: "visits" }}
-                    itemCount={(displayStats?.recentVisits || []).length}
+                    itemCount={filteredRecentVisits.length}
                     headings={[
-                      { title: "Time" },
                       { title: "Type" },
                       { title: "Source" },
                       { title: "UTM" },
                       { title: "" },
                       { title: "Duration" },
                       { title: "Scroll" },
-                      { title: "Mouse" },
-                      { title: "Bot Score" },
+                      { title: isCollection ? "QA" : "ATC" },
                       { title: "Exit" },
-                      { title: "Search/Filters" },
-                      { title: "ATC" },
                     ]}
                     selectable={false}
                   >
-                    {(displayStats?.recentVisits || []).map((visit: any, index: number) => (
+                    {filteredRecentVisits.map((visit: any, index: number) => (
                       <IndexTable.Row id={visit.id} key={visit.id} position={index}>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">
-                            {visit.startedAt ? new Date(visit.startedAt).toLocaleDateString() : "-"}
-                          </Text>
-                        </IndexTable.Cell>
                         <IndexTable.Cell>
                           <Badge
                             tone={visit.visitorType === "REAL" ? "success" : visit.visitorType === "ZOMBIE" ? "warning" : "critical"}
@@ -1577,10 +1696,7 @@ export default function ProjectDetails() {
                           <Text as="span" variant="bodySm">{visit.scrollDepth}%</Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{visit.mouseMovements || 0}</Text>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{visit.botScore || 0}</Text>
+                          {visit.addedToCart ? <Badge tone="success">Yes</Badge> : <Text as="span" tone="subdued">-</Text>}
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           <BlockStack gap="050">
@@ -1593,36 +1709,6 @@ export default function ProjectDetails() {
                               </Text>
                             )}
                           </BlockStack>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <BlockStack gap="050">
-                            {visit.searchQuery && (
-                              <Text as="span" variant="bodySm" tone="subdued">Q: {visit.searchQuery}</Text>
-                            )}
-                            {visit.sortBy && (
-                              <Text as="span" variant="bodySm" tone="subdued">Sort: {visit.sortBy}</Text>
-                            )}
-                            {visit.appliedFilters && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {(() => {
-                                  try {
-                                    const filters = JSON.parse(visit.appliedFilters);
-                                    const count = Object.keys(filters).length;
-                                    return `${count} filter${count !== 1 ? "s" : ""}`;
-                                  } catch { return "Filters"; }
-                                })()}
-                              </Text>
-                            )}
-                            {visit.filterInteractions > 0 && (
-                              <Text as="span" variant="bodySm" tone="subdued">{visit.filterInteractions} changes</Text>
-                            )}
-                            {!visit.searchQuery && !visit.sortBy && !visit.appliedFilters && (
-                              <Text as="span" tone="subdued">-</Text>
-                            )}
-                          </BlockStack>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          {visit.addedToCart ? <Badge tone="success">Yes</Badge> : <Text as="span" tone="subdued">-</Text>}
                         </IndexTable.Cell>
                       </IndexTable.Row>
                     ))}

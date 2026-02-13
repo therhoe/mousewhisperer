@@ -145,6 +145,7 @@ export function AnswerCard({
   return (
     <>
       <div
+        id={`answer-${id}`}
         style={{
           display: "flex",
           gap: 12,

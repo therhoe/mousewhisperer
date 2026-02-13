@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { getClientIP, getGeoData } from "../utils/geo.server";
 import { isDatacenterIP, calculateBotScore } from "../utils/datacenter-ips.server";
+import { createNotification } from "../utils/notifications.server";
 
 // Visitor classification thresholds
 const CLASSIFICATION = {
@@ -208,6 +209,14 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       where: { id: activeSnapshot.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    await createNotification({
+      shop: project.shop,
+      type: "SNAPSHOT_COMPLETED",
+      title: "Snapshot completed!",
+      message: `"${project.productTitle}" reached its ${activeSnapshot.targetVisitors} visitor target`,
+      linkUrl: `/app/project/${project.id}`,
+      referenceId: activeSnapshot.id,
+    });
     return json({ ok: true, tracked: false, reason: "completed" }, { headers });
   }
 
@@ -321,6 +330,34 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       where: { id: activeSnapshot.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    await createNotification({
+      shop: project.shop,
+      type: "SNAPSHOT_COMPLETED",
+      title: "Snapshot completed!",
+      message: `"${project.productTitle}" reached its ${activeSnapshot.targetVisitors} visitor target`,
+      linkUrl: `/app/project/${project.id}`,
+      referenceId: activeSnapshot.id,
+    });
+  }
+
+  // High bot traffic alert (once per snapshot, if 20+ visits and >50% bots)
+  const totalVisits = await prisma.visit.count({
+    where: { snapshotId: activeSnapshot.id },
+  });
+  if (totalVisits >= 20) {
+    const botCount = await prisma.visit.count({
+      where: { snapshotId: activeSnapshot.id, visitorType: "BOT" },
+    });
+    if (botCount / totalVisits > 0.5) {
+      await createNotification({
+        shop: project.shop,
+        type: "HIGH_BOT_TRAFFIC",
+        title: "High bot traffic detected",
+        message: `${Math.round((botCount / totalVisits) * 100)}% of visits to "${project.productTitle}" are bots`,
+        linkUrl: `/app/project/${project.id}`,
+        referenceId: activeSnapshot.id,
+      });
+    }
   }
 
   return json({ ok: true, tracked: true, visitorType }, { headers });

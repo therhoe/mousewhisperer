@@ -21,6 +21,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sanitizeHTML } from "../utils/sanitize.server";
+import { createNotification } from "../utils/notifications.server";
 import { RichTextDisplay } from "../components/insights/RichTextDisplay";
 import { RichTextEditor } from "../components/insights/RichTextEditor";
 import { CategoryBadge } from "../components/insights/CategoryBadge";
@@ -140,14 +141,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       const sanitizedContent = sanitizeHTML(content);
 
+      const insight = await prisma.insight.findUnique({
+        where: { id: params.id },
+        include: { profile: { select: { shop: true, displayName: true } } },
+      });
+
+      const newAnswer = await prisma.insightAnswer.create({
+        data: {
+          insightId: params.id!,
+          profileId: profile.id,
+          content: sanitizedContent,
+        },
+      });
+
       await prisma.$transaction([
-        prisma.insightAnswer.create({
-          data: {
-            insightId: params.id!,
-            profileId: profile.id,
-            content: sanitizedContent,
-          },
-        }),
         prisma.insight.update({
           where: { id: params.id },
           data: { answerCount: { increment: 1 } },
@@ -159,6 +166,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }),
       ]);
 
+      // Notify insight owner (not self)
+      if (insight && insight.profile.shop !== shop) {
+        await createNotification({
+          shop: insight.profile.shop,
+          type: "INSIGHT_ANSWERED",
+          title: "New answer on your insight",
+          message: `${profile.displayName} answered "${insight.title}"`,
+          linkUrl: `/app/insights/${params.id}#answer-${newAnswer.id}`,
+        });
+      }
+
       return json({ ok: true });
     }
 
@@ -168,8 +186,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       const answer = await prisma.insightAnswer.findUnique({
         where: { id: answerId },
-        select: { profileId: true },
-      });
+        select: { profileId: true, insightId: true },
+        });
+      const answerAuthorProfile = answer
+        ? await prisma.insightProfile.findUnique({
+            where: { id: answer.profileId },
+            select: { shop: true },
+          })
+        : null;
 
       if (hasVoted) {
         await prisma.$transaction([
@@ -209,6 +233,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               ]
             : []),
         ]);
+
+        // Notify answer author (not self)
+        if (answerAuthorProfile && answerAuthorProfile.shop !== shop) {
+          await createNotification({
+            shop: answerAuthorProfile.shop,
+            type: "ANSWER_UPVOTED",
+            title: "Your answer was upvoted",
+            message: `${profile.displayName} upvoted your answer`,
+            linkUrl: `/app/insights/${params.id}#answer-${answerId}`,
+          });
+        }
       }
 
       return json({ ok: true });
@@ -228,6 +263,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }),
         ]);
       } else {
+        const meTooInsight = await prisma.insight.findUnique({
+          where: { id: params.id },
+          include: { profile: { select: { shop: true } } },
+        });
+
         await prisma.$transaction([
           prisma.insightMeToo.create({
             data: { insightId: params.id!, profileId: profile.id },
@@ -237,6 +277,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             data: { meTooCount: { increment: 1 } },
           }),
         ]);
+
+        // Notify insight owner (not self)
+        if (meTooInsight && meTooInsight.profile.shop !== shop) {
+          await createNotification({
+            shop: meTooInsight.profile.shop,
+            type: "INSIGHT_METOOED",
+            title: "Someone relates to your insight",
+            message: `${profile.displayName} said "me too" on "${meTooInsight.title}"`,
+            linkUrl: `/app/insights/${params.id}`,
+          });
+        }
       }
 
       return json({ ok: true });
@@ -263,11 +314,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const isAccepted = formData.get("isAccepted") === "true";
 
       // Only insight owner can accept
-      const insight = await prisma.insight.findUnique({
+      const acceptInsight = await prisma.insight.findUnique({
         where: { id: params.id },
         include: { profile: { select: { shop: true } } },
       });
-      if (!insight || insight.profile.shop !== shop) {
+      if (!acceptInsight || acceptInsight.profile.shop !== shop) {
         return json({ error: "Unauthorized" }, { status: 403 });
       }
 
@@ -275,6 +326,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         where: { id: answerId },
         select: { profileId: true },
       });
+      const acceptAnswerAuthor = answer
+        ? await prisma.insightProfile.findUnique({
+            where: { id: answer.profileId },
+            select: { shop: true },
+          })
+        : null;
 
       if (isAccepted) {
         // Un-accept
@@ -323,6 +380,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               ]
             : []),
         ]);
+
+        // Notify answer author (not self)
+        if (acceptAnswerAuthor && acceptAnswerAuthor.shop !== shop) {
+          await createNotification({
+            shop: acceptAnswerAuthor.shop,
+            type: "ANSWER_ACCEPTED",
+            title: "Your answer was accepted!",
+            message: `Your answer on "${acceptInsight.title}" was marked as the solution`,
+            linkUrl: `/app/insights/${params.id}#answer-${answerId}`,
+          });
+        }
       }
 
       return json({ ok: true });
@@ -434,6 +502,25 @@ export default function InsightDetail() {
         { method: "post" },
       );
     }
+  }, []);
+
+  // Scroll to and highlight a specific answer when navigated via #answer-{id}
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash) return;
+    const timeout = setTimeout(() => {
+      const el = document.querySelector(hash);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        (el as HTMLElement).style.transition = "box-shadow 0.3s ease, border-radius 0.3s ease";
+        (el as HTMLElement).style.boxShadow = "0 0 0 3px #2c6ecb";
+        (el as HTMLElement).style.borderRadius = "12px";
+        setTimeout(() => {
+          (el as HTMLElement).style.boxShadow = "none";
+        }, 3000);
+      }
+    }, 300);
+    return () => clearTimeout(timeout);
   }, []);
 
   const isSubmitting = navigation.state === "submitting";
