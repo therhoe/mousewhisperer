@@ -682,9 +682,10 @@ export default function Index() {
   ) : null;
 
   const bellActivator = (
-    <div style={{ position: "relative", display: "inline-flex" }}>
+    <div style={{ position: "relative", display: "inline-flex", fontSize: "1.25rem" }}>
       <Button
         variant="plain"
+        size="large"
         onClick={() => setBellOpen((o) => !o)}
         icon={NotificationIcon}
         accessibilityLabel="Notifications"
@@ -897,7 +898,7 @@ export default function Index() {
         <Layout.Section>
           {profile ? (
             <Card>
-              <InlineStack gap="600" align="center" blockAlign="center" wrap>
+              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
                 <BlockStack gap="100" inlineAlign="center">
                   <span style={{ fontSize: "2.5rem" }}>
                     {profile.avatarEmoji || "\uD83D\uDC2D"}
@@ -906,21 +907,19 @@ export default function Index() {
                     {profile.displayName}
                   </Text>
                 </BlockStack>
-                <InlineStack gap="600" wrap>
-                  <BlockStack gap="100" inlineAlign="center">
-                    <Text as="p" variant="headingXl">{profile.answersCount}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">answers</Text>
-                  </BlockStack>
-                  <BlockStack gap="100" inlineAlign="center">
-                    <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">insights</Text>
-                  </BlockStack>
-                  <BlockStack gap="100" inlineAlign="center">
-                    <Text as="p" variant="headingXl">{profile.reputation}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">points</Text>
-                  </BlockStack>
-                </InlineStack>
-              </InlineStack>
+                <BlockStack gap="100" inlineAlign="center">
+                  <Text as="p" variant="headingXl">{profile.answersCount}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">answers</Text>
+                </BlockStack>
+                <BlockStack gap="100" inlineAlign="center">
+                  <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">insights</Text>
+                </BlockStack>
+                <BlockStack gap="100" inlineAlign="center">
+                  <Text as="p" variant="headingXl">{profile.reputation}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">points</Text>
+                </BlockStack>
+              </div>
             </Card>
           ) : (
             <Banner
@@ -940,9 +939,12 @@ export default function Index() {
 
         {/* Top Answers & Trending Insights */}
         <Layout.Section>
-          <InlineStack gap="400" wrap={false} align="start">
-            <div style={{ flex: 1 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <style>{`.mw-card-stretch > div { height: 100%; } .mw-card-stretch > div > div { height: 100%; }`}</style>
+              <div className="mw-card-stretch" style={{ flex: 1 }}>
               <Card>
+                <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between" }}>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">Top Answers</Text>
                   {topAnswers.length === 0 ? (
@@ -966,16 +968,20 @@ export default function Index() {
                       ))}
                     </BlockStack>
                   )}
+                </BlockStack>
                   <InlineStack align="end">
                     <Link to="/app/insights" style={{ textDecoration: "none" }}>
                       <Button variant="plain">view all</Button>
                     </Link>
                   </InlineStack>
-                </BlockStack>
+                </div>
               </Card>
+              </div>
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <div className="mw-card-stretch" style={{ flex: 1 }}>
               <Card>
+                <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between" }}>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">Trending Insights</Text>
                   {trendingInsights.length === 0 ? (
@@ -999,15 +1005,17 @@ export default function Index() {
                       ))}
                     </BlockStack>
                   )}
+                </BlockStack>
                   <InlineStack align="end">
                     <Link to="/app/insights?sort=trending" style={{ textDecoration: "none" }}>
                       <Button variant="plain">view all</Button>
                     </Link>
                   </InlineStack>
-                </BlockStack>
+                </div>
               </Card>
+              </div>
             </div>
-          </InlineStack>
+          </div>
         </Layout.Section>
 
         {/* Project Table */}

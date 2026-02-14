@@ -367,12 +367,16 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
   const { eventType, sessionId, timestamp } = data;
 
   if (!sessionId) {
+    console.log(`[MW Pixel] Event "${eventType}" missing sessionId — dropping`);
     return json({ error: "Missing sessionId" }, { status: 400, headers });
   }
 
   if (eventType === "add_to_cart") {
-    const { productHandle } = data;
+    const { productHandle, productId } = data;
+    console.log(`[MW Pixel] ATC event — session: ${sessionId}, handle: ${productHandle || "null"}, productId: ${productId || "null"}`);
+
     if (!productHandle) {
+      console.log("[MW Pixel] ATC missing productHandle, skipping");
       return json({ ok: true, tracked: false }, { headers });
     }
 
@@ -389,13 +393,19 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
           addedToCartAt: new Date(timestamp),
         },
       });
+      console.log(`[MW Pixel] ATC tracked for visit ${visit.id}`);
+    } else {
+      console.log(`[MW Pixel] ATC — no visit found for session ${sessionId}`);
     }
 
-    return json({ ok: true, tracked: true }, { headers });
+    return json({ ok: true, tracked: !!visit }, { headers });
   }
 
   if (eventType === "conversion") {
-    const { products } = data;
+    const { products, orderId, orderNumber } = data;
+    console.log(`[MW Pixel] Conversion event — session: ${sessionId}, order: ${orderNumber || orderId || "unknown"}, products: ${(products || []).length}`);
+    console.log(`[MW Pixel] Conversion products:`, JSON.stringify(products || [], null, 2));
+
     let conversionsTracked = 0;
 
     // Update all visits for products in this order
@@ -407,9 +417,11 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
       } else if (product.productHandle) {
         projectMatch.productHandle = decodeURIComponent(product.productHandle);
       } else {
-        // No way to identify the product, skip
+        console.log(`[MW Pixel] Conversion — product has no ID or handle, skipping:`, JSON.stringify(product));
         continue;
       }
+
+      console.log(`[MW Pixel] Conversion — matching project with:`, JSON.stringify(projectMatch));
 
       // First try: exact session ID match — prefer the visit where addedToCart happened
       let visit = await prisma.visit.findFirst({
@@ -423,6 +435,8 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
         orderBy: { startedAt: "desc" },
       });
 
+      let matchTier = visit ? "session+ATC" : null;
+
       // If no ATC visit in this session, find most recent visit in this session
       if (!visit) {
         visit = await prisma.visit.findFirst({
@@ -434,6 +448,7 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
           },
           orderBy: { startedAt: "desc" },
         });
+        if (visit) matchTier = "session";
       }
 
       // Fallback: if no exact match, find most recent unconverted visit
@@ -452,12 +467,12 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
             converted: false,
             startedAt: { gte: sevenDaysAgo },
           },
-          orderBy: { startedAt: "desc" }, // Most recent first
+          orderBy: { startedAt: "desc" },
         });
+        if (visit) matchTier = "fallback-ATC";
       }
 
       // Second fallback: find any unconverted visit for this product in the last 7 days
-      // (even without addedToCart - some conversions happen without ATC detection)
       if (!visit) {
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -471,8 +486,9 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
             converted: false,
             startedAt: { gte: sevenDaysAgo },
           },
-          orderBy: { startedAt: "desc" }, // Most recent first
+          orderBy: { startedAt: "desc" },
         });
+        if (visit) matchTier = "fallback-any";
       }
 
       if (visit) {
@@ -484,11 +500,16 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
           },
         });
         conversionsTracked++;
+        console.log(`[MW Pixel] Conversion matched visit ${visit.id} via ${matchTier}`);
+      } else {
+        console.log(`[MW Pixel] Conversion — NO matching visit found for project match:`, JSON.stringify(projectMatch));
       }
     }
 
+    console.log(`[MW Pixel] Conversion complete — ${conversionsTracked}/${(products || []).length} tracked`);
     return json({ ok: true, tracked: true, conversionsTracked }, { headers });
   }
 
+  console.log(`[MW Pixel] Unknown event type: ${eventType}`);
   return json({ ok: true, tracked: false }, { headers });
 }

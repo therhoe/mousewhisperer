@@ -18,6 +18,7 @@ async function getSnapshotStats(snapshotId: string) {
     topSearchQueries,
     sortPreferences,
     filterUsageCount,
+    productClickCount,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -141,6 +142,10 @@ async function getSnapshotStats(snapshotId: string) {
     // Filter usage count
     prisma.visit.count({
       where: { snapshotId, appliedFilters: { not: null } },
+    }),
+    // Product clicks (exits to /products/*) for collection audits
+    prisma.visit.count({
+      where: { snapshotId, exitUrl: { contains: "/products/" } },
     }),
   ]);
 
@@ -286,10 +291,12 @@ async function getSnapshotStats(snapshotId: string) {
     botPercent: totalSessions > 0 ? Math.round((botCount / totalSessions) * 100) : 0,
     addToCartCount,
     conversionCount,
+    productClickCount,
     avgTimeOnPage,
     avgScrollDepth,
     atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
     convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
+    productClickPercent: totalSessions > 0 ? Math.round((productClickCount / totalSessions) * 100) : 0,
     sourceStats,
     topCountries,
     topCities,

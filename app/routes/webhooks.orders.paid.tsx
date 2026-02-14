@@ -1,0 +1,121 @@
+import type { ActionFunctionArgs } from "@remix-run/node";
+import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  try {
+    const { payload, shop, topic } = await authenticate.webhook(request);
+
+    console.log(`[MW Webhook] Received ${topic} for ${shop}`);
+
+    const order = payload as any;
+    const lineItems = order.line_items || [];
+    const orderCreatedAt = order.created_at ? new Date(order.created_at) : new Date();
+
+    if (lineItems.length === 0) {
+      console.log("[MW Webhook] Order has no line items, skipping");
+      return new Response();
+    }
+
+    // Extract unique product IDs from line items
+    const productIds = new Set<string>();
+    for (const item of lineItems) {
+      if (item.product_id) {
+        // Convert numeric Shopify ID to GID format used in our DB
+        const gid = `gid://shopify/Product/${item.product_id}`;
+        productIds.add(gid);
+      }
+    }
+
+    console.log(`[MW Webhook] Order #${order.order_number || order.name} — ${productIds.size} unique products: ${[...productIds].join(", ")}`);
+
+    if (productIds.size === 0) {
+      console.log("[MW Webhook] No product IDs found in line items, skipping");
+      return new Response();
+    }
+
+    let conversionsTracked = 0;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    for (const productGid of productIds) {
+      // Find project tracking this product with an active/recently completed snapshot
+      const project = await prisma.project.findFirst({
+        where: {
+          shop,
+          productId: productGid,
+          snapshots: {
+            some: {
+              status: { in: ["ACTIVE", "COMPLETED"] },
+              createdAt: { gte: thirtyDaysAgo },
+            },
+          },
+        },
+        include: {
+          snapshots: {
+            where: {
+              status: { in: ["ACTIVE", "COMPLETED"] },
+              createdAt: { gte: thirtyDaysAgo },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      });
+
+      if (!project || project.snapshots.length === 0) {
+        // Product not being tracked — this is normal, skip silently
+        continue;
+      }
+
+      const snapshot = project.snapshots[0];
+
+      // Find the best visit to attribute this conversion to:
+      // Priority 1: Visit that added to cart but hasn't converted yet
+      let visit = await prisma.visit.findFirst({
+        where: {
+          snapshotId: snapshot.id,
+          addedToCart: true,
+          converted: false,
+        },
+        orderBy: { startedAt: "desc" },
+      });
+
+      // Priority 2: Any unconverted visit
+      if (!visit) {
+        visit = await prisma.visit.findFirst({
+          where: {
+            snapshotId: snapshot.id,
+            converted: false,
+          },
+          orderBy: { startedAt: "desc" },
+        });
+      }
+
+      if (visit) {
+        await prisma.visit.update({
+          where: { id: visit.id },
+          data: {
+            converted: true,
+            convertedAt: orderCreatedAt,
+          },
+        });
+        conversionsTracked++;
+        console.log(`[MW Webhook] Converted visit ${visit.id} for product ${productGid} (snapshot: ${snapshot.id})`);
+      } else {
+        console.log(`[MW Webhook] No unconverted visit found for product ${productGid} in snapshot ${snapshot.id}`);
+      }
+    }
+
+    console.log(`[MW Webhook] Order processing complete — ${conversionsTracked} conversions tracked`);
+
+    return new Response();
+  } catch (error) {
+    // Return 401 for HMAC verification failures (required by Shopify)
+    if (error instanceof Response) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    console.error("[MW Webhook] Error processing orders/paid:", error);
+    throw error;
+  }
+};

@@ -6,7 +6,7 @@ application_url = "https://mousewhisperer.vercel.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,write_pixels,read_customer_events"
+scopes = "read_products,write_pixels,read_customer_events,read_orders"
 
 [auth]
 redirect_urls = ["https://mousewhisperer.vercel.app/auth/callback"]
@@ -50,3 +50,8 @@ api_version = "2024-10"
   [[webhooks.subscriptions]]
   uri = "/webhooks/shop/redact"
   compliance_topics = ["shop/redact"]
+
+  # Conversion tracking via order webhook (reliable alternative to web pixel)
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/paid"
+  topics = ["orders/paid"]

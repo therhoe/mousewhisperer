@@ -54,6 +54,8 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     topSearchQueries,
     sortPreferences,
     filterUsageCount,
+    productClickCount,
+    productClicksBySource,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -181,6 +183,16 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     prisma.visit.count({
       where: { ...whereClause, appliedFilters: { not: null } },
     }),
+    // Product clicks (exits to /products/*) for collection audits
+    prisma.visit.count({
+      where: { ...whereClause, exitUrl: { contains: "/products/" } },
+    }),
+    // Product clicks by source (for collection source table)
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { ...whereClause, exitUrl: { contains: "/products/" } },
+      _count: true,
+    }),
   ]);
 
   // Process visitor type counts
@@ -212,13 +224,14 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     avgScroll: number;
     atc: number;
     conversions: number;
+    productClicks: number;
   }>();
 
   sourceCategoryStats.forEach((item) => {
     const category = item.sourceCategory || "Unknown";
     if (!sourceMap.has(category)) {
       sourceMap.set(category, {
-        sessions: 0, real: 0, zombie: 0, bot: 0, avgTime: 0, avgScroll: 0, atc: 0, conversions: 0,
+        sessions: 0, real: 0, zombie: 0, bot: 0, avgTime: 0, avgScroll: 0, atc: 0, conversions: 0, productClicks: 0,
       });
     }
     const stats = sourceMap.get(category)!;
@@ -246,6 +259,12 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     if (stats) stats.conversions = item._count;
   });
 
+  productClicksBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.productClicks = item._count;
+  });
+
   const sourceStats = Array.from(sourceMap.entries()).map(([category, stats]) => ({
     category,
     sessions: stats.sessions,
@@ -256,6 +275,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
     atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
     convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
+    productClickRate: stats.real > 0 ? Math.round((stats.productClicks / stats.real) * 100) : 0,
   })).sort((a, b) => b.sessions - a.sessions);
 
   // Process top countries
@@ -314,10 +334,12 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     botPercent: totalSessions > 0 ? Math.round((botCount / totalSessions) * 100) : 0,
     addToCartCount,
     conversionCount,
+    productClickCount,
     avgTimeOnPage,
     avgScrollDepth,
     atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
     convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
+    productClickPercent: totalSessions > 0 ? Math.round((productClickCount / totalSessions) * 100) : 0,
     sourceStats,
     topCountries,
     topCities,
@@ -811,7 +833,7 @@ function ConversionFunnel({ stats, isCollection = false }: { stats: any; isColle
     { label: "All Sessions", value: stats.totalSessions, percent: 100, progressTone: "primary" },
     { label: "Real Users", value: stats.realCount, percent: stats.realPercent, badgeTone: "info", progressTone: "highlight" },
     { label: isCollection ? "Quick Add" : "Added to Cart", value: stats.addToCartCount, percent: stats.atcPercent || 0, badgeTone: "warning", progressTone: "highlight" },
-    { label: isCollection ? "Product" : "Conversions", value: stats.conversionCount, percent: stats.convPercent || 0, badgeTone: "success", progressTone: "success" },
+    { label: isCollection ? "Product" : "Conversions", value: isCollection ? stats.productClickCount : stats.conversionCount, percent: isCollection ? (stats.productClickPercent || 0) : (stats.convPercent || 0), badgeTone: "success", progressTone: "success" },
   ];
 
   return (
@@ -1129,7 +1151,7 @@ export default function ProjectDetails() {
       <IndexTable.Cell>{formatTime(source.avgTime)}</IndexTable.Cell>
       <IndexTable.Cell>{source.avgScroll}%</IndexTable.Cell>
       <IndexTable.Cell>{source.atcRate}%</IndexTable.Cell>
-      <IndexTable.Cell>{source.convRate}%</IndexTable.Cell>
+      <IndexTable.Cell>{isCollection ? source.productClickRate : source.convRate}%</IndexTable.Cell>
     </IndexTable.Row>
   ));
 
@@ -1247,7 +1269,7 @@ export default function ProjectDetails() {
                   <IndexTable.Row id="conv" position={5}>
                     <IndexTable.Cell><Text fontWeight="semibold" as="span">{convLabel}</Text></IndexTable.Cell>
                     {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{s.stats.conversionCount}</IndexTable.Cell>
+                      <IndexTable.Cell key={s.id}>{isCollection ? s.stats.productClickCount : s.stats.conversionCount}</IndexTable.Cell>
                     ))}
                   </IndexTable.Row>
                   <IndexTable.Row id="time" position={6}>
@@ -1375,7 +1397,7 @@ export default function ProjectDetails() {
                       tone="critical"
                     />
                     <StatCard title={atcLabel} value={displayStats.addToCartCount} />
-                    <StatCard title={convLabel} value={displayStats.conversionCount} />
+                    <StatCard title={convLabel} value={isCollection ? displayStats.productClickCount : displayStats.conversionCount} />
                     <StatCard title="Avg Time" value={formatTime(displayStats.avgTimeOnPage)} />
                     <StatCard title="Avg Scroll" value={`${displayStats.avgScrollDepth}%`} />
                   </div>

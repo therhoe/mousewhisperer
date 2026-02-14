@@ -36,20 +36,27 @@ register(({ configuration, analytics, browser }) => {
 
   // Send event to our API
   async function sendEvent(eventType, data, checkoutAttributes) {
-    if (!apiEndpoint) return;
+    if (!apiEndpoint) {
+      console.warn('[MW Pixel] apiEndpoint not configured — cannot send events');
+      return;
+    }
 
     // Priority 1: Get session ID from cart attributes (written by tracker.js)
     let sessionId = getSessionIdFromAttributes(checkoutAttributes);
+    const sessionSource = sessionId ? 'cart_attributes' : null;
 
     // Priority 2: Try cookie
     if (!sessionId) {
       sessionId = await getSessionIdFromCookie();
     }
+    const finalSource = sessionSource || (sessionId ? 'cookie' : 'generated');
 
     // Priority 3: Generate fallback (conversion attributed via product handle)
     if (!sessionId) {
       sessionId = generateSessionId();
     }
+
+    console.log(`[MW Pixel] Sending ${eventType} — session: ${sessionId} (from: ${finalSource})`);
 
     const payload = {
       eventType,
@@ -60,14 +67,15 @@ register(({ configuration, analytics, browser }) => {
     };
 
     try {
-      await fetch(apiEndpoint, {
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         keepalive: true,
       });
+      console.log(`[MW Pixel] ${eventType} response: ${response.status}`);
     } catch (e) {
-      // Silently fail
+      console.error(`[MW Pixel] ${eventType} fetch failed:`, e);
     }
   }
 
@@ -94,6 +102,15 @@ register(({ configuration, analytics, browser }) => {
   // Subscribe to checkout completed (conversion)
   analytics.subscribe('checkout_completed', async (event) => {
     const { checkout } = event.data;
+
+    console.log('[MW Pixel] checkout_completed fired');
+    console.log('[MW Pixel] checkout attributes:', JSON.stringify(checkout?.attributes));
+    console.log('[MW Pixel] checkout lineItems count:', checkout?.lineItems?.length);
+    if (checkout?.lineItems?.[0]) {
+      const sample = checkout.lineItems[0];
+      console.log('[MW Pixel] Sample lineItem keys:', Object.keys(sample));
+      console.log('[MW Pixel] Sample variant.product:', JSON.stringify(sample.variant?.product));
+    }
 
     if (checkout) {
       // Extract product info from line items - handle various Shopify event structures
