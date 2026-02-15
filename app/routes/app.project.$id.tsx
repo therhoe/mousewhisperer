@@ -423,6 +423,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     id: string;
     name: string;
     number: number;
+    createdAt: Date | string;
+    completedAt: Date | string | null;
+    status: string;
     stats: Awaited<ReturnType<typeof getSnapshotStatsFromDB>>;
   }> = [];
 
@@ -436,6 +439,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         id,
         name: snapshotMeta.name || `Snapshot ${snapshotMeta.number}`,
         number: snapshotMeta.number,
+        createdAt: snapshotMeta.createdAt,
+        completedAt: snapshotMeta.completedAt,
+        status: snapshotMeta.status,
         stats: snapshotStats,
       };
     });
@@ -856,6 +862,145 @@ function ConversionFunnel({ stats, isCollection = false }: { stats: any; isColle
   );
 }
 
+// --- Comparison helpers ---
+
+type MetricConfig = {
+  id: string;
+  label: string;
+  group: "traffic" | "quality" | "engagement" | "conversion";
+  getValue: (stats: any, isCollection: boolean) => number;
+  format: (value: number) => string;
+  isPercentage: boolean;
+  higherIsBetter: boolean;
+  tone?: "success" | "caution" | "critical";
+};
+
+const COMPARISON_METRICS: MetricConfig[] = [
+  // Traffic
+  { id: "totalSessions", label: "Total Sessions", group: "traffic", getValue: (s) => s.totalSessions, format: (v) => String(v), isPercentage: false, higherIsBetter: true },
+  { id: "realCount", label: "Real Users", group: "traffic", getValue: (s) => s.realCount, format: (v) => String(v), isPercentage: false, higherIsBetter: true, tone: "success" },
+  { id: "zombieCount", label: "Zombies", group: "traffic", getValue: (s) => s.zombieCount, format: (v) => String(v), isPercentage: false, higherIsBetter: false, tone: "caution" },
+  { id: "botCount", label: "Bots", group: "traffic", getValue: (s) => s.botCount, format: (v) => String(v), isPercentage: false, higherIsBetter: false, tone: "critical" },
+  // Quality
+  { id: "realPercent", label: "Real %", group: "quality", getValue: (s) => s.realPercent, format: (v) => `${v}%`, isPercentage: true, higherIsBetter: true, tone: "success" },
+  { id: "zombiePercent", label: "Zombie %", group: "quality", getValue: (s) => s.zombiePercent, format: (v) => `${v}%`, isPercentage: true, higherIsBetter: false, tone: "caution" },
+  { id: "botPercent", label: "Bot %", group: "quality", getValue: (s) => s.botPercent, format: (v) => `${v}%`, isPercentage: true, higherIsBetter: false, tone: "critical" },
+  // Engagement
+  { id: "avgTime", label: "Avg Time", group: "engagement", getValue: (s) => s.avgTimeOnPage, format: (v) => formatTime(v), isPercentage: false, higherIsBetter: true },
+  { id: "avgScroll", label: "Avg Scroll", group: "engagement", getValue: (s) => s.avgScrollDepth, format: (v) => `${v}%`, isPercentage: true, higherIsBetter: true },
+  // Conversion
+  { id: "atcCount", label: "ATC_LABEL", group: "conversion", getValue: (s) => s.addToCartCount, format: (v) => String(v), isPercentage: false, higherIsBetter: true },
+  { id: "atcPercent", label: "ATC_LABEL Rate", group: "conversion", getValue: (s) => s.atcPercent, format: (v) => `${v}%`, isPercentage: true, higherIsBetter: true },
+  { id: "convCount", label: "CONV_LABEL", group: "conversion", getValue: (s, isCol) => isCol ? s.productClickCount : s.conversionCount, format: (v) => String(v), isPercentage: false, higherIsBetter: true },
+  { id: "convPercent", label: "CONV_LABEL Rate", group: "conversion", getValue: (s, isCol) => isCol ? (s.productClickPercent || 0) : (s.convPercent || 0), format: (v) => `${v}%`, isPercentage: true, higherIsBetter: true },
+];
+
+const METRIC_GROUPS: Array<{ key: string; label: string }> = [
+  { key: "traffic", label: "Traffic" },
+  { key: "quality", label: "Quality" },
+  { key: "engagement", label: "Engagement" },
+  { key: "conversion", label: "Conversion" },
+];
+
+function getMetricLabel(metric: MetricConfig, atcLabel: string, convLabel: string): string {
+  return metric.label.replace("ATC_LABEL", atcLabel).replace("CONV_LABEL", convLabel);
+}
+
+function computeDelta(first: number, last: number, isPercentage: boolean): {
+  raw: number;
+  formatted: string;
+  direction: "up" | "down" | "flat";
+} {
+  const diff = last - first;
+  if (diff === 0) return { raw: 0, formatted: "0", direction: "flat" };
+  const direction: "up" | "down" = diff > 0 ? "up" : "down";
+  if (isPercentage) {
+    const sign = diff > 0 ? "+" : "";
+    return { raw: diff, formatted: `${sign}${diff}pp`, direction };
+  }
+  const pctChange = first > 0 ? Math.round((diff / first) * 100) : (diff > 0 ? 100 : -100);
+  const sign = diff > 0 ? "+" : "";
+  return { raw: diff, formatted: `${sign}${diff} (${sign}${pctChange}%)`, direction };
+}
+
+function getDeltaTone(direction: "up" | "down" | "flat", higherIsBetter: boolean): "success" | "critical" | "subdued" {
+  if (direction === "flat") return "subdued";
+  const isImprovement = (direction === "up" && higherIsBetter) || (direction === "down" && !higherIsBetter);
+  return isImprovement ? "success" : "critical";
+}
+
+function getDeltaArrow(direction: "up" | "down" | "flat"): string {
+  if (direction === "up") return "\u25B2";
+  if (direction === "down") return "\u25BC";
+  return "\u2014";
+}
+
+function findWinnerIndex(values: number[], higherIsBetter: boolean): number {
+  if (values.length === 0) return -1;
+  let bestIdx = 0;
+  for (let i = 1; i < values.length; i++) {
+    if (higherIsBetter ? values[i] > values[bestIdx] : values[i] < values[bestIdx]) {
+      bestIdx = i;
+    }
+  }
+  return values.every((v) => v === values[0]) ? -1 : bestIdx;
+}
+
+function generateVerdict(
+  data: Array<{ name: string; stats: any }>,
+  isCollection: boolean,
+): { text: string; tone: "success" | "warning" | "critical" | "info" } {
+  if (data.length < 2) return { text: "Select at least two snapshots to compare.", tone: "info" };
+  const first = data[0];
+  const last = data[data.length - 1];
+
+  const realDelta = last.stats.realPercent - first.stats.realPercent;
+  const botDelta = last.stats.botPercent - first.stats.botPercent;
+  const atcDelta = last.stats.atcPercent - first.stats.atcPercent;
+  const convDelta = isCollection
+    ? (last.stats.productClickPercent || 0) - (first.stats.productClickPercent || 0)
+    : last.stats.convPercent - first.stats.convPercent;
+
+  const improvements: string[] = [];
+  const regressions: string[] = [];
+
+  if (realDelta > 0) improvements.push(`real user rate +${realDelta}pp`);
+  else if (realDelta < 0) regressions.push(`real user rate ${realDelta}pp`);
+  if (botDelta < 0) improvements.push(`bot traffic ${botDelta}pp`);
+  else if (botDelta > 0) regressions.push(`bot traffic +${botDelta}pp`);
+  if (atcDelta > 0) improvements.push(`${isCollection ? "quick add" : "ATC"} rate +${atcDelta}pp`);
+  else if (atcDelta < 0) regressions.push(`${isCollection ? "quick add" : "ATC"} rate ${atcDelta}pp`);
+  if (convDelta > 0) improvements.push(`${isCollection ? "product click" : "conversion"} rate +${convDelta}pp`);
+  else if (convDelta < 0) regressions.push(`${isCollection ? "product click" : "conversion"} rate ${convDelta}pp`);
+
+  let text = `${last.name} vs ${first.name}: `;
+  if (improvements.length > 0 && regressions.length === 0) {
+    text += `Improved ${improvements.join(", ")}`;
+    return { text, tone: "success" };
+  } else if (regressions.length > 0 && improvements.length === 0) {
+    text += `Regressed \u2014 ${regressions.join(", ")}`;
+    return { text, tone: "critical" };
+  } else if (improvements.length > 0 && regressions.length > 0) {
+    text += `Improved ${improvements.join(", ")}. But ${regressions.join(", ")}`;
+    return { text, tone: "warning" };
+  }
+  text += "No significant changes detected.";
+  return { text, tone: "info" };
+}
+
+function formatSnapshotDateRange(createdAt: string | Date, completedAt: string | Date | null, status: string): string {
+  const fmt = (d: string | Date) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const start = fmt(createdAt);
+  if (completedAt) return `${start} \u2013 ${fmt(completedAt)}`;
+  return status === "ACTIVE" ? `${start} \u2013 Now` : start;
+}
+
+function getProgressTone(metric: MetricConfig): "success" | "critical" | "highlight" | "primary" {
+  if (metric.tone === "success") return "success";
+  if (metric.tone === "critical") return "critical";
+  return "highlight";
+}
+
 const DATE_PRESETS = [
   { label: "All Time", value: "all" },
   { label: "Today", value: "today" },
@@ -1214,6 +1359,18 @@ export default function ProjectDetails() {
 
   // Compare mode view
   if (compareMode && comparisonData.length >= 2) {
+    const verdict = generateVerdict(comparisonData, isCollection);
+    const hasDelta = comparisonData.length === 2;
+    const totalCols = 1 + comparisonData.length + (hasDelta ? 1 : 0);
+
+    // Collect all source categories across snapshots
+    const allSources = Array.from(
+      new Set(comparisonData.flatMap((s) => s.stats.sourceStats.map((src: any) => src.category)))
+    ).sort();
+
+    const cellStyle = { padding: "10px 16px", borderBottom: "1px solid var(--p-color-border-subdued)" };
+    const headerCellStyle = { ...cellStyle, textAlign: "left" as const };
+
     return (
       <Page
         fullWidth
@@ -1223,68 +1380,265 @@ export default function ProjectDetails() {
         primaryAction={{ content: "Exit Compare", onAction: exitCompareMode }}
       >
         <Layout>
+          {/* Section 1: Summary Verdict */}
+          <Layout.Section>
+            <Banner title="Comparison Summary" tone={verdict.tone}>
+              <p>{verdict.text}</p>
+            </Banner>
+          </Layout.Section>
+
+          {/* Section 2: Grouped Metric Comparison Table */}
           <Layout.Section>
             <Card>
               <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Comparison</Text>
-                <IndexTable
-                  resourceName={{ singular: "metric", plural: "metrics" }}
-                  itemCount={8}
-                  headings={[
-                    { title: "Metric" },
-                    ...comparisonData.map((s) => ({ title: s.name })),
-                  ]}
-                  selectable={false}
-                >
-                  <IndexTable.Row id="real" position={0}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Real Users</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}><Text as="span" tone="success">{s.stats.realCount}</Text></IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="zombie" position={1}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Zombies</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}><Text as="span" tone="caution">{s.stats.zombieCount}</Text></IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="bot" position={2}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Bots</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}><Text as="span" tone="critical">{s.stats.botCount}</Text></IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="real-pct" position={3}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Real %</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{s.stats.realPercent}%</IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="atc" position={4}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">{atcLabel}</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{s.stats.addToCartCount}</IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="conv" position={5}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">{convLabel}</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{isCollection ? s.stats.productClickCount : s.stats.conversionCount}</IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="time" position={6}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Avg Time</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{formatTime(s.stats.avgTimeOnPage)}</IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                  <IndexTable.Row id="scroll" position={7}>
-                    <IndexTable.Cell><Text fontWeight="semibold" as="span">Avg Scroll</Text></IndexTable.Cell>
-                    {comparisonData.map((s) => (
-                      <IndexTable.Cell key={s.id}>{s.stats.avgScrollDepth}%</IndexTable.Cell>
-                    ))}
-                  </IndexTable.Row>
-                </IndexTable>
+                <Text as="h2" variant="headingMd">Metrics Comparison</Text>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "2px solid var(--p-color-border-subdued)" }}>
+                        <th style={{ ...headerCellStyle, minWidth: 140 }}>
+                          <Text as="span" variant="bodySm" fontWeight="semibold">Metric</Text>
+                        </th>
+                        {comparisonData.map((s) => (
+                          <th key={s.id} style={{ ...headerCellStyle, minWidth: 120 }}>
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">{s.name}</Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {formatSnapshotDateRange(s.createdAt, s.completedAt, s.status)}
+                              </Text>
+                            </BlockStack>
+                          </th>
+                        ))}
+                        {hasDelta && (
+                          <th style={{ ...headerCellStyle, minWidth: 120 }}>
+                            <Text as="span" variant="bodySm" fontWeight="semibold">Change</Text>
+                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {METRIC_GROUPS.map((group) => {
+                        const metricsInGroup = COMPARISON_METRICS.filter((m) => m.group === group.key);
+                        return [
+                          <tr key={`group-${group.key}`}>
+                            <td colSpan={totalCols} style={{
+                              padding: "8px 16px",
+                              backgroundColor: "var(--p-color-bg-surface-secondary)",
+                              borderBottom: "1px solid var(--p-color-border-subdued)",
+                            }}>
+                              <Text as="span" variant="bodyMd" fontWeight="bold">{group.label}</Text>
+                            </td>
+                          </tr>,
+                          ...metricsInGroup.map((metric) => {
+                            const values = comparisonData.map((s) => metric.getValue(s.stats, isCollection));
+                            const winnerIdx = findWinnerIndex(values, metric.higherIsBetter);
+                            const label = getMetricLabel(metric, atcLabel, convLabel);
+                            const delta = hasDelta ? computeDelta(values[0], values[1], metric.isPercentage) : null;
+                            const deltaTone = delta ? getDeltaTone(delta.direction, metric.higherIsBetter) : "subdued";
+
+                            return (
+                              <tr key={metric.id}>
+                                <td style={cellStyle}>
+                                  <Text as="span" fontWeight="semibold">{label}</Text>
+                                </td>
+                                {comparisonData.map((s, idx) => {
+                                  const value = values[idx];
+                                  const isWinner = idx === winnerIdx;
+                                  return (
+                                    <td key={s.id} style={{
+                                      ...cellStyle,
+                                      backgroundColor: isWinner ? "var(--p-color-bg-surface-success)" : "transparent",
+                                    }}>
+                                      <BlockStack gap="100">
+                                        <Text as="span" fontWeight={isWinner ? "bold" : "regular"} tone={metric.tone}>
+                                          {metric.format(value)}
+                                        </Text>
+                                        {metric.isPercentage && (
+                                          <div style={{ maxWidth: 80 }}>
+                                            <ProgressBar progress={Math.min(value, 100)} size="small" tone={getProgressTone(metric)} />
+                                          </div>
+                                        )}
+                                      </BlockStack>
+                                    </td>
+                                  );
+                                })}
+                                {hasDelta && delta && (
+                                  <td style={cellStyle}>
+                                    <Text as="span" tone={deltaTone}>
+                                      {getDeltaArrow(delta.direction)} {delta.formatted}
+                                    </Text>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          }),
+                        ];
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          {/* Section 3: Side-by-Side Conversion Funnels */}
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Conversion Funnels</Text>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${comparisonData.length}, 1fr)`,
+                  gap: 16,
+                }}>
+                  {comparisonData.map((s) => (
+                    <Box key={s.id} padding="400" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack gap="300">
+                        <Text as="h3" variant="headingSm">{s.name}</Text>
+                        <ConversionFunnel stats={s.stats} isCollection={isCollection} />
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </div>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          {/* Section 4: Source Quality Comparison */}
+          {allSources.length > 0 && (
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Source Quality Comparison</Text>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "2px solid var(--p-color-border-subdued)" }}>
+                          <th style={{ ...headerCellStyle, minWidth: 140 }}>
+                            <Text as="span" variant="bodySm" fontWeight="semibold">Source</Text>
+                          </th>
+                          {comparisonData.map((s) => (
+                            <th key={s.id} style={headerCellStyle}>
+                              <Text as="span" variant="bodySm" fontWeight="semibold">{s.name} Real %</Text>
+                            </th>
+                          ))}
+                          {hasDelta && (
+                            <th style={headerCellStyle}>
+                              <Text as="span" variant="bodySm" fontWeight="semibold">Change</Text>
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allSources.map((source) => {
+                          const values = comparisonData.map((s) => {
+                            const found = s.stats.sourceStats.find((src: any) => src.category === source);
+                            return found && found.sessions > 0 ? Math.round((found.real / found.sessions) * 100) : 0;
+                          });
+                          const winnerIdx = findWinnerIndex(values, true);
+                          const delta = hasDelta ? computeDelta(values[0], values[1], true) : null;
+                          const deltaTone = delta ? getDeltaTone(delta.direction, true) : "subdued";
+
+                          return (
+                            <tr key={source}>
+                              <td style={cellStyle}>
+                                <Text as="span" fontWeight="semibold">
+                                  {getSourceIcon(source)} {source}
+                                </Text>
+                              </td>
+                              {values.map((val, i) => (
+                                <td key={comparisonData[i].id} style={{
+                                  ...cellStyle,
+                                  backgroundColor: i === winnerIdx ? "var(--p-color-bg-surface-success)" : "transparent",
+                                }}>
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <Text as="span" fontWeight={i === winnerIdx ? "bold" : "regular"}>{val}%</Text>
+                                    <div style={{ width: 60 }}>
+                                      <ProgressBar progress={Math.min(val, 100)} size="small" tone="success" />
+                                    </div>
+                                  </InlineStack>
+                                </td>
+                              ))}
+                              {hasDelta && delta && (
+                                <td style={cellStyle}>
+                                  <Text as="span" tone={deltaTone}>
+                                    {getDeltaArrow(delta.direction)} {delta.formatted}
+                                  </Text>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          )}
+
+          {/* Section 5a: Geographic Comparison */}
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Geographic Comparison</Text>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${comparisonData.length}, 1fr)`,
+                  gap: 16,
+                }}>
+                  {comparisonData.map((s) => (
+                    <Box key={s.id} padding="300" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack gap="200">
+                        <Text as="h3" variant="headingSm">{s.name}</Text>
+                        <Divider />
+                        {s.stats.topCountries.length === 0 ? (
+                          <Text as="p" tone="subdued">No geo data</Text>
+                        ) : (
+                          s.stats.topCountries.map((item: any) => (
+                            <InlineStack key={item.country} align="space-between">
+                              <Text as="span">{item.country}</Text>
+                              <Badge>{String(item.count)}</Badge>
+                            </InlineStack>
+                          ))
+                        )}
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </div>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          {/* Section 5b: Device Comparison */}
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Device Comparison</Text>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${comparisonData.length}, 1fr)`,
+                  gap: 16,
+                }}>
+                  {comparisonData.map((s) => (
+                    <Box key={s.id} padding="300" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack gap="200">
+                        <Text as="h3" variant="headingSm">{s.name}</Text>
+                        <Divider />
+                        {s.stats.deviceBreakdown.length === 0 ? (
+                          <Text as="p" tone="subdued">No device data</Text>
+                        ) : (
+                          s.stats.deviceBreakdown.map((item: any) => (
+                            <InlineStack key={item.device} align="space-between">
+                              <Text as="span">{getDeviceIcon(item.device)} {item.device}</Text>
+                              <Badge>{`${item.percent}%`}</Badge>
+                            </InlineStack>
+                          ))
+                        )}
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </div>
               </BlockStack>
             </Card>
           </Layout.Section>
