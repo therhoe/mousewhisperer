@@ -30,7 +30,6 @@ import {
 import {
   CheckCircleIcon,
   MinusCircleIcon,
-  NotificationIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -682,20 +681,21 @@ export default function Index() {
   ) : null;
 
   const bellActivator = (
-    <div style={{ position: "relative", display: "inline-flex", fontSize: "1.25rem" }}>
-      <Button
-        variant="plain"
-        size="large"
-        onClick={() => setBellOpen((o) => !o)}
-        icon={NotificationIcon}
-        accessibilityLabel="Notifications"
-      />
+    <div
+      style={{ position: "relative", display: "inline-flex", cursor: "pointer", padding: 8 }}
+      onClick={() => setBellOpen((o) => !o)}
+      role="button"
+      tabIndex={0}
+    >
+      <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
+        <path d="M10 18a2 2 0 0 1-2-2h4a2 2 0 0 1-2 2zm7-3H3v-1l2-2V8a5 5 0 0 1 4-4.9V3a1 1 0 1 1 2 0v.1A5 5 0 0 1 15 8v4l2 2v1z" />
+      </svg>
       {unreadCount > 0 && (
         <span
           style={{
             position: "absolute",
-            top: -4,
-            right: -4,
+            top: 2,
+            right: 2,
             minWidth: 18,
             height: 18,
             borderRadius: 9,
@@ -708,6 +708,7 @@ export default function Index() {
             justifyContent: "center",
             padding: "0 5px",
             lineHeight: 1,
+            pointerEvents: "none",
             animation: "notif-pulse 2s ease-in-out infinite",
           }}
         >

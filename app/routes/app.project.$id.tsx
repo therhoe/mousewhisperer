@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useSearchParams, useRouteError, isRouteErrorResponse, Link } from "@remix-run/react";
 import { useState, useEffect, useCallback } from "react";
 import {
   Page,
@@ -357,6 +357,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const projectId = params.id;
   const url = new URL(request.url);
 
+  try {
   // Get snapshot ID from URL or use active/latest
   const snapshotIdParam = url.searchParams.get("snapshot");
   const compareMode = url.searchParams.get("compare") === "true";
@@ -412,41 +413,43 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     selectedSnapshotMeta = project.snapshots[0];
   }
 
-  // Calculate stats using efficient database aggregations
-  let stats = null;
-  if (selectedSnapshotMeta) {
-    stats = await getSnapshotStatsFromDB(selectedSnapshotMeta.id, dateFilter);
-  }
-
   // Calculate comparison data if in compare mode
   let comparisonData: Array<{
     id: string;
     name: string;
     number: number;
-    createdAt: Date | string;
-    completedAt: Date | string | null;
+    createdAt: string;
+    completedAt: string | null;
     status: string;
     stats: Awaited<ReturnType<typeof getSnapshotStatsFromDB>>;
   }> = [];
 
   if (compareMode && compareIdsParam) {
+    // Run sequentially (not Promise.all) to avoid exhausting the single-connection pool
     const compareIds = compareIdsParam.split(",");
-    const comparePromises = compareIds.map(async (id) => {
+    for (const id of compareIds) {
       const snapshotMeta = project.snapshots.find((s) => s.id === id);
-      if (!snapshotMeta) return null;
+      if (!snapshotMeta) continue;
       const snapshotStats = await getSnapshotStatsFromDB(id, dateFilter);
-      return {
+      comparisonData.push({
         id,
         name: snapshotMeta.name || `Snapshot ${snapshotMeta.number}`,
         number: snapshotMeta.number,
-        createdAt: snapshotMeta.createdAt,
-        completedAt: snapshotMeta.completedAt,
+        createdAt: snapshotMeta.createdAt.toISOString(),
+        completedAt: snapshotMeta.completedAt?.toISOString() ?? null,
         status: snapshotMeta.status,
-        stats: snapshotStats,
-      };
-    });
-    const results = await Promise.all(comparePromises);
-    comparisonData = results.filter((r): r is NonNullable<typeof r> => r !== null);
+        stats: {
+          ...snapshotStats,
+          recentVisits: [], // Strip for comparison (not used, reduces payload)
+        },
+      });
+    }
+  }
+
+  // Calculate stats using efficient database aggregations (skip in compare mode - not used)
+  let stats = null;
+  if (selectedSnapshotMeta && !compareMode) {
+    stats = await getSnapshotStatsFromDB(selectedSnapshotMeta.id, dateFilter);
   }
 
   // For collection audits, enrich exit URLs with product data
@@ -544,6 +547,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
     topProductsClicked,
   });
+
+  } catch (err) {
+    console.error("[MW Loader] Project page loader error:", err);
+    throw new Response(
+      err instanceof Error ? `${err.message}\n\n${err.stack}` : String(err),
+      { status: 500 }
+    );
+  }
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -988,8 +999,8 @@ function generateVerdict(
   return { text, tone: "info" };
 }
 
-function formatSnapshotDateRange(createdAt: string | Date, completedAt: string | Date | null, status: string): string {
-  const fmt = (d: string | Date) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function formatSnapshotDateRange(createdAt: string, completedAt: string | null, status: string): string {
+  const fmt = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const start = fmt(createdAt);
   if (completedAt) return `${start} \u2013 ${fmt(completedAt)}`;
   return status === "ACTIVE" ? `${start} \u2013 Now` : start;
@@ -1359,13 +1370,20 @@ export default function ProjectDetails() {
 
   // Compare mode view
   if (compareMode && comparisonData.length >= 2) {
-    const verdict = generateVerdict(comparisonData, isCollection);
+    console.log("[MW Compare] Rendering comparison view with", comparisonData.length, "snapshots");
+    let verdict: { text: string; tone: "success" | "warning" | "critical" | "info" };
+    try {
+      verdict = generateVerdict(comparisonData, isCollection);
+    } catch (err) {
+      console.error("[MW Compare] generateVerdict error:", err);
+      verdict = { text: "Error computing verdict", tone: "info" };
+    }
     const hasDelta = comparisonData.length === 2;
     const totalCols = 1 + comparisonData.length + (hasDelta ? 1 : 0);
 
     // Collect all source categories across snapshots
     const allSources = Array.from(
-      new Set(comparisonData.flatMap((s) => s.stats.sourceStats.map((src: any) => src.category)))
+      new Set(comparisonData.flatMap((s) => (s.stats.sourceStats || []).map((src: any) => src.category)))
     ).sort();
 
     const cellStyle = { padding: "10px 16px", borderBottom: "1px solid var(--p-color-border-subdued)" };
@@ -1532,7 +1550,7 @@ export default function ProjectDetails() {
                       <tbody>
                         {allSources.map((source) => {
                           const values = comparisonData.map((s) => {
-                            const found = s.stats.sourceStats.find((src: any) => src.category === source);
+                            const found = (s.stats.sourceStats || []).find((src: any) => src.category === source);
                             return found && found.sessions > 0 ? Math.round((found.real / found.sessions) * 100) : 0;
                           });
                           const winnerIdx = findWinnerIndex(values, true);
@@ -1592,7 +1610,7 @@ export default function ProjectDetails() {
                       <BlockStack gap="200">
                         <Text as="h3" variant="headingSm">{s.name}</Text>
                         <Divider />
-                        {s.stats.topCountries.length === 0 ? (
+                        {(!s.stats.topCountries || s.stats.topCountries.length === 0) ? (
                           <Text as="p" tone="subdued">No geo data</Text>
                         ) : (
                           s.stats.topCountries.map((item: any) => (
@@ -1625,7 +1643,7 @@ export default function ProjectDetails() {
                       <BlockStack gap="200">
                         <Text as="h3" variant="headingSm">{s.name}</Text>
                         <Divider />
-                        {s.stats.deviceBreakdown.length === 0 ? (
+                        {(!s.stats.deviceBreakdown || s.stats.deviceBreakdown.length === 0) ? (
                           <Text as="p" tone="subdued">No device data</Text>
                         ) : (
                           s.stats.deviceBreakdown.map((item: any) => (
@@ -2177,6 +2195,50 @@ export default function ProjectDetails() {
           </FormLayout>
         </Modal.Section>
       </Modal>
+    </Page>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  let message = "Unknown error";
+  let details = "";
+
+  if (isRouteErrorResponse(error)) {
+    message = `${error.status}: ${typeof error.data === "string" ? error.data : JSON.stringify(error.data)}`;
+    details = typeof error.data === "string" ? error.data : "";
+  } else if (error instanceof Error) {
+    message = error.message;
+    details = error.stack || "";
+  } else {
+    message = String(error);
+  }
+
+  // Log full error for Vercel runtime logs
+  console.error("[MW ErrorBoundary] Project page error:", error);
+
+  return (
+    <Page title="Something went wrong">
+      <Layout>
+        <Layout.Section>
+          <Banner title="Error loading project page" tone="critical">
+            <p>{message}</p>
+          </Banner>
+        </Layout.Section>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text as="p">This error has been logged. Try reloading or go back to the dashboard.</Text>
+              {details && (
+                <div style={{ background: "#f4f4f4", padding: 12, borderRadius: 6, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", maxHeight: 300, overflow: "auto" }}>
+                  {details}
+                </div>
+              )}
+              <Link to="/app">Back to Dashboard</Link>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
     </Page>
   );
 }
