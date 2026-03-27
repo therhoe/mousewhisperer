@@ -19,6 +19,7 @@ async function getSnapshotStats(snapshotId: string) {
     sortPreferences,
     filterUsageCount,
     productClickCount,
+    revenueAggregate,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -27,18 +28,10 @@ async function getSnapshotStats(snapshotId: string) {
       _count: true,
     }),
     // Count conversions and add-to-cart
-    prisma.visit.aggregate({
-      where: { snapshotId },
-      _count: { _all: true },
-      _sum: { addedToCart: false, converted: false },
-    }).then(async () => {
-      // Prisma doesn't support _sum on boolean, so use count
-      const [atc, conv] = await Promise.all([
-        prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
-        prisma.visit.count({ where: { snapshotId, converted: true } }),
-      ]);
-      return { addToCartCount: atc, conversionCount: conv };
-    }),
+    Promise.all([
+      prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
+      prisma.visit.count({ where: { snapshotId, converted: true } }),
+    ]).then(([atc, conv]) => ({ addToCartCount: atc, conversionCount: conv })),
     // Get average time and scroll for REAL users only
     prisma.visit.aggregate({
       where: { snapshotId, visitorType: "REAL" },
@@ -146,6 +139,12 @@ async function getSnapshotStats(snapshotId: string) {
     // Product clicks (exits to /products/*) for collection audits
     prisma.visit.count({
       where: { snapshotId, exitUrl: { contains: "/products/" } },
+    }),
+    // Revenue aggregation
+    prisma.visit.aggregate({
+      where: { snapshotId, converted: true, orderValue: { not: null } },
+      _sum: { orderValue: true },
+      _count: { _all: true },
     }),
   ]);
 
@@ -281,6 +280,9 @@ async function getSnapshotStats(snapshotId: string) {
     filterUsageCount,
   };
 
+  const totalRevenue = revenueAggregate._sum.orderValue || 0;
+  const ordersWithValue = revenueAggregate._count._all || 0;
+
   return {
     totalSessions,
     realCount,
@@ -297,6 +299,11 @@ async function getSnapshotStats(snapshotId: string) {
     atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
     convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
     productClickPercent: totalSessions > 0 ? Math.round((productClickCount / totalSessions) * 100) : 0,
+    totalRevenue,
+    revenuePerVisitor: realCount > 0 ? Math.round((totalRevenue / realCount) * 100) / 100 : 0,
+    aov: ordersWithValue > 0 ? Math.round((totalRevenue / ordersWithValue) * 100) / 100 : 0,
+    atcRate: realCount > 0 ? Math.round((addToCartCount / realCount) * 1000) / 10 : 0,
+    convRate: realCount > 0 ? Math.round((conversionCount / realCount) * 1000) / 10 : 0,
     sourceStats,
     topCountries,
     topCities,

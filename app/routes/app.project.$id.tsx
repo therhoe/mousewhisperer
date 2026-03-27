@@ -22,6 +22,7 @@ import {
   FormLayout,
   Banner,
   Thumbnail,
+  Checkbox,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -29,11 +30,21 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { generateCSV, generatePDF } from "../utils/export.server";
 
+// Map grouped source filter to actual sourceCategory values
+const SOURCE_FILTER_MAP: Record<string, string[]> = {
+  paid: ["Paid Search", "Paid Social"],
+  organic: ["Organic Search", "Organic Social"],
+  direct: ["Direct", "Internal"],
+  referral: ["Referral"],
+  email: ["Email"],
+};
+
 // Calculate stats using efficient database aggregations
-async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedAt?: { gte?: Date; lte?: Date } }) {
-  const whereClause = {
+async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedAt?: { gte?: Date; lte?: Date } }, sourceFilter?: string[]) {
+  const whereClause: any = {
     snapshotId,
     ...(dateFilter.startedAt ? dateFilter : {}),
+    ...(sourceFilter ? { sourceCategory: { in: sourceFilter } } : {}),
   };
 
   // Run all queries in parallel for maximum efficiency
@@ -56,6 +67,8 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     filterUsageCount,
     productClickCount,
     productClicksBySource,
+    revenueAggregate,
+    ctaClickRows,
   ] = await Promise.all([
     // Count by visitor type
     prisma.visit.groupBy({
@@ -109,11 +122,11 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
       _count: true,
       orderBy: { _count: { exitType: "desc" } },
     }),
-    // Recent visits (limited to 50)
+    // Recent visits (limited to 20 when filtered, 50 otherwise)
     prisma.visit.findMany({
       where: whereClause,
       orderBy: { startedAt: "desc" },
-      take: 50,
+      take: sourceFilter ? 20 : 50,
       select: {
         id: true,
         sessionId: true,
@@ -192,6 +205,17 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
       by: ["sourceCategory"],
       where: { ...whereClause, exitUrl: { contains: "/products/" } },
       _count: true,
+    }),
+    // Revenue aggregation
+    prisma.visit.aggregate({
+      where: { ...whereClause, converted: true, orderValue: { not: null } },
+      _sum: { orderValue: true },
+      _count: { _all: true },
+    }),
+    // CTA clicks — fetch raw JSON from visits that have CTA data
+    prisma.visit.findMany({
+      where: { ...whereClause, ctaClicks: { not: null } },
+      select: { ctaClicks: true },
     }),
   ]);
 
@@ -324,6 +348,25 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     filterUsageCount,
   };
 
+  const totalRevenue = revenueAggregate._sum.orderValue || 0;
+  const ordersWithValue = revenueAggregate._count._all || 0;
+
+  // Aggregate CTA clicks across all visits
+  const ctaMap = new Map<string, number>();
+  ctaClickRows.forEach((row: { ctaClicks: string | null }) => {
+    if (!row.ctaClicks) return;
+    try {
+      const clicks = JSON.parse(row.ctaClicks);
+      Object.entries(clicks).forEach(([label, count]) => {
+        ctaMap.set(label, (ctaMap.get(label) || 0) + (count as number));
+      });
+    } catch {}
+  });
+  const ctaStats = Array.from(ctaMap.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 15);
+
   return {
     totalSessions,
     realCount,
@@ -340,6 +383,11 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     atcPercent: totalSessions > 0 ? Math.round((addToCartCount / totalSessions) * 100) : 0,
     convPercent: totalSessions > 0 ? Math.round((conversionCount / totalSessions) * 100) : 0,
     productClickPercent: totalSessions > 0 ? Math.round((productClickCount / totalSessions) * 100) : 0,
+    totalRevenue,
+    revenuePerVisitor: realCount > 0 ? Math.round((totalRevenue / realCount) * 100) / 100 : 0,
+    aov: ordersWithValue > 0 ? Math.round((totalRevenue / ordersWithValue) * 100) / 100 : 0,
+    atcRate: realCount > 0 ? Math.round((addToCartCount / realCount) * 1000) / 10 : 0,
+    convRate: realCount > 0 ? Math.round((conversionCount / realCount) * 1000) / 10 : 0,
     sourceStats,
     topCountries,
     topCities,
@@ -348,6 +396,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     exitPaths,
     exitUrls,
     searchStats,
+    ctaStats,
   };
 }
 
@@ -362,6 +411,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const snapshotIdParam = url.searchParams.get("snapshot");
   const compareMode = url.searchParams.get("compare") === "true";
   const compareIdsParam = url.searchParams.get("compareIds");
+
+  // Parse source filter from URL
+  const sourceParam = url.searchParams.get("source");
+  const sourceCategories = sourceParam && sourceParam !== "all" ? SOURCE_FILTER_MAP[sourceParam] || undefined : undefined;
 
   // Parse date range from URL params
   const startDateParam = url.searchParams.get("startDate");
@@ -425,31 +478,36 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }> = [];
 
   if (compareMode && compareIdsParam) {
-    // Run sequentially (not Promise.all) to avoid exhausting the single-connection pool
     const compareIds = compareIdsParam.split(",");
-    for (const id of compareIds) {
-      const snapshotMeta = project.snapshots.find((s) => s.id === id);
-      if (!snapshotMeta) continue;
-      const snapshotStats = await getSnapshotStatsFromDB(id, dateFilter);
+    const validSnapshots = compareIds
+      .map((id) => ({ id, meta: project.snapshots.find((s) => s.id === id) }))
+      .filter((s) => s.meta);
+
+    // Run all comparison stats in parallel (pool size now supports this)
+    const comparisonStats = await Promise.all(
+      validSnapshots.map(({ id }) => getSnapshotStatsFromDB(id, dateFilter, sourceCategories))
+    );
+
+    validSnapshots.forEach(({ id, meta }, i) => {
       comparisonData.push({
         id,
-        name: snapshotMeta.name || `Snapshot ${snapshotMeta.number}`,
-        number: snapshotMeta.number,
-        createdAt: snapshotMeta.createdAt.toISOString(),
-        completedAt: snapshotMeta.completedAt?.toISOString() ?? null,
-        status: snapshotMeta.status,
+        name: meta!.name || `Snapshot ${meta!.number}`,
+        number: meta!.number,
+        createdAt: meta!.createdAt.toISOString(),
+        completedAt: meta!.completedAt?.toISOString() ?? null,
+        status: meta!.status,
         stats: {
-          ...snapshotStats,
+          ...comparisonStats[i],
           recentVisits: [], // Strip for comparison (not used, reduces payload)
         },
       });
-    }
+    });
   }
 
   // Calculate stats using efficient database aggregations (skip in compare mode - not used)
   let stats = null;
   if (selectedSnapshotMeta && !compareMode) {
-    stats = await getSnapshotStatsFromDB(selectedSnapshotMeta.id, dateFilter);
+    stats = await getSnapshotStatsFromDB(selectedSnapshotMeta.id, dateFilter, sourceCategories);
   }
 
   // For collection audits, enrich exit URLs with product data
@@ -510,6 +568,66 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
+  // Compute lightweight snapshot trends for the graph (revenue, ATC%, conv% across snapshots)
+  // Use up to the last 6 snapshots, ordered oldest to newest
+  const trendSnapshots = [...project.snapshots].reverse().slice(-6);
+  const snapshotTrends: Array<{
+    name: string;
+    number: number;
+    revenuePerVisitor: number;
+    aov: number;
+    atcRate: number;
+    convRate: number;
+  }> = [];
+
+  if (!compareMode && trendSnapshots.length > 0) {
+    const srcFilter = sourceCategories ? { sourceCategory: { in: sourceCategories } } : {};
+    // Run all snapshot trend queries in parallel (2 queries per snapshot instead of 4)
+    const trendResults = await Promise.all(
+      trendSnapshots.map(async (snap) => {
+        const [counts, revAgg] = await Promise.all([
+          prisma.visit.groupBy({
+            by: ["visitorType"],
+            where: { snapshotId: snap.id, ...srcFilter },
+            _count: true,
+          }),
+          prisma.visit.aggregate({
+            where: { snapshotId: snap.id, ...srcFilter },
+            _sum: { orderValue: true },
+            _count: { _all: true },
+          }),
+        ]);
+        return { snap, counts, revAgg };
+      })
+    );
+
+    // Also get ATC/conv counts for all trend snapshots in parallel
+    const trendConvResults = await Promise.all(
+      trendSnapshots.map(async (snap) => {
+        const [atcCount, convCount] = await Promise.all([
+          prisma.visit.count({ where: { snapshotId: snap.id, addedToCart: true, ...srcFilter } }),
+          prisma.visit.count({ where: { snapshotId: snap.id, converted: true, ...srcFilter } }),
+        ]);
+        return { atcCount, convCount };
+      })
+    );
+
+    trendResults.forEach(({ snap, counts, revAgg }, i) => {
+      const realCount = counts.find(c => c.visitorType === "REAL")?._count || 0;
+      const rev = revAgg._sum.orderValue || 0;
+      const convWithValue = revAgg._count._all || 0;
+      const { atcCount, convCount } = trendConvResults[i];
+      snapshotTrends.push({
+        name: snap.name || `Snapshot ${snap.number}`,
+        number: snap.number,
+        revenuePerVisitor: realCount > 0 ? Math.round((rev / realCount) * 100) / 100 : 0,
+        aov: convWithValue > 0 ? Math.round((rev / convWithValue) * 100) / 100 : 0,
+        atcRate: realCount > 0 ? Math.round((atcCount / realCount) * 1000) / 10 : 0,
+        convRate: realCount > 0 ? Math.round((convCount / realCount) * 1000) / 10 : 0,
+      });
+    });
+  }
+
   return json({
     project: {
       id: project.id,
@@ -545,6 +663,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       startDate: startDateParam,
       endDate: endDateParam,
     },
+    sourceFilter: sourceParam || "all",
+    snapshotTrends,
     topProductsClicked,
   });
 
@@ -1021,7 +1141,7 @@ const DATE_PRESETS = [
 ];
 
 export default function ProjectDetails() {
-  const { project, snapshots, selectedSnapshot, stats, comparisonData, compareMode, dateFilter, topProductsClicked } = useLoaderData<typeof loader>();
+  const { project, snapshots, selectedSnapshot, stats, comparisonData, compareMode, dateFilter, sourceFilter: activeSource, snapshotTrends, topProductsClicked } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1047,6 +1167,8 @@ export default function ProjectDetails() {
 
   // Compare mode state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+
 
   // Real-time stats state
   const [liveStats, setLiveStats] = useState(stats);
@@ -1146,6 +1268,16 @@ export default function ProjectDetails() {
     setSearchParams(params);
   }, [startDate, endDate, searchParams, setSearchParams]);
 
+  const handleSourceFilter = useCallback((source: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (source === "all") {
+      params.delete("source");
+    } else {
+      params.set("source", source);
+    }
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
+
   const handleSnapshotSelect = useCallback((snapshotId: string) => {
     const params = new URLSearchParams(searchParams);
     params.set("snapshot", snapshotId);
@@ -1159,17 +1291,26 @@ export default function ProjectDetails() {
       if (prev.includes(snapshotId)) {
         return prev.filter((id) => id !== snapshotId);
       }
+      if (prev.length >= 4) return prev;
       return [...prev, snapshotId];
     });
   }, []);
 
   const enterCompareMode = useCallback(() => {
     if (selectedForCompare.length < 2) return;
+    // Sort by createdAt ascending (oldest first)
+    const sorted = [...selectedForCompare].sort((a, b) => {
+      const snapA = snapshots.find((s) => s.id === a);
+      const snapB = snapshots.find((s) => s.id === b);
+      return new Date(snapA?.createdAt || 0).getTime() - new Date(snapB?.createdAt || 0).getTime();
+    });
     const params = new URLSearchParams(searchParams);
     params.set("compare", "true");
-    params.set("compareIds", selectedForCompare.join(","));
+    params.set("compareIds", sorted.join(","));
     setSearchParams(params);
-  }, [selectedForCompare, searchParams, setSearchParams]);
+    setIsCompareModalOpen(false);
+    setSelectedForCompare([]);
+  }, [selectedForCompare, snapshots, searchParams, setSearchParams]);
 
   const exitCompareMode = useCallback(() => {
     const params = new URLSearchParams(searchParams);
@@ -1177,6 +1318,7 @@ export default function ProjectDetails() {
     params.delete("compareIds");
     setSearchParams(params);
     setSelectedForCompare([]);
+    setIsCompareModalOpen(false);
   }, [searchParams, setSearchParams]);
 
   const getStatusBadge = (status: string) => {
@@ -1665,6 +1807,14 @@ export default function ProjectDetails() {
     );
   }
 
+  const snapshotSelectOptions = snapshots.map((s) => {
+    const statusLabel = s.status === "ACTIVE" ? "Active" : s.status === "COMPLETED" ? "Done" : "Paused";
+    return {
+      label: `${s.name || `Snapshot ${s.number}`} (${statusLabel})`,
+      value: s.id,
+    };
+  });
+
   return (
     <Page
       fullWidth
@@ -1679,12 +1829,15 @@ export default function ProjectDetails() {
           ? { content: "Resume", onAction: () => handleAction("resume-snapshot"), loading: isLoading }
           : undefined
       }
-      secondaryActions={selectedSnapshot ? [
-        { content: "Edit", onAction: openEditModal },
-        { content: "Export CSV", onAction: () => handleExport("csv") },
-        { content: "Export PDF", onAction: () => handleExport("pdf") },
-        { content: "Delete Snapshot", destructive: true, onAction: () => handleAction("delete-snapshot"), loading: isLoading },
-      ] : []}
+      actionGroups={selectedSnapshot ? [{
+        title: "More actions",
+        actions: [
+          { content: "Edit", onAction: openEditModal },
+          { content: "Export CSV", onAction: () => handleExport("csv") },
+          { content: "Export PDF", onAction: () => handleExport("pdf") },
+          { content: "Delete Snapshot", destructive: true, onAction: () => handleAction("delete-snapshot") },
+        ],
+      }] : []}
     >
       <Layout>
         {/* Snapshot Selector */}
@@ -1694,8 +1847,8 @@ export default function ProjectDetails() {
               <InlineStack align="space-between">
                 <Text as="h2" variant="headingMd">Snapshots</Text>
                 <InlineStack gap="200">
-                  {selectedForCompare.length >= 2 && (
-                    <Button onClick={enterCompareMode}>{`Compare Selected (${selectedForCompare.length})`}</Button>
+                  {snapshots.length > 1 && (
+                    <Button onClick={() => setIsCompareModalOpen(true)}>Compare</Button>
                   )}
                   <Button variant="primary" onClick={openNewSnapshotModal} disabled={hasActiveSnapshot}>
                     + New Snapshot
@@ -1707,49 +1860,163 @@ export default function ProjectDetails() {
                   Another snapshot is currently active. Complete or pause it to create a new one.
                 </Banner>
               )}
-              <InlineStack gap="200" wrap>
-                {snapshots.map((snapshot) => (
-                  <InlineStack key={snapshot.id} gap="100">
-                    <Button
-                      pressed={selectedSnapshot?.id === snapshot.id}
-                      onClick={() => handleSnapshotSelect(snapshot.id)}
-                    >
-                      {snapshot.name || `Snapshot ${snapshot.number}`}
-                    </Button>
-                    {snapshot.status === "ACTIVE" && <Badge tone="success">Active</Badge>}
-                    {snapshot.status === "COMPLETED" && <Badge tone="info">Done</Badge>}
-                    {snapshot.status === "PAUSED" && <Badge tone="warning">Paused</Badge>}
-                  </InlineStack>
-                ))}
-              </InlineStack>
-              <InlineStack gap="200">
-                <Text as="span" variant="bodySm" tone="subdued">Select multiple for comparison:</Text>
-                {snapshots.map((snapshot) => (
-                  <Button
-                    key={`compare-${snapshot.id}`}
-                    size="slim"
-                    pressed={selectedForCompare.includes(snapshot.id)}
-                    onClick={() => handleToggleCompare(snapshot.id)}
-                  >
-                    {snapshot.name || `#${snapshot.number}`}
-                  </Button>
-                ))}
-              </InlineStack>
+              <Select
+                label="Select snapshot"
+                labelHidden
+                options={snapshotSelectOptions}
+                value={selectedSnapshot?.id || ""}
+                onChange={handleSnapshotSelect}
+              />
             </BlockStack>
           </Card>
         </Layout.Section>
 
+        {/* Top progress bar */}
+        {isLoading && (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 200,
+            background: "var(--p-color-bg-surface-secondary)",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              height: "100%",
+              background: "var(--p-color-bg-fill-brand)",
+              animation: "mw-progress 1.5s ease-in-out infinite",
+              transformOrigin: "left",
+            }} />
+            <style>{`
+              @keyframes mw-progress {
+                0% { transform: translateX(-100%) scaleX(0.3); }
+                50% { transform: translateX(30%) scaleX(0.5); }
+                100% { transform: translateX(100%) scaleX(0.3); }
+              }
+            `}</style>
+          </div>
+        )}
+
+        {/* Source Filter Buttons */}
+        <Layout.Section>
+          <InlineStack gap="200" wrap>
+            {[
+              { label: "All Traffic", value: "all" },
+              { label: "Paid", value: "paid" },
+              { label: "Organic", value: "organic" },
+              { label: "Direct", value: "direct" },
+              { label: "Referral", value: "referral" },
+              { label: "Email", value: "email" },
+            ].map((filter) => (
+              <Button
+                key={filter.value}
+                pressed={activeSource === filter.value}
+                onClick={() => handleSourceFilter(filter.value)}
+              >
+                {filter.label}
+              </Button>
+            ))}
+          </InlineStack>
+        </Layout.Section>
+
+        {/* Engaged Visitors / Bot Traffic + Trend Graph + Revenue Cards */}
+        {selectedSnapshot && displayStats && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                {/* Engaged Visitors & Bot Traffic summary */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div style={{ padding: "16px 20px", border: "1px solid var(--p-color-border-subdued)", borderRadius: 8 }}>
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodySm" tone="subdued">Engaged Visitors</Text>
+                      <Text as="span" variant="headingLg">{displayStats.realCount + displayStats.zombieCount}</Text>
+                    </BlockStack>
+                  </div>
+                  <div style={{ padding: "16px 20px", border: "1px solid var(--p-color-border-subdued)", borderRadius: 8 }}>
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodySm" tone="subdued">Bot Traffic</Text>
+                      <Text as="span" variant="headingLg">{displayStats.botCount}</Text>
+                    </BlockStack>
+                  </div>
+                </div>
+
+                {/* Multi-metric trend chart across snapshots */}
+                {snapshotTrends && snapshotTrends.length > 0 && (() => {
+                  const metrics = [
+                    { key: "revenuePerVisitor" as const, label: "RPV", color: "#2C6ECB", format: (v: number) => `$${v.toFixed(2)}` },
+                    { key: "aov" as const, label: "AOV", color: "#8B5CF6", format: (v: number) => `$${v.toFixed(2)}` },
+                    { key: "atcRate" as const, label: "ATC %", color: "#059669", format: (v: number) => `${v}%` },
+                    { key: "convRate" as const, label: "Conv %", color: "#D97706", format: (v: number) => `${v}%` },
+                  ];
+                  const chartHeight = 140;
+                  return (
+                    <BlockStack gap="200">
+                      {/* Legend */}
+                      <InlineStack gap="400">
+                        {metrics.map((m) => (
+                          <InlineStack key={m.key} gap="100" blockAlign="center">
+                            <div style={{ width: 12, height: 12, borderRadius: 2, backgroundColor: m.color }} />
+                            <Text as="span" variant="bodySm" tone="subdued">{m.label}</Text>
+                          </InlineStack>
+                        ))}
+                      </InlineStack>
+                      {/* Chart area */}
+                      <div style={{ position: "relative", height: chartHeight + 30, border: "1px solid var(--p-color-border-subdued)", borderRadius: 8, padding: "12px 16px" }}>
+                        {snapshotTrends.length >= 2 ? (
+                          <svg width="100%" height={chartHeight} viewBox={`0 0 ${snapshotTrends.length * 100} ${chartHeight}`} preserveAspectRatio="none" style={{ overflow: "visible" }}>
+                            {metrics.map((m) => {
+                              const values = snapshotTrends.map((t) => t[m.key]);
+                              const maxVal = Math.max(...values, 0.01);
+                              const points = values.map((v, i) => {
+                                const x = (i / (snapshotTrends.length - 1)) * (snapshotTrends.length * 100 - 20) + 10;
+                                const y = chartHeight - (v / maxVal) * (chartHeight - 20) - 10;
+                                return `${x},${y}`;
+                              }).join(" ");
+                              return (
+                                <g key={m.key}>
+                                  <polyline points={points} fill="none" stroke={m.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  {values.map((v, i) => {
+                                    const x = (i / (snapshotTrends.length - 1)) * (snapshotTrends.length * 100 - 20) + 10;
+                                    const y = chartHeight - (v / maxVal) * (chartHeight - 20) - 10;
+                                    return <circle key={i} cx={x} cy={y} r="3" fill={m.color} />;
+                                  })}
+                                </g>
+                              );
+                            })}
+                          </svg>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+                            <Text as="p" tone="subdued">More snapshots needed for trend chart</Text>
+                          </div>
+                        )}
+                        {/* X-axis labels */}
+                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                          {snapshotTrends.map((t, i) => (
+                            <Text key={i} as="span" variant="bodySm" tone="subdued">{t.name}</Text>
+                          ))}
+                        </div>
+                      </div>
+                    </BlockStack>
+                  );
+                })()}
+
+                {/* Revenue & conversion stat cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+                  <StatCard title="Revenue per Visitor" value={`$${displayStats.revenuePerVisitor.toFixed(2)}`} />
+                  <StatCard title="AOV" value={`$${displayStats.aov.toFixed(2)}`} />
+                  <StatCard title="Add-to-Cart Rate" value={`${displayStats.atcRate}%`} />
+                  <StatCard title="Conversion Rate" value={`${displayStats.convRate}%`} />
+                </div>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
         {selectedSnapshot && displayStats && (
           <>
-            {/* Date Filter Section — hidden for now */}
-
             {/* Stats Overview */}
             <Layout.Section>
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Overall Totals</Text>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-                    <StatCard title="Sessions" value={displayStats.totalSessions} />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16 }}>
                     <StatCard
                       title="Real Users"
                       value={displayStats.realCount}
@@ -1757,21 +2024,15 @@ export default function ProjectDetails() {
                       tone="success"
                     />
                     <StatCard
-                      title="Zombies"
-                      value={displayStats.zombieCount}
-                      subtitle={`${displayStats.zombiePercent}%`}
-                      tone="warning"
-                    />
-                    <StatCard
                       title="Bots"
                       value={displayStats.botCount}
                       subtitle={`${displayStats.botPercent}%`}
                       tone="critical"
                     />
-                    <StatCard title={atcLabel} value={displayStats.addToCartCount} />
-                    <StatCard title={convLabel} value={isCollection ? displayStats.productClickCount : displayStats.conversionCount} />
                     <StatCard title="Avg Time" value={formatTime(displayStats.avgTimeOnPage)} />
                     <StatCard title="Avg Scroll" value={`${displayStats.avgScrollDepth}%`} />
+                    <StatCard title={atcLabel} value={displayStats.addToCartCount} />
+                    <StatCard title={convLabel} value={isCollection ? displayStats.productClickCount : displayStats.conversionCount} />
                   </div>
                 </BlockStack>
               </Card>
@@ -1787,8 +2048,10 @@ export default function ProjectDetails() {
               </Card>
             </Layout.Section>
 
-            {/* Top Countries */}
-            <Layout.Section variant="oneThird">
+            {/* Top Countries / Cities / Devices — uniform height row */}
+            <Layout.Section>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "stretch" }}>
+              {/* Top Countries */}
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Top Countries</Text>
@@ -1806,10 +2069,8 @@ export default function ProjectDetails() {
                   )}
                 </BlockStack>
               </Card>
-            </Layout.Section>
 
-            {/* Top Cities */}
-            <Layout.Section variant="oneThird">
+              {/* Top Cities */}
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Top Cities</Text>
@@ -1827,27 +2088,58 @@ export default function ProjectDetails() {
                   )}
                 </BlockStack>
               </Card>
-            </Layout.Section>
 
-            {/* Device Breakdown */}
-            <Layout.Section variant="oneThird">
+              {/* Devices — Donut Chart */}
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">Devices</Text>
                   {(displayStats?.deviceBreakdown || []).length === 0 ? (
                     <Text as="p" tone="subdued">No device data available yet</Text>
-                  ) : (
-                    <BlockStack gap="200">
-                      {(displayStats?.deviceBreakdown || []).map((item: any) => (
-                        <InlineStack key={item.device} align="space-between">
-                          <Text as="span">{item.device}</Text>
-                          <Badge>{`${item.percent}%`}</Badge>
-                        </InlineStack>
-                      ))}
-                    </BlockStack>
-                  )}
+                  ) : (() => {
+                    const devices = displayStats?.deviceBreakdown || [];
+                    const colors: Record<string, string> = { mobile: "#2C6ECB", desktop: "#8B5CF6", tablet: "#059669" };
+                    const radius = 40;
+                    const circumference = 2 * Math.PI * radius;
+                    let offset = 0;
+                    return (
+                      <BlockStack gap="300" inlineAlign="center">
+                        <svg width="120" height="120" viewBox="0 0 120 120">
+                          {devices.map((item: any) => {
+                            const dashLength = (item.percent / 100) * circumference;
+                            const dashGap = circumference - dashLength;
+                            const currentOffset = offset;
+                            offset += dashLength;
+                            return (
+                              <circle
+                                key={item.device}
+                                cx="60" cy="60" r={radius}
+                                fill="none"
+                                stroke={colors[item.device?.toLowerCase()] || "#94A3B8"}
+                                strokeWidth="16"
+                                strokeDasharray={`${dashLength} ${dashGap}`}
+                                strokeDashoffset={-currentOffset}
+                                transform="rotate(-90 60 60)"
+                              />
+                            );
+                          })}
+                        </svg>
+                        <BlockStack gap="200">
+                          {devices.map((item: any) => (
+                            <InlineStack key={item.device} align="space-between" blockAlign="center">
+                              <InlineStack gap="200" blockAlign="center">
+                                <div style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: colors[item.device?.toLowerCase()] || "#94A3B8" }} />
+                                <Text as="span">{item.device}</Text>
+                              </InlineStack>
+                              <Badge>{`${item.percent}%`}</Badge>
+                            </InlineStack>
+                          ))}
+                        </BlockStack>
+                      </BlockStack>
+                    );
+                  })()}
                 </BlockStack>
               </Card>
+            </div>
             </Layout.Section>
 
             {/* Exit Paths */}
@@ -1907,31 +2199,22 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* Top Exit URLs */}
-            {(displayStats?.exitUrls || []).length > 0 && (
+            {/* CTA Clicks */}
+            {(displayStats?.ctaStats || []).length > 0 && (
             <Layout.Section>
-              <div style={{ minHeight: 200 }}>
               <Card>
                 <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Top Exit URLs</Text>
+                  <Text as="h2" variant="headingMd">CTA Clicks</Text>
                   <BlockStack gap="200">
-                    {(displayStats?.exitUrls || []).map((item: any) => {
-                      let displayUrl = item.url;
-                      try {
-                        const parsed = new URL(item.url);
-                        displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
-                      } catch {}
-                      return (
-                        <InlineStack key={item.url} align="space-between">
-                          <Text as="span" variant="bodySm">{displayUrl}</Text>
-                          <Badge>{String(item.count)}</Badge>
-                        </InlineStack>
-                      );
-                    })}
+                    {(displayStats?.ctaStats || []).map((item: any) => (
+                      <InlineStack key={item.label} align="space-between">
+                        <Text as="span" variant="bodySm">{item.label}</Text>
+                        <Badge>{String(item.count)}</Badge>
+                      </InlineStack>
+                    ))}
                   </BlockStack>
                 </BlockStack>
               </Card>
-              </div>
             </Layout.Section>
             )}
 
@@ -2193,6 +2476,74 @@ export default function ProjectDetails() {
               autoComplete="off"
             />
           </FormLayout>
+        </Modal.Section>
+      </Modal>
+
+      {/* Compare Snapshots Modal */}
+      <Modal
+        open={isCompareModalOpen}
+        onClose={() => { setIsCompareModalOpen(false); setSelectedForCompare([]); }}
+        title="Compare Snapshots"
+        primaryAction={{
+          content: `Compare (${selectedForCompare.length})`,
+          onAction: enterCompareMode,
+          disabled: selectedForCompare.length < 2,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => { setIsCompareModalOpen(false); setSelectedForCompare([]); } }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text as="p" tone="subdued">Select 2 to 4 snapshots to compare. They will be ordered from oldest to newest.</Text>
+            <BlockStack gap="300">
+              {[...snapshots].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()).map((snapshot) => {
+                const isSelected = selectedForCompare.includes(snapshot.id);
+                const isDisabled = !isSelected && selectedForCompare.length >= 4;
+                const statusTone = snapshot.status === "ACTIVE" ? "success" : snapshot.status === "COMPLETED" ? "info" : "warning";
+                const statusLabel = snapshot.status === "ACTIVE" ? "Active" : snapshot.status === "COMPLETED" ? "Completed" : "Paused";
+                const dateStr = new Date(snapshot.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                return (
+                  <div
+                    key={snapshot.id}
+                    onClick={() => !isDisabled && handleToggleCompare(snapshot.id)}
+                    style={{
+                      padding: "12px 16px",
+                      borderRadius: 8,
+                      border: isSelected ? "2px solid var(--p-color-border-interactive)" : "1px solid var(--p-color-border-subdued)",
+                      backgroundColor: isSelected ? "var(--p-color-bg-surface-selected)" : isDisabled ? "var(--p-color-bg-surface-disabled)" : "var(--p-color-bg-surface)",
+                      cursor: isDisabled ? "not-allowed" : "pointer",
+                      opacity: isDisabled ? 0.5 : 1,
+                    }}
+                  >
+                    <InlineStack align="space-between" blockAlign="center">
+                      <InlineStack gap="300" blockAlign="center">
+                        <Checkbox
+                          label=""
+                          labelHidden
+                          checked={isSelected}
+                          disabled={isDisabled}
+                          onChange={() => handleToggleCompare(snapshot.id)}
+                        />
+                        <BlockStack gap="100">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">
+                              {snapshot.name || `Snapshot ${snapshot.number}`}
+                            </Text>
+                            <Badge tone={statusTone}>{statusLabel}</Badge>
+                          </InlineStack>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            Created {dateStr}
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {snapshot.realCount} real visitors
+                      </Text>
+                    </InlineStack>
+                  </div>
+                );
+              })}
+            </BlockStack>
+          </BlockStack>
         </Modal.Section>
       </Modal>
     </Page>

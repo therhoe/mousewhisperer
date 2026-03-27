@@ -66,7 +66,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   };
 
   try {
-    const data = await request.json();
+    // Parse body — read as text first to handle both application/json and text/plain
+    const rawBody = await request.text();
+    const data = JSON.parse(rawBody);
 
     // Handle different event types from web pixel
     if (data.eventType) {
@@ -132,6 +134,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
     appliedFilters,
     sortBy,
     filterInteractions,
+    ctaClicks,
   } = data;
 
   if (!sessionId || !productHandle) {
@@ -279,6 +282,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       appliedFilters: appliedFilters ? String(appliedFilters).slice(0, 5000) : null,
       sortBy: sortBy || null,
       filterInteractions: filterInteractions || 0,
+      ctaClicks: ctaClicks ? String(ctaClicks).slice(0, 10000) : null,
       // Geo-location data
       ipAddress: clientIP,
       country: geoData.country,
@@ -311,6 +315,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
       appliedFilters: appliedFilters ? String(appliedFilters).slice(0, 5000) : undefined,
       sortBy: sortBy || undefined,
       filterInteractions: filterInteractions || 0,
+      ...(ctaClicks ? { ctaClicks: String(ctaClicks).slice(0, 10000) } : {}),
       // Update geo only if we have new data
       ...(geoData.country && { country: geoData.country }),
       ...(geoData.countryCode && { countryCode: geoData.countryCode }),
@@ -497,6 +502,8 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
           data: {
             converted: true,
             convertedAt: new Date(timestamp),
+            ...(data.totalPrice ? { orderValue: parseFloat(data.totalPrice) } : {}),
+            ...(data.currency ? { currency: data.currency } : {}),
           },
         });
         conversionsTracked++;

@@ -134,6 +134,11 @@ model Visit {
   addedToCartAt   DateTime?
   converted       Boolean  @default(false)
   convertedAt     DateTime?
+  orderValue      Float?   // Total order value in store currency
+  currency        String?  // Currency code (e.g., "USD", "EUR")
+
+  // CTA click tracking
+  ctaClicks       String?  // JSON: {"Add to Cart": 3, "Buy Now": 1, ...}
 
   // Timestamps
   startedAt       DateTime @default(now())

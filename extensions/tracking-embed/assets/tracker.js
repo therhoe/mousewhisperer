@@ -310,6 +310,9 @@
     idleIntervalId: null,
     timeTickIntervalId: null,
 
+    // CTA click tracking
+    ctaClicks: {}, // { "Add to Cart": 2, "Buy Now": 1, ... }
+
     // Sent flag
     hasSentInitial: false,
     cartAttributeWritten: false,
@@ -409,6 +412,27 @@
           // Invalid URL, ignore
         }
       }
+
+      // CTA click tracking — only inside main product/collection content area
+      var mainContent = document.querySelector('main, #MainContent, .main-content, [role="main"], .product, .collection');
+      if (!mainContent) return;
+
+      var clickedEl = e.target.closest('a, button, [type="submit"], input[type="submit"]');
+      if (!clickedEl || !mainContent.contains(clickedEl)) return;
+
+      // Skip navigation links (nav, header, footer)
+      if (clickedEl.closest('nav, header, footer, .header, .footer, .site-header, .site-footer, .announcement-bar')) return;
+
+      // Get CTA label from text content
+      var label = (clickedEl.textContent || clickedEl.value || clickedEl.getAttribute('aria-label') || '').trim();
+      // Clean up whitespace and limit length
+      label = label.replace(/\s+/g, ' ').substring(0, 60);
+      if (!label || label.length < 2) return;
+
+      // Skip generic/non-CTA text
+      if (/^(menu|close|open|search|\d+|x|×)$/i.test(label)) return;
+
+      state.ctaClicks[label] = (state.ctaClicks[label] || 0) + 1;
     }, { passive: true });
 
     // Save reference to original fetch BEFORE monkey-patching
@@ -584,6 +608,9 @@
       sortBy: state.sortBy,
       filterInteractions: state.filterInteractions,
 
+      // CTA clicks
+      ctaClicks: Object.keys(state.ctaClicks).length > 0 ? JSON.stringify(state.ctaClicks) : null,
+
       // Timestamps
       startedAt: state.startTime,
       endedAt: Date.now(),
@@ -597,6 +624,8 @@
     var payload = buildPayload();
 
     // Use sendBeacon for reliability when page is unloading
+    // Note: sendBeacon with string sends as text/plain (CORS-safe, no preflight)
+    // Server-side handles text/plain parsing via fallback
     if (navigator.sendBeacon) {
       navigator.sendBeacon(CONFIG.apiEndpoint, JSON.stringify(payload));
     } else {
