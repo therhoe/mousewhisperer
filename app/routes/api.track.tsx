@@ -428,7 +428,7 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
 
       console.log(`[MW Pixel] Conversion — matching project with:`, JSON.stringify(projectMatch));
 
-      // First try: exact session ID match — prefer the visit where addedToCart happened
+      // Tier 1: exact session ID match — prefer the visit where addedToCart happened
       let visit = await prisma.visit.findFirst({
         where: {
           sessionId,
@@ -442,7 +442,7 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
 
       let matchTier = visit ? "session+ATC" : null;
 
-      // If no ATC visit in this session, find most recent visit in this session
+      // Tier 2: exact session match without ATC
       if (!visit) {
         visit = await prisma.visit.findFirst({
           where: {
@@ -456,47 +456,15 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
         if (visit) matchTier = "session";
       }
 
-      // Fallback: if no exact match, find most recent unconverted visit
-      // that added this product to cart in the last 7 days
-      if (!visit) {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshot: {
-              project: projectMatch,
-              status: { in: ["ACTIVE", "COMPLETED"] },
-            },
-            addedToCart: true,
-            converted: false,
-            startedAt: { gte: sevenDaysAgo },
-          },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "fallback-ATC";
-      }
-
-      // Second fallback: find any unconverted visit for this product in the last 7 days
-      if (!visit) {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshot: {
-              project: projectMatch,
-              status: { in: ["ACTIVE", "COMPLETED"] },
-            },
-            converted: false,
-            startedAt: { gte: sevenDaysAgo },
-          },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "fallback-any";
-      }
+      // No fallback tiers — a missed conversion is better than a false one
 
       if (visit) {
+        // Skip if already converted (dedup pixel + webhook)
+        if (visit.converted) {
+          console.log(`[MW Pixel] Conversion — visit ${visit.id} already converted, skipping`);
+          continue;
+        }
+
         await prisma.visit.update({
           where: { id: visit.id },
           data: {
@@ -509,7 +477,7 @@ async function handlePixelEvent(data: any, headers: Record<string, string>) {
         conversionsTracked++;
         console.log(`[MW Pixel] Conversion matched visit ${visit.id} via ${matchTier}`);
       } else {
-        console.log(`[MW Pixel] Conversion — NO matching visit found for project match:`, JSON.stringify(projectMatch));
+        console.log(`[MW Pixel] Conversion — no session match for project:`, JSON.stringify(projectMatch));
       }
     }
 

@@ -231,7 +231,7 @@ async function getSnapshotStats(snapshotId: string) {
     avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
     avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
     atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
-    convRate: stats.real > 0 ? Math.round((stats.conversions / stats.real) * 100) : 0,
+    convRate: stats.real > 0 ? Math.min(Math.round((stats.conversions / stats.real) * 100), 100) : 0,
   })).sort((a, b) => b.sessions - a.sessions);
 
   // Process top countries
@@ -303,7 +303,7 @@ async function getSnapshotStats(snapshotId: string) {
     revenuePerVisitor: realCount > 0 ? Math.round((totalRevenue / realCount) * 100) / 100 : 0,
     aov: ordersWithValue > 0 ? Math.round((totalRevenue / ordersWithValue) * 100) / 100 : 0,
     atcRate: realCount > 0 ? Math.round((addToCartCount / realCount) * 1000) / 10 : 0,
-    convRate: realCount > 0 ? Math.round((conversionCount / realCount) * 1000) / 10 : 0,
+    convRate: realCount > 0 ? Math.min(Math.round((conversionCount / realCount) * 1000) / 10, 100) : 0,
     sourceStats,
     topCountries,
     topCities,
