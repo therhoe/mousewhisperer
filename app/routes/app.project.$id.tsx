@@ -147,6 +147,9 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
         botScore: true,
         addedToCart: true,
         converted: true,
+        orderValue: true,
+        currency: true,
+        ctaClicks: true,
         startedAt: true,
         endedAt: true,
         exitType: true,
@@ -351,15 +354,23 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
   const totalRevenue = revenueAggregate._sum.orderValue || 0;
   const ordersWithValue = revenueAggregate._count._all || 0;
 
-  // Aggregate CTA clicks across all visits
+  // Aggregate CTA clicks across all visits (handles both old map and new array formats)
   const ctaMap = new Map<string, number>();
   ctaClickRows.forEach((row: { ctaClicks: string | null }) => {
     if (!row.ctaClicks) return;
     try {
       const clicks = JSON.parse(row.ctaClicks);
-      Object.entries(clicks).forEach(([label, count]) => {
-        ctaMap.set(label, (ctaMap.get(label) || 0) + (count as number));
-      });
+      if (Array.isArray(clicks)) {
+        // New format: [{label, tag, href, time}, ...]
+        clicks.forEach((c: any) => {
+          if (c.label) ctaMap.set(c.label, (ctaMap.get(c.label) || 0) + 1);
+        });
+      } else {
+        // Old format: {label: count}
+        Object.entries(clicks).forEach(([label, count]) => {
+          ctaMap.set(label, (ctaMap.get(label) || 0) + (count as number));
+        });
+      }
     } catch {}
   });
   const ctaStats = Array.from(ctaMap.entries())
@@ -1176,6 +1187,7 @@ export default function ProjectDetails() {
 
   // Source filter (clicking Traffic by Source rows filters Recent Visits)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
 
   // SSE connection for real-time updates
   useEffect(() => {
@@ -2310,6 +2322,146 @@ export default function ProjectDetails() {
                 </Banner>
               </Layout.Section>
             )}
+
+            {/* Click Journey Cards */}
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between">
+                    <Text as="h2" variant="headingMd">Visit Journeys</Text>
+                    <Text as="span" variant="bodySm" tone="subdued">{filteredRecentVisits.length} visits</Text>
+                  </InlineStack>
+                  <BlockStack gap="300">
+                    {filteredRecentVisits.slice(0, 10).map((visit: any) => {
+                      const isExpanded = expandedVisits.has(visit.id);
+                      const isPaid = (visit.sourceCategory || "").includes("Paid");
+                      const clickCount = (() => {
+                        if (!visit.ctaClicks) return 0;
+                        try {
+                          const parsed = JSON.parse(visit.ctaClicks);
+                          return Array.isArray(parsed) ? parsed.length : Object.values(parsed).reduce((a: number, b: any) => a + (b as number), 0);
+                        } catch { return 0; }
+                      })();
+                      const ctaEntries: any[] = (() => {
+                        if (!visit.ctaClicks) return [];
+                        try {
+                          const parsed = JSON.parse(visit.ctaClicks);
+                          if (Array.isArray(parsed)) return parsed;
+                          return Object.entries(parsed).map(([label, count]) => ({ label, tag: "button", href: null, time: 0, count }));
+                        } catch { return []; }
+                      })();
+
+                      return (
+                        <div
+                          key={visit.id}
+                          style={{
+                            border: "1px solid var(--p-color-border-subdued)",
+                            borderRadius: 8,
+                            overflow: "hidden",
+                          }}
+                        >
+                          {/* Card header — clickable */}
+                          <div
+                            onClick={() => setExpandedVisits(prev => {
+                              const next = new Set(prev);
+                              next.has(visit.id) ? next.delete(visit.id) : next.add(visit.id);
+                              return next;
+                            })}
+                            style={{
+                              padding: "12px 16px",
+                              cursor: "pointer",
+                              backgroundColor: isExpanded ? "var(--p-color-bg-surface-secondary)" : "transparent",
+                            }}
+                          >
+                            <InlineStack align="space-between" blockAlign="center">
+                              <InlineStack gap="200" blockAlign="center" wrap>
+                                <Text as="span" variant="bodyMd" fontWeight="bold">
+                                  {visit.source || visit.sourceCategory || "Direct"}
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {visit.deviceType || "unknown"} · {clickCount} click{clickCount !== 1 ? "s" : ""}
+                                  {visit.exitType ? ` · Exit: ${formatExitType(visit.exitType)}` : ""}
+                                </Text>
+                              </InlineStack>
+                              <InlineStack gap="200" blockAlign="center">
+                                {isPaid && <Badge tone="info">Paid</Badge>}
+                                {visit.addedToCart && <Badge tone="success">ATC</Badge>}
+                                {visit.converted && (
+                                  <Badge tone="success">
+                                    {visit.orderValue ? `Converted $${visit.orderValue.toFixed(2)}` : "Converted"}
+                                  </Badge>
+                                )}
+                                <Text as="span" variant="bodySm" tone="subdued">{isExpanded ? "▲" : "▼"}</Text>
+                              </InlineStack>
+                            </InlineStack>
+                          </div>
+
+                          {/* Expanded click journey */}
+                          {isExpanded && (
+                            <div style={{ padding: "0 16px 16px", borderTop: "1px solid var(--p-color-border-subdued)" }}>
+                              <BlockStack gap="200">
+                                {/* PAGE entry */}
+                                <div style={{ paddingTop: 12 }}>
+                                  <InlineStack gap="200" blockAlign="start">
+                                    <Badge tone="info">PAGE</Badge>
+                                    <BlockStack gap="100">
+                                      <Text as="span" variant="bodySm">/products/{visit.source ? `...` : ""}{visit.sourceCategory ? "" : ""}</Text>
+                                      <InlineStack gap="100" wrap>
+                                        {visit.source && (
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                            source: {visit.source}
+                                          </span>
+                                        )}
+                                        {visit.medium && (
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                            medium: {visit.medium}
+                                          </span>
+                                        )}
+                                        {visit.campaign && (
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                            campaign: {visit.campaign}
+                                          </span>
+                                        )}
+                                      </InlineStack>
+                                    </BlockStack>
+                                  </InlineStack>
+                                </div>
+
+                                {/* CTA click entries */}
+                                {ctaEntries.map((cta: any, i: number) => (
+                                  <div key={i} style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
+                                    <InlineStack gap="200" blockAlign="center">
+                                      <Badge tone="attention">CLICK</Badge>
+                                      <Text as="span" variant="bodySm">
+                                        {"<"}{cta.tag}{">"} {cta.label}
+                                        {cta.href ? ` → ${(() => { try { return new URL(cta.href).pathname; } catch { return cta.href; } })()}` : ""}
+                                      </Text>
+                                    </InlineStack>
+                                  </div>
+                                ))}
+
+                                {/* EXIT entry */}
+                                {visit.exitType && (
+                                  <div style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
+                                    <InlineStack gap="200" blockAlign="center">
+                                      <Badge tone="critical">EXIT</Badge>
+                                      <Text as="span" variant="bodySm">
+                                        {formatExitType(visit.exitType)}
+                                        {visit.exitUrl ? `: ${(() => { try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; } })()}` : ""}
+                                      </Text>
+                                    </InlineStack>
+                                  </div>
+                                )}
+                              </BlockStack>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
 
             {/* Detailed Visits Table */}
             <Layout.Section>

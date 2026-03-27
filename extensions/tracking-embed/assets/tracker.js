@@ -310,8 +310,8 @@
     idleIntervalId: null,
     timeTickIntervalId: null,
 
-    // CTA click tracking
-    ctaClicks: {}, // { "Add to Cart": 2, "Buy Now": 1, ... }
+    // CTA click tracking — ordered array of clicks
+    ctaClicks: [], // [{label, tag, href, time}, ...]
 
     // Sent flag
     hasSentInitial: false,
@@ -432,7 +432,15 @@
       // Skip generic/non-CTA text
       if (/^(menu|close|open|search|\d+|x|×)$/i.test(label)) return;
 
-      state.ctaClicks[label] = (state.ctaClicks[label] || 0) + 1;
+      // Cap at 20 entries per visit
+      if (state.ctaClicks.length < 20) {
+        state.ctaClicks.push({
+          label: label,
+          tag: clickedEl.tagName.toLowerCase(),
+          href: clickedEl.href || null,
+          time: Date.now() - state.startTime,
+        });
+      }
     }, { passive: true });
 
     // Save reference to original fetch BEFORE monkey-patching
@@ -608,8 +616,8 @@
       sortBy: state.sortBy,
       filterInteractions: state.filterInteractions,
 
-      // CTA clicks
-      ctaClicks: Object.keys(state.ctaClicks).length > 0 ? JSON.stringify(state.ctaClicks) : null,
+      // CTA clicks (ordered array)
+      ctaClicks: state.ctaClicks.length > 0 ? JSON.stringify(state.ctaClicks) : null,
 
       // Timestamps
       startedAt: state.startTime,
