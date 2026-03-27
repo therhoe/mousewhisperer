@@ -2211,24 +2211,7 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* CTA Clicks */}
-            {(displayStats?.ctaStats || []).length > 0 && (
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">CTA Clicks</Text>
-                  <BlockStack gap="200">
-                    {(displayStats?.ctaStats || []).map((item: any) => (
-                      <InlineStack key={item.label} align="space-between">
-                        <Text as="span" variant="bodySm">{item.label}</Text>
-                        <Badge>{String(item.count)}</Badge>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-            )}
+            {/* CTA Clicks + Visit Journeys are rendered together below */}
 
             {/* Search & Filters */}
             {((displayStats?.searchStats?.topQueries || []).length > 0 ||
@@ -2323,14 +2306,35 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* Click Journey Cards */}
+            {/* CTA Clicks + Visit Journeys side by side */}
             <Layout.Section>
-              <Card>
-                <BlockStack gap="400">
-                  <InlineStack align="space-between">
-                    <Text as="h2" variant="headingMd">Visit Journeys</Text>
-                    <Text as="span" variant="bodySm" tone="subdued">{filteredRecentVisits.length} visits</Text>
-                  </InlineStack>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, alignItems: "start" }}>
+                {/* CTA Clicks — left column */}
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">CTA Clicks</Text>
+                    {(displayStats?.ctaStats || []).length === 0 ? (
+                      <Text as="p" tone="subdued">No CTA data yet</Text>
+                    ) : (
+                      <BlockStack gap="200">
+                        {(displayStats?.ctaStats || []).map((item: any) => (
+                          <InlineStack key={item.label} align="space-between">
+                            <Text as="span" variant="bodySm">{item.label}</Text>
+                            <Badge>{String(item.count)}</Badge>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+                </Card>
+
+                {/* Visit Journeys — right column */}
+                <Card>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between">
+                      <Text as="h2" variant="headingMd">Visit Journeys</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">{filteredRecentVisits.length} visits</Text>
+                    </InlineStack>
                   <BlockStack gap="300">
                     {filteredRecentVisits.slice(0, 10).map((visit: any) => {
                       const isExpanded = expandedVisits.has(visit.id);
@@ -2461,6 +2465,7 @@ export default function ProjectDetails() {
                   </BlockStack>
                 </BlockStack>
               </Card>
+              </div>
             </Layout.Section>
 
             {/* Detailed Visits Table */}
