@@ -11,6 +11,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const order = payload as any;
     const lineItems = order.line_items || [];
     const orderCreatedAt = order.created_at ? new Date(order.created_at) : new Date();
+    const orderTotal = order.total_price ? parseFloat(order.total_price) : null;
+    const orderCurrency = order.currency || null;
 
     if (lineItems.length === 0) {
       console.log("[MW Webhook] Order has no line items, skipping");
@@ -27,12 +29,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    console.log(`[MW Webhook] Order #${order.order_number || order.name} — ${productIds.size} unique products: ${[...productIds].join(", ")}`);
+    console.log(`[MW Webhook] Order #${order.order_number || order.name} — ${productIds.size} unique products, total: ${orderTotal} ${orderCurrency}`);
 
     if (productIds.size === 0) {
       console.log("[MW Webhook] No product IDs found in line items, skipping");
       return new Response();
     }
+
+    // Calculate per-product revenue share (split order total evenly across tracked products)
+    const perProductRevenue = orderTotal && productIds.size > 0 ? orderTotal / productIds.size : null;
 
     let conversionsTracked = 0;
     const thirtyDaysAgo = new Date();
@@ -93,15 +98,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       if (visit) {
+        // Skip if already converted (dedup pixel + webhook)
+        if (visit.converted) {
+          console.log(`[MW Webhook] Visit ${visit.id} already converted, skipping`);
+          continue;
+        }
+
         await prisma.visit.update({
           where: { id: visit.id },
           data: {
             converted: true,
             convertedAt: orderCreatedAt,
+            ...(perProductRevenue ? { orderValue: perProductRevenue } : {}),
+            ...(orderCurrency ? { currency: orderCurrency } : {}),
           },
         });
         conversionsTracked++;
-        console.log(`[MW Webhook] Converted visit ${visit.id} for product ${productGid} (snapshot: ${snapshot.id})`);
+        console.log(`[MW Webhook] Converted visit ${visit.id} for product ${productGid} (snapshot: ${snapshot.id}, revenue: ${perProductRevenue})`);
       } else {
         console.log(`[MW Webhook] No unconverted visit found for product ${productGid} in snapshot ${snapshot.id}`);
       }

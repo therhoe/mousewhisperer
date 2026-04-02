@@ -40,9 +40,36 @@ export function RichTextEditor({
 
   const addLink = () => {
     if (!editor) return;
+
+    // If link is already active, unset it
+    if (editor.isActive("link")) {
+      editor.chain().focus().unsetLink().run();
+      return;
+    }
+
+    // Save current selection before prompt steals focus
+    const { from, to, empty } = editor.state.selection;
+    const selectedText = empty ? "" : editor.state.doc.textBetween(from, to);
+
     const url = window.prompt("URL");
-    if (url) {
-      editor.chain().focus().setLink({ href: url }).run();
+    if (!url) return;
+
+    // Ensure URL has a protocol
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+    // Restore focus to the editor
+    editor.chain().focus().run();
+
+    if (selectedText) {
+      // Text was selected — apply link to selection
+      editor.chain().focus().setLink({ href }).run();
+    } else {
+      // No selection — insert the URL as linked text
+      editor
+        .chain()
+        .focus()
+        .insertContent(`<a href="${href}">${url}</a>`)
+        .run();
     }
   };
 

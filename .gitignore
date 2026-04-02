@@ -24,3 +24,5 @@ pnpm-lock.yaml
 .shopify/*
 .shopify.lock
 .vercel
+.claude
+.vscode

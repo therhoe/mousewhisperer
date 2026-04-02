@@ -30,6 +30,7 @@ import {
 import {
   CheckCircleIcon,
   MinusCircleIcon,
+  ProfileIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -899,7 +900,10 @@ export default function Index() {
         <Layout.Section>
           {profile ? (
             <Card>
-              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16, position: "relative" }}>
+                <Link to="/app/insights/profile?returnTo=/app" style={{ position: "absolute", top: 0, right: 0, color: "var(--p-color-icon-secondary)" }}>
+                  <Icon source={ProfileIcon} />
+                </Link>
                 <BlockStack gap="100" inlineAlign="center">
                   <span style={{ fontSize: "2.5rem" }}>
                     {profile.avatarEmoji || "\uD83D\uDC2D"}

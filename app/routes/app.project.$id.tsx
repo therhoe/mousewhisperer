@@ -354,29 +354,58 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
   const totalRevenue = revenueAggregate._sum.orderValue || 0;
   const ordersWithValue = revenueAggregate._count._all || 0;
 
-  // Aggregate CTA clicks across all visits (handles both old map and new array formats)
-  const ctaMap = new Map<string, number>();
+  // Aggregate CTA clicks across all visits, grouped by category
+  function categorizeClick(click: { label?: string; tag?: string; href?: string | null; zone?: string }): string {
+    const zone = (click.zone || '').toLowerCase();
+    if (zone === 'header') return 'Header';
+    if (zone === 'footer') return 'Footer';
+    if (zone === 'widget') return 'Widget';
+
+    const label = (click.label || '').toLowerCase();
+    const tag = (click.tag || '').toLowerCase();
+
+    // Image-related
+    if (tag === 'img' || /image|gallery|zoom|slide|photo|thumbnail|lightbox|carousel/i.test(label)) return 'Image';
+    // Widget-related (reviews, ratings, UGC)
+    if (/review|rating|star|testimonial|recommend/i.test(label)) return 'Widget';
+    // Link (anchor tags with href, excluding action-like text)
+    if (tag === 'a' && click.href && !/add to cart|buy|next|prev|subscribe|more/i.test(label)) return 'Link';
+    // Default to Button
+    return 'Button';
+  }
+
+  const ctaCategoryMap = new Map<string, Map<string, number>>();
   ctaClickRows.forEach((row: { ctaClicks: string | null }) => {
     if (!row.ctaClicks) return;
     try {
       const clicks = JSON.parse(row.ctaClicks);
       if (Array.isArray(clicks)) {
-        // New format: [{label, tag, href, time}, ...]
         clicks.forEach((c: any) => {
-          if (c.label) ctaMap.set(c.label, (ctaMap.get(c.label) || 0) + 1);
+          if (!c.label) return;
+          const category = categorizeClick(c);
+          if (!ctaCategoryMap.has(category)) ctaCategoryMap.set(category, new Map());
+          const catMap = ctaCategoryMap.get(category)!;
+          catMap.set(c.label, (catMap.get(c.label) || 0) + 1);
         });
       } else {
-        // Old format: {label: count}
+        // Old format: {label: count} — classify as Button (no tag/zone info)
         Object.entries(clicks).forEach(([label, count]) => {
-          ctaMap.set(label, (ctaMap.get(label) || 0) + (count as number));
+          const category = 'Button';
+          if (!ctaCategoryMap.has(category)) ctaCategoryMap.set(category, new Map());
+          const catMap = ctaCategoryMap.get(category)!;
+          catMap.set(label, (catMap.get(label) || 0) + (count as number));
         });
       }
     } catch {}
   });
-  const ctaStats = Array.from(ctaMap.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 15);
+
+  const ctaByCategory: Record<string, Array<{ label: string; count: number }>> = {};
+  ctaCategoryMap.forEach((entries, category) => {
+    ctaByCategory[category] = Array.from(entries.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  });
 
   return {
     totalSessions,
@@ -407,7 +436,7 @@ async function getSnapshotStatsFromDB(snapshotId: string, dateFilter: { startedA
     exitPaths,
     exitUrls,
     searchStats,
-    ctaStats,
+    ctaByCategory,
   };
 }
 
@@ -980,8 +1009,8 @@ function ConversionFunnel({ stats, isCollection = false }: { stats: any; isColle
   }> = [
     { label: "All Sessions", value: stats.totalSessions, percent: 100, progressTone: "primary" },
     { label: "Real Users", value: stats.realCount, percent: stats.realPercent, badgeTone: "info", progressTone: "highlight" },
-    { label: isCollection ? "Quick Add" : "Added to Cart", value: stats.addToCartCount, percent: stats.atcPercent || 0, badgeTone: "warning", progressTone: "highlight" },
-    { label: isCollection ? "Product" : "Conversions", value: isCollection ? stats.productClickCount : stats.conversionCount, percent: isCollection ? (stats.productClickPercent || 0) : (stats.convPercent || 0), badgeTone: "success", progressTone: "success" },
+    { label: isCollection ? "Quick Add" : "Added to Cart", value: stats.addToCartCount, percent: stats.atcRate || 0, badgeTone: "warning", progressTone: "highlight" },
+    { label: isCollection ? "Product" : "Conversions", value: isCollection ? stats.productClickCount : stats.conversionCount, percent: isCollection ? (stats.productClickPercent || 0) : (stats.convRate || 0), badgeTone: "success", progressTone: "success" },
   ];
 
   return (
@@ -1188,6 +1217,7 @@ export default function ProjectDetails() {
   // Source filter (clicking Traffic by Source rows filters Recent Visits)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
+  const [activeMetrics, setActiveMetrics] = useState<Set<string>>(new Set(["revenuePerVisitor", "aov", "atcRate", "convRate"]));
 
   // SSE connection for real-time updates
   useEffect(() => {
@@ -1469,7 +1499,6 @@ export default function ProjectDetails() {
   if (snapshots.length === 0) {
     return (
       <Page
-        fullWidth
         backAction={{ content: "Dashboard", url: "/app" }}
         title={project.productTitle}
       >
@@ -1545,7 +1574,6 @@ export default function ProjectDetails() {
 
     return (
       <Page
-        fullWidth
         backAction={{ content: "Dashboard", url: "/app" }}
         title={project.productTitle}
         subtitle="Snapshot Comparison"
@@ -1829,7 +1857,6 @@ export default function ProjectDetails() {
 
   return (
     <Page
-      fullWidth
       backAction={{ content: "Dashboard", url: "/app" }}
       title={project.productTitle}
       titleMetadata={selectedSnapshot && getStatusBadge(selectedSnapshot.status)}
@@ -1949,72 +1976,107 @@ export default function ProjectDetails() {
                   </div>
                 </div>
 
-                {/* Multi-metric trend chart across snapshots */}
+                {/* Multi-metric bar chart across snapshots */}
                 {snapshotTrends && snapshotTrends.length > 0 && (() => {
-                  const metrics = [
+                  const allMetrics = [
                     { key: "revenuePerVisitor" as const, label: "RPV", color: "#2C6ECB", format: (v: number) => `$${v.toFixed(2)}` },
                     { key: "aov" as const, label: "AOV", color: "#8B5CF6", format: (v: number) => `$${v.toFixed(2)}` },
                     { key: "atcRate" as const, label: "ATC %", color: "#059669", format: (v: number) => `${v}%` },
                     { key: "convRate" as const, label: "Conv %", color: "#D97706", format: (v: number) => `${v}%` },
                   ];
-                  const chartHeight = 140;
+                  const visibleMetrics = allMetrics.filter((m) => activeMetrics.has(m.key));
+                  const chartHeight = 160;
+                  const barGroupWidth = 80;
+                  const groupGap = 30;
+                  const chartWidth = snapshotTrends.length * (barGroupWidth + groupGap);
+                  // Find global max across all visible metrics for consistent scale
+                  const globalMax = Math.max(
+                    ...visibleMetrics.flatMap((m) => snapshotTrends.map((t) => t[m.key])),
+                    0.01
+                  );
                   return (
                     <BlockStack gap="200">
-                      {/* Legend */}
-                      <InlineStack gap="400">
-                        {metrics.map((m) => (
-                          <InlineStack key={m.key} gap="100" blockAlign="center">
-                            <div style={{ width: 12, height: 12, borderRadius: 2, backgroundColor: m.color }} />
-                            <Text as="span" variant="bodySm" tone="subdued">{m.label}</Text>
-                          </InlineStack>
-                        ))}
-                      </InlineStack>
                       {/* Chart area */}
-                      <div style={{ position: "relative", height: chartHeight + 30, border: "1px solid var(--p-color-border-subdued)", borderRadius: 8, padding: "12px 16px" }}>
-                        {snapshotTrends.length >= 2 ? (
-                          <svg width="100%" height={chartHeight} viewBox={`0 0 ${snapshotTrends.length * 100} ${chartHeight}`} preserveAspectRatio="none" style={{ overflow: "visible" }}>
-                            {metrics.map((m) => {
-                              const values = snapshotTrends.map((t) => t[m.key]);
-                              const maxVal = Math.max(...values, 0.01);
-                              const points = values.map((v, i) => {
-                                const x = (i / (snapshotTrends.length - 1)) * (snapshotTrends.length * 100 - 20) + 10;
-                                const y = chartHeight - (v / maxVal) * (chartHeight - 20) - 10;
-                                return `${x},${y}`;
-                              }).join(" ");
-                              return (
-                                <g key={m.key}>
-                                  <polyline points={points} fill="none" stroke={m.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  {values.map((v, i) => {
-                                    const x = (i / (snapshotTrends.length - 1)) * (snapshotTrends.length * 100 - 20) + 10;
-                                    const y = chartHeight - (v / maxVal) * (chartHeight - 20) - 10;
-                                    return <circle key={i} cx={x} cy={y} r="3" fill={m.color} />;
-                                  })}
-                                </g>
-                              );
-                            })}
-                          </svg>
-                        ) : (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                            <Text as="p" tone="subdued">More snapshots needed for trend chart</Text>
-                          </div>
-                        )}
-                        {/* X-axis labels */}
-                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                          {snapshotTrends.map((t, i) => (
-                            <Text key={i} as="span" variant="bodySm" tone="subdued">{t.name}</Text>
-                          ))}
-                        </div>
+                      <div style={{ position: "relative", border: "1px solid var(--p-color-border-subdued)", borderRadius: 8, padding: "12px 16px" }}>
+                        <svg width="100%" height={chartHeight + 24} viewBox={`0 0 ${Math.max(chartWidth, 200)} ${chartHeight + 24}`} preserveAspectRatio="xMidYMax meet">
+                          {snapshotTrends.map((t, si) => {
+                            const groupX = si * (barGroupWidth + groupGap) + groupGap / 2;
+                            const barWidth = visibleMetrics.length > 0 ? Math.min((barGroupWidth - (visibleMetrics.length - 1) * 2) / visibleMetrics.length, 24) : 0;
+                            const totalBarsWidth = visibleMetrics.length * barWidth + (visibleMetrics.length - 1) * 2;
+                            const barsStartX = groupX + (barGroupWidth - totalBarsWidth) / 2;
+                            return (
+                              <g key={si}>
+                                {visibleMetrics.map((m, mi) => {
+                                  const val = t[m.key];
+                                  const barH = Math.max((val / globalMax) * (chartHeight - 20), 2);
+                                  const x = barsStartX + mi * (barWidth + 2);
+                                  const y = chartHeight - 10 - barH;
+                                  return (
+                                    <g key={m.key}>
+                                      <rect x={x} y={y} width={barWidth} height={barH} fill={m.color} rx={2} opacity={0.85} />
+                                      {val > 0 && (
+                                        <text x={x + barWidth / 2} y={y - 3} textAnchor="middle" fontSize="9" fill={m.color} fontWeight="600">
+                                          {m.format(val)}
+                                        </text>
+                                      )}
+                                    </g>
+                                  );
+                                })}
+                                {/* X-axis label */}
+                                <text x={groupX + barGroupWidth / 2} y={chartHeight + 14} textAnchor="middle" fontSize="10" fill="#6b7280">
+                                  {t.name}
+                                </text>
+                              </g>
+                            );
+                          })}
+                          {/* Baseline */}
+                          <line x1={0} y1={chartHeight - 10} x2={chartWidth} y2={chartHeight - 10} stroke="#e5e7eb" strokeWidth="1" />
+                        </svg>
                       </div>
                     </BlockStack>
                   );
                 })()}
 
-                {/* Revenue & conversion stat cards */}
+                {/* Revenue & conversion stat cards — click to toggle in graph */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-                  <StatCard title="Revenue per Visitor" value={`$${displayStats.revenuePerVisitor.toFixed(2)}`} />
-                  <StatCard title="AOV" value={`$${displayStats.aov.toFixed(2)}`} />
-                  <StatCard title="Add-to-Cart Rate" value={`${displayStats.atcRate}%`} />
-                  <StatCard title="Conversion Rate" value={`${displayStats.convRate}%`} />
+                  {[
+                    { key: "revenuePerVisitor", title: "Revenue per Visitor", value: `$${displayStats.revenuePerVisitor.toFixed(2)}`, color: "#2C6ECB" },
+                    { key: "aov", title: "AOV", value: `$${displayStats.aov.toFixed(2)}`, color: "#8B5CF6" },
+                    { key: "atcRate", title: "Add-to-Cart Rate", value: `${displayStats.atcRate}%`, color: "#059669" },
+                    { key: "convRate", title: "Conversion Rate", value: `${displayStats.convRate}%`, color: "#D97706" },
+                  ].map((card) => (
+                    <div
+                      key={card.key}
+                      onClick={() => {
+                        setActiveMetrics((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(card.key) && next.size === 1) {
+                            // Last one — restore all
+                            return new Set(["revenuePerVisitor", "aov", "atcRate", "convRate"]);
+                          }
+                          if (next.has(card.key) && next.size === 4) {
+                            // All active, clicking isolates this one
+                            return new Set([card.key]);
+                          }
+                          if (next.has(card.key)) {
+                            next.delete(card.key);
+                          } else {
+                            next.add(card.key);
+                          }
+                          return next;
+                        });
+                      }}
+                      style={{
+                        cursor: "pointer",
+                        borderRadius: 8,
+                        border: `2px solid ${activeMetrics.has(card.key) ? card.color : "transparent"}`,
+                        opacity: activeMetrics.has(card.key) ? 1 : 0.4,
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <StatCard title={card.title} value={card.value} />
+                    </div>
+                  ))}
                 </div>
               </BlockStack>
             </Card>
@@ -2211,7 +2273,7 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* CTA Clicks + Visit Journeys are rendered together below */}
+            {/* Click Map + Visit Journeys rendered in separate rows below */}
 
             {/* Search & Filters */}
             {((displayStats?.searchStats?.topQueries || []).length > 0 ||
@@ -2306,30 +2368,58 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* CTA Clicks + Visit Journeys side by side */}
+            {/* Click Map — categorized CTA clicks */}
             <Layout.Section>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, alignItems: "start" }}>
-                {/* CTA Clicks — left column */}
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingMd">CTA Clicks</Text>
-                    {(displayStats?.ctaStats || []).length === 0 ? (
-                      <Text as="p" tone="subdued">No CTA data yet</Text>
-                    ) : (
-                      <BlockStack gap="200">
-                        {(displayStats?.ctaStats || []).map((item: any) => (
-                          <InlineStack key={item.label} align="space-between">
-                            <Text as="span" variant="bodySm">{item.label}</Text>
-                            <Badge>{String(item.count)}</Badge>
-                          </InlineStack>
-                        ))}
-                      </BlockStack>
-                    )}
-                  </BlockStack>
-                </Card>
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Click Map</Text>
+                  {(() => {
+                    const ctaData = displayStats?.ctaByCategory || {};
+                    const categoryOrder = ["Header", "Image", "Button", "Link", "Widget", "Footer"];
+                    const categoryColors: Record<string, string> = {
+                      Header: "#6366F1", Image: "#0EA5E9", Button: "#F59E0B",
+                      Link: "#10B981", Widget: "#8B5CF6", Footer: "#64748B",
+                    };
+                    const activeCategories = categoryOrder.filter((cat) => ctaData[cat] && ctaData[cat].length > 0);
+                    if (activeCategories.length === 0) {
+                      return <Text as="p" tone="subdued">No click data yet. Clicks will be categorized by zone (Header, Image, Button, Link, Widget, Footer) as visitors interact with the page.</Text>;
+                    }
+                    const totalClicks = activeCategories.reduce((sum, cat) => sum + ctaData[cat].reduce((s: number, i: any) => s + i.count, 0), 0);
+                    return (
+                      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeCategories.length, 6)}, 1fr)`, gap: 16 }}>
+                        {activeCategories.map((cat) => {
+                          const items = ctaData[cat] || [];
+                          const catTotal = items.reduce((s: number, i: any) => s + i.count, 0);
+                          const pct = totalClicks > 0 ? Math.round((catTotal / totalClicks) * 100) : 0;
+                          return (
+                            <div key={cat} style={{ borderLeft: `3px solid ${categoryColors[cat] || "#94A3B8"}`, paddingLeft: 12 }}>
+                              <BlockStack gap="200">
+                                <InlineStack align="space-between" blockAlign="center">
+                                  <Text as="span" variant="headingSm">{cat}</Text>
+                                  <Text as="span" variant="bodySm" tone="subdued">{catTotal} ({pct}%)</Text>
+                                </InlineStack>
+                                <BlockStack gap="100">
+                                  {items.slice(0, 8).map((item: any) => (
+                                    <InlineStack key={item.label} align="space-between" blockAlign="start">
+                                      <Text as="span" variant="bodySm" breakWord>{item.label}</Text>
+                                      <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
+                                    </InlineStack>
+                                  ))}
+                                </BlockStack>
+                              </BlockStack>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </BlockStack>
+              </Card>
+            </Layout.Section>
 
-                {/* Visit Journeys — right column */}
-                <Card>
+            {/* Visit Journeys */}
+            <Layout.Section>
+              <Card>
                   <BlockStack gap="400">
                     <InlineStack align="space-between">
                       <Text as="h2" variant="headingMd">Visit Journeys</Text>
@@ -2465,7 +2555,6 @@ export default function ProjectDetails() {
                   </BlockStack>
                 </BlockStack>
               </Card>
-              </div>
             </Layout.Section>
 
             {/* Detailed Visits Table */}

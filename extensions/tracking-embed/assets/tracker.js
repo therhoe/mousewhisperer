@@ -413,18 +413,29 @@
         }
       }
 
-      // CTA click tracking — only inside main product/collection content area
-      var mainContent = document.querySelector('main, #MainContent, .main-content, [role="main"], .product, .collection');
-      if (!mainContent) return;
+      // CTA click tracking — capture clicks across all page zones
+      var clickedEl = e.target.closest('a, button, [type="submit"], input[type="submit"], img');
+      if (!clickedEl) return;
 
-      var clickedEl = e.target.closest('a, button, [type="submit"], input[type="submit"]');
-      if (!clickedEl || !mainContent.contains(clickedEl)) return;
-
-      // Skip navigation links (nav, header, footer)
-      if (clickedEl.closest('nav, header, footer, .header, .footer, .site-header, .site-footer, .announcement-bar')) return;
+      // Determine page zone
+      var zone = 'main';
+      if (clickedEl.closest('header, .header, .site-header, .announcement-bar, .header-wrapper')) {
+        zone = 'header';
+      } else if (clickedEl.closest('footer, .footer, .site-footer, .footer-wrapper')) {
+        zone = 'footer';
+      } else if (clickedEl.closest('.jdgm-widget, .jdgm-rev-widg, .stamped-container, .stamped-main-widget, .loox-widget, .yotpo-widget, .yotpo-main-widget, .spr-container, [data-reviewapp], .trustpilot-widget, .okendo-widget')) {
+        zone = 'widget';
+      } else if (clickedEl.closest('nav, .nav, .site-nav, .breadcrumb, .breadcrumbs, .pagination')) {
+        zone = 'header'; // Treat nav as header
+      }
 
       // Get CTA label from text content
-      var label = (clickedEl.textContent || clickedEl.value || clickedEl.getAttribute('aria-label') || '').trim();
+      var label = '';
+      if (clickedEl.tagName === 'IMG') {
+        label = clickedEl.getAttribute('alt') || clickedEl.getAttribute('aria-label') || 'Image';
+      } else {
+        label = (clickedEl.textContent || clickedEl.value || clickedEl.getAttribute('aria-label') || '').trim();
+      }
       // Clean up whitespace and limit length
       label = label.replace(/\s+/g, ' ').substring(0, 60);
       if (!label || label.length < 2) return;
@@ -432,13 +443,14 @@
       // Skip generic/non-CTA text
       if (/^(menu|close|open|search|\d+|x|×)$/i.test(label)) return;
 
-      // Cap at 20 entries per visit
-      if (state.ctaClicks.length < 20) {
+      // Cap at 50 entries per visit (increased for multi-zone tracking)
+      if (state.ctaClicks.length < 50) {
         state.ctaClicks.push({
           label: label,
           tag: clickedEl.tagName.toLowerCase(),
-          href: clickedEl.href || null,
+          href: clickedEl.href || clickedEl.src || null,
           time: Date.now() - state.startTime,
+          zone: zone,
         });
       }
     }, { passive: true });
