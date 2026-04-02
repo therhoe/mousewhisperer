@@ -733,8 +733,13 @@ export default function Index() {
         </button>
       </TitleBar>
 
-      {/* Notification bell */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+      {/* Notification bell + Profile */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 12 }}>
+        <Link to="/app/insights/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
+          <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
+            <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
+          </svg>
+        </Link>
         <Popover
           active={bellOpen}
           activator={bellActivator}
@@ -900,10 +905,7 @@ export default function Index() {
         <Layout.Section>
           {profile ? (
             <Card>
-              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16, position: "relative" }}>
-                <Link to="/app/insights/profile?returnTo=/app" style={{ position: "absolute", top: 0, right: 0, color: "var(--p-color-icon-secondary)" }}>
-                  <Icon source={ProfileIcon} />
-                </Link>
+              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
                 <BlockStack gap="100" inlineAlign="center">
                   <span style={{ fontSize: "2.5rem" }}>
                     {profile.avatarEmoji || "\uD83D\uDC2D"}
