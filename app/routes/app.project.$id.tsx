@@ -1217,6 +1217,7 @@ export default function ProjectDetails() {
   // Source filter (clicking Traffic by Source rows filters Recent Visits)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
+  const [currentPage, setCurrentPage] = useState(0);
   const [activeMetrics, setActiveMetrics] = useState<Set<string>>(new Set(["revenuePerVisitor", "aov", "atcRate", "convRate"]));
 
   // SSE connection for real-time updates
@@ -2085,11 +2086,10 @@ export default function ProjectDetails() {
 
         {selectedSnapshot && displayStats && (
           <>
-            {/* Stats Overview */}
+            {/* Traffic Overview (aggregate + by source) */}
             <Layout.Section>
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Overall Totals</Text>
+              <Card padding="0">
+                <Box padding="400">
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16 }}>
                     <StatCard
                       title="Real Users"
@@ -2108,18 +2108,64 @@ export default function ProjectDetails() {
                     <StatCard title={atcLabel} value={displayStats.addToCartCount} />
                     <StatCard title={convLabel} value={isCollection ? displayStats.productClickCount : displayStats.conversionCount} />
                   </div>
-                </BlockStack>
+                </Box>
+                <Divider />
+                <Box padding="400" paddingBlockEnd="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">Traffic Quality by Source</Text>
+                </Box>
+                <IndexTable
+                  resourceName={{ singular: "source", plural: "sources" }}
+                  itemCount={sourceStats.length}
+                  headings={[
+                    { title: "Source" },
+                    { title: "Sessions" },
+                    { title: "Real" },
+                    { title: "Zombie" },
+                    { title: "Bot" },
+                    { title: "Avg Time" },
+                    { title: "Avg Scroll" },
+                    { title: isCollection ? "QA %" : "ATC %" },
+                    { title: isCollection ? "Prod %" : "Conv %" },
+                  ]}
+                  selectable={false}
+                >
+                  {rowMarkup}
+                </IndexTable>
               </Card>
             </Layout.Section>
 
-            {/* Conversion Funnel */}
-            <Layout.Section variant="oneThird">
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Conversion Funnel</Text>
-                  <ConversionFunnel stats={displayStats} isCollection={isCollection} />
-                </BlockStack>
-              </Card>
+            {/* Conversion Funnel + Exit Paths (side by side) */}
+            <Layout.Section>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">Conversion Funnel</Text>
+                    <ConversionFunnel stats={displayStats} isCollection={isCollection} />
+                  </BlockStack>
+                </Card>
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">Exit Paths</Text>
+                    {(displayStats?.exitPaths || []).length === 0 ? (
+                      <Text as="p" tone="subdued">No exit data available yet</Text>
+                    ) : (
+                      <BlockStack gap="200">
+                        {(displayStats?.exitPaths || []).map((item: any) => (
+                          <InlineStack key={item.type} align="space-between">
+                            <Text as="span">{item.label}</Text>
+                            <InlineStack gap="100">
+                              <Text as="span" tone="subdued">{item.count}</Text>
+                              <Badge tone={item.type === "checkout" ? "success" : undefined}>
+                                {`${item.percent}%`}
+                              </Badge>
+                            </InlineStack>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+                </Card>
+              </div>
             </Layout.Section>
 
             {/* Top Countries / Cities / Devices — uniform height row */}
@@ -2216,31 +2262,6 @@ export default function ProjectDetails() {
             </div>
             </Layout.Section>
 
-            {/* Exit Paths */}
-            <Layout.Section variant="oneThird">
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Exit Paths</Text>
-                  {(displayStats?.exitPaths || []).length === 0 ? (
-                    <Text as="p" tone="subdued">No exit data available yet</Text>
-                  ) : (
-                    <BlockStack gap="200">
-                      {(displayStats?.exitPaths || []).map((item: any) => (
-                        <InlineStack key={item.type} align="space-between">
-                          <Text as="span">{item.label}</Text>
-                          <InlineStack gap="100">
-                            <Text as="span" tone="subdued">{item.count}</Text>
-                            <Badge tone={item.type === "checkout" ? "success" : undefined}>
-                              {`${item.percent}%`}
-                            </Badge>
-                          </InlineStack>
-                        </InlineStack>
-                      ))}
-                    </BlockStack>
-                  )}
-                </BlockStack>
-              </Card>
-            </Layout.Section>
 
             {/* Top Products Clicked (Collection audits only) */}
             {isCollection && (topProductsClicked || []).length > 0 && (
@@ -2332,32 +2353,6 @@ export default function ProjectDetails() {
             </Layout.Section>
             )}
 
-            {/* Traffic by Source Table */}
-            <Layout.Section>
-              <Card padding="0">
-                <Box padding="400">
-                  <Text as="h2" variant="headingMd">Traffic Quality by Source</Text>
-                </Box>
-                <IndexTable
-                  resourceName={{ singular: "source", plural: "sources" }}
-                  itemCount={sourceStats.length}
-                  headings={[
-                    { title: "Source" },
-                    { title: "Sessions" },
-                    { title: "Real" },
-                    { title: "Zombie" },
-                    { title: "Bot" },
-                    { title: "Avg Time" },
-                    { title: "Avg Scroll" },
-                    { title: isCollection ? "QA %" : "ATC %" },
-                    { title: isCollection ? "Prod %" : "Conv %" },
-                  ]}
-                  selectable={false}
-                >
-                  {rowMarkup}
-                </IndexTable>
-              </Card>
-            </Layout.Section>
 
             {/* Source filter indicator */}
             {sourceFilter && (
@@ -2417,226 +2412,179 @@ export default function ProjectDetails() {
               </Card>
             </Layout.Section>
 
-            {/* Visit Journeys */}
+            {/* Recent Visits (combined table + expandable journeys) */}
             <Layout.Section>
-              <Card>
-                  <BlockStack gap="400">
-                    <InlineStack align="space-between">
-                      <Text as="h2" variant="headingMd">Visit Journeys</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">{filteredRecentVisits.length} visits</Text>
-                    </InlineStack>
-                  <BlockStack gap="300">
-                    {filteredRecentVisits.slice(0, 10).map((visit: any) => {
-                      const isExpanded = expandedVisits.has(visit.id);
-                      const isPaid = (visit.sourceCategory || "").includes("Paid");
-                      const clickCount = (() => {
-                        if (!visit.ctaClicks) return 0;
-                        try {
-                          const parsed = JSON.parse(visit.ctaClicks);
-                          return Array.isArray(parsed) ? parsed.length : Object.values(parsed).reduce((a: number, b: any) => a + (b as number), 0);
-                        } catch { return 0; }
-                      })();
-                      const ctaEntries: any[] = (() => {
-                        if (!visit.ctaClicks) return [];
-                        try {
-                          const parsed = JSON.parse(visit.ctaClicks);
-                          if (Array.isArray(parsed)) return parsed;
-                          return Object.entries(parsed).map(([label, count]) => ({ label, tag: "button", href: null, time: 0, count }));
-                        } catch { return []; }
-                      })();
+              <Card padding="0">
+                <Box padding="400">
+                  <InlineStack align="space-between">
+                    <Text as="h2" variant="headingMd">
+                      Recent Visits {sourceFilter ? `\u2014 ${sourceFilter}` : ""}
+                    </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">{filteredRecentVisits.length} visits</Text>
+                  </InlineStack>
+                </Box>
+                {(() => {
+                  const PAGE_SIZE = 15;
+                  const totalPages = Math.max(1, Math.ceil(filteredRecentVisits.length / PAGE_SIZE));
+                  const safeCurrentPage = Math.min(currentPage, totalPages - 1);
+                  const pageVisits = filteredRecentVisits.slice(safeCurrentPage * PAGE_SIZE, (safeCurrentPage + 1) * PAGE_SIZE);
+                  const gridCols = "40px 1fr 1fr 60px 65px 55px 50px 70px 1fr 30px";
 
-                      return (
-                        <div
-                          key={visit.id}
-                          style={{
-                            border: "1px solid var(--p-color-border-subdued)",
-                            borderRadius: 8,
-                            overflow: "hidden",
-                          }}
-                        >
-                          {/* Card header — clickable */}
-                          <div
-                            onClick={() => setExpandedVisits(prev => {
-                              const next = new Set(prev);
-                              next.has(visit.id) ? next.delete(visit.id) : next.add(visit.id);
-                              return next;
-                            })}
-                            style={{
-                              padding: "12px 16px",
-                              cursor: "pointer",
-                              backgroundColor: isExpanded ? "var(--p-color-bg-surface-secondary)" : "transparent",
-                            }}
-                          >
-                            <InlineStack align="space-between" blockAlign="center">
-                              <InlineStack gap="200" blockAlign="center" wrap>
-                                <Text as="span" variant="bodyMd" fontWeight="bold">
-                                  {visit.source || visit.sourceCategory || "Direct"}
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {visit.deviceType || "unknown"} · {clickCount} click{clickCount !== 1 ? "s" : ""}
-                                  {visit.exitType ? ` · Exit: ${formatExitType(visit.exitType)}` : ""}
-                                </Text>
+                  return (
+                    <div>
+                      {/* Header row */}
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: gridCols,
+                        gap: 8,
+                        padding: "8px 16px",
+                        borderBottom: "1px solid var(--p-color-border-subdued)",
+                        backgroundColor: "var(--p-color-bg-surface-secondary)",
+                      }}>
+                        {["Device", "Source", "UTM", "Clicks", "Duration", "Scroll", "ATC", "Conv", "Exit", ""].map((h) => (
+                          <Text key={h} as="span" variant="bodySm" tone="subdued" fontWeight="semibold">{h}</Text>
+                        ))}
+                      </div>
+
+                      {/* Data rows */}
+                      {pageVisits.map((visit: any) => {
+                        const isExpanded = expandedVisits.has(visit.id);
+                        const isPaid = (visit.sourceCategory || "").includes("Paid");
+                        const ctaEntries: any[] = (() => {
+                          if (!visit.ctaClicks) return [];
+                          try {
+                            const parsed = JSON.parse(visit.ctaClicks);
+                            if (Array.isArray(parsed)) return parsed;
+                            return Object.entries(parsed).map(([label, count]) => ({ label, tag: "button", href: null, time: 0, count }));
+                          } catch { return []; }
+                        })();
+                        const clickCount = ctaEntries.length;
+
+                        return (
+                          <div key={visit.id} style={{ borderBottom: "1px solid var(--p-color-border-subdued)" }}>
+                            {/* Collapsed row */}
+                            <div
+                              onClick={() => setExpandedVisits((prev) => {
+                                const next = new Set(prev);
+                                next.has(visit.id) ? next.delete(visit.id) : next.add(visit.id);
+                                return next;
+                              })}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: gridCols,
+                                gap: 8,
+                                padding: "10px 16px",
+                                cursor: "pointer",
+                                alignItems: "center",
+                                backgroundColor: isExpanded ? "var(--p-color-bg-surface-secondary)" : "transparent",
+                                transition: "background-color 0.1s ease",
+                              }}
+                            >
+                              <Text as="span" variant="bodySm">{getDeviceIcon(visit.deviceType || "")}</Text>
+                              <InlineStack gap="100" blockAlign="center" wrap={false}>
+                                <Text as="span" variant="bodySm" fontWeight="semibold">{visit.sourceCategory || "Direct"}</Text>
+                                {isPaid && <Badge tone="info" size="small">Paid</Badge>}
                               </InlineStack>
-                              <InlineStack gap="200" blockAlign="center">
-                                {isPaid && <Badge tone="info">Paid</Badge>}
-                                {visit.addedToCart && <Badge tone="success">ATC</Badge>}
-                                {visit.converted && (
-                                  <Badge tone="success">
-                                    {visit.orderValue ? `Converted $${visit.orderValue.toFixed(2)}` : "Converted"}
-                                  </Badge>
+                              <BlockStack gap="050">
+                                {visit.source && <Text as="span" variant="bodySm" tone="subdued">{visit.source}{visit.medium ? ` / ${visit.medium}` : ""}</Text>}
+                                {visit.campaign && <Text as="span" variant="bodySm" tone="subdued">{visit.campaign}</Text>}
+                              </BlockStack>
+                              <Text as="span" variant="bodySm">{clickCount}</Text>
+                              <Text as="span" variant="bodySm">{formatTime(Math.round(visit.timeOnPage / 1000))}</Text>
+                              <Text as="span" variant="bodySm">{visit.scrollDepth}%</Text>
+                              <div>{visit.addedToCart ? <Badge tone="success" size="small">Yes</Badge> : <Text as="span" tone="subdued">-</Text>}</div>
+                              <div>
+                                {visit.converted
+                                  ? <Badge tone="success" size="small">{visit.orderValue ? `$${visit.orderValue.toFixed(0)}` : "Yes"}</Badge>
+                                  : <Text as="span" tone="subdued">-</Text>
+                                }
+                              </div>
+                              <BlockStack gap="050">
+                                <Text as="span" variant="bodySm">{formatExitType(visit.exitType || "unknown")}</Text>
+                                {visit.exitUrl && (
+                                  <Text as="span" variant="bodySm" tone="subdued" truncate>
+                                    {(() => { try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; } })()}
+                                  </Text>
                                 )}
-                                <Text as="span" variant="bodySm" tone="subdued">{isExpanded ? "▲" : "▼"}</Text>
-                              </InlineStack>
-                            </InlineStack>
-                          </div>
+                              </BlockStack>
+                              <Text as="span" variant="bodySm" tone="subdued">{isExpanded ? "\u25B2" : "\u25BC"}</Text>
+                            </div>
 
-                          {/* Expanded click journey */}
-                          {isExpanded && (
-                            <div style={{ padding: "0 16px 16px", borderTop: "1px solid var(--p-color-border-subdued)" }}>
-                              <BlockStack gap="200">
-                                {/* PAGE entry */}
-                                <div style={{ paddingTop: 12 }}>
+                            {/* Expanded journey detail */}
+                            {isExpanded && (
+                              <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--p-color-border-subdued)", backgroundColor: "var(--p-color-bg-surface-secondary)" }}>
+                                <BlockStack gap="200">
                                   <InlineStack gap="200" blockAlign="start">
                                     <Badge tone="info">PAGE</Badge>
                                     <BlockStack gap="100">
                                       <Text as="span" variant="bodySm">/products/{visit.source ? `...` : ""}{visit.sourceCategory ? "" : ""}</Text>
                                       <InlineStack gap="100" wrap>
                                         {visit.source && (
-                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface)", borderRadius: 4 }}>
                                             source: {visit.source}
                                           </span>
                                         )}
                                         {visit.medium && (
-                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface)", borderRadius: 4 }}>
                                             medium: {visit.medium}
                                           </span>
                                         )}
                                         {visit.campaign && (
-                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface-secondary)", borderRadius: 4 }}>
+                                          <span style={{ fontSize: 11, padding: "2px 6px", backgroundColor: "var(--p-color-bg-surface)", borderRadius: 4 }}>
                                             campaign: {visit.campaign}
                                           </span>
                                         )}
                                       </InlineStack>
                                     </BlockStack>
                                   </InlineStack>
-                                </div>
 
-                                {/* CTA click entries */}
-                                {ctaEntries.map((cta: any, i: number) => (
-                                  <div key={i} style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
-                                    <InlineStack gap="200" blockAlign="center">
-                                      <Badge tone="attention">CLICK</Badge>
-                                      <Text as="span" variant="bodySm">
-                                        {"<"}{cta.tag}{">"} {cta.label}
-                                        {cta.href ? ` → ${(() => { try { return new URL(cta.href).pathname; } catch { return cta.href; } })()}` : ""}
-                                      </Text>
-                                    </InlineStack>
-                                  </div>
-                                ))}
+                                  {ctaEntries.map((cta: any, i: number) => (
+                                    <div key={i} style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
+                                      <InlineStack gap="200" blockAlign="center">
+                                        <Badge tone="attention">CLICK</Badge>
+                                        <Text as="span" variant="bodySm">
+                                          {"<"}{cta.tag}{">"} {cta.label}
+                                          {cta.href ? ` \u2192 ${(() => { try { return new URL(cta.href).pathname; } catch { return cta.href; } })()}` : ""}
+                                        </Text>
+                                      </InlineStack>
+                                    </div>
+                                  ))}
 
-                                {/* EXIT entry */}
-                                {visit.exitType && (
-                                  <div style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
-                                    <InlineStack gap="200" blockAlign="center">
-                                      <Badge tone="critical">EXIT</Badge>
-                                      <Text as="span" variant="bodySm">
-                                        {formatExitType(visit.exitType)}
-                                        {visit.exitUrl ? `: ${(() => { try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; } })()}` : ""}
-                                      </Text>
-                                    </InlineStack>
-                                  </div>
-                                )}
-                              </BlockStack>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            </Layout.Section>
+                                  {visit.exitType && (
+                                    <div style={{ paddingLeft: 8, borderLeft: "2px solid var(--p-color-border-subdued)" }}>
+                                      <InlineStack gap="200" blockAlign="center">
+                                        <Badge tone="critical">EXIT</Badge>
+                                        <Text as="span" variant="bodySm">
+                                          {formatExitType(visit.exitType)}
+                                          {visit.exitUrl ? `: ${(() => { try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; } })()}` : ""}
+                                        </Text>
+                                      </InlineStack>
+                                    </div>
+                                  )}
+                                </BlockStack>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
 
-            {/* Detailed Visits Table */}
-            <Layout.Section>
-              <Card padding="0">
-                <Box padding="400">
-                  <Text as="h2" variant="headingMd">
-                    Recent Visits {sourceFilter ? `\u2014 ${sourceFilter}` : "(Last 50)"}
-                  </Text>
-                </Box>
-                <div style={{ overflowX: "auto" }}>
-                  <IndexTable
-                    resourceName={{ singular: "visit", plural: "visits" }}
-                    itemCount={filteredRecentVisits.length}
-                    headings={[
-                      { title: "Type" },
-                      { title: "Source" },
-                      { title: "UTM" },
-                      { title: "" },
-                      { title: "Duration" },
-                      { title: "Scroll" },
-                      { title: isCollection ? "QA" : "ATC" },
-                      { title: "Exit" },
-                    ]}
-                    selectable={false}
-                  >
-                    {filteredRecentVisits.map((visit: any, index: number) => (
-                      <IndexTable.Row id={visit.id} key={visit.id} position={index}>
-                        <IndexTable.Cell>
-                          <Badge
-                            tone={visit.visitorType === "REAL" ? "success" : visit.visitorType === "ZOMBIE" ? "warning" : "critical"}
-                          >
-                            {visit.visitorType}
-                          </Badge>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm" fontWeight="semibold">
-                            {getSourceIcon(visit.sourceCategory || "Direct")} {visit.sourceCategory || "Direct"}
+                      {/* Pagination */}
+                      {totalPages > 1 && (
+                        <div style={{ padding: "12px 16px", display: "flex", justifyContent: "center", alignItems: "center", gap: 16 }}>
+                          <Button disabled={safeCurrentPage === 0} onClick={() => setCurrentPage((p: number) => Math.max(0, p - 1))} size="micro">
+                            Previous
+                          </Button>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            Page {safeCurrentPage + 1} of {totalPages}
                           </Text>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <BlockStack gap="050">
-                            {visit.source && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {visit.source}{visit.medium ? ` / ${visit.medium}` : ""}
-                              </Text>
-                            )}
-                            {visit.campaign && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {visit.campaign}
-                              </Text>
-                            )}
-                          </BlockStack>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{getDeviceIcon(visit.deviceType || "")}</Text>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{formatTime(Math.round(visit.timeOnPage / 1000))}</Text>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodySm">{visit.scrollDepth}%</Text>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          {visit.addedToCart ? <Badge tone="success">Yes</Badge> : <Text as="span" tone="subdued">-</Text>}
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <BlockStack gap="050">
-                            <Text as="span" variant="bodySm">{formatExitType(visit.exitType || "unknown")}</Text>
-                            {visit.exitUrl && (
-                              <Text as="span" variant="bodySm" tone="subdued" truncate>
-                                {(() => {
-                                  try { return new URL(visit.exitUrl).pathname; } catch { return visit.exitUrl; }
-                                })()}
-                              </Text>
-                            )}
-                          </BlockStack>
-                        </IndexTable.Cell>
-                      </IndexTable.Row>
-                    ))}
-                  </IndexTable>
-                </div>
+                          <Button disabled={safeCurrentPage >= totalPages - 1} onClick={() => setCurrentPage((p: number) => Math.min(totalPages - 1, p + 1))} size="micro">
+                            Next
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </Card>
             </Layout.Section>
           </>
