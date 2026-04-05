@@ -1986,52 +1986,80 @@ export default function ProjectDetails() {
                     { key: "convRate" as const, label: "Conv %", color: "#D97706", format: (v: number) => `${v}%` },
                   ];
                   const visibleMetrics = allMetrics.filter((m) => activeMetrics.has(m.key));
-                  const chartHeight = 160;
-                  const barGroupWidth = 80;
-                  const groupGap = 30;
-                  const chartWidth = snapshotTrends.length * (barGroupWidth + groupGap);
-                  // Find global max across all visible metrics for consistent scale
+                  const chartHeight = 220;
+                  const chartPadTop = 24;
+                  const chartPadBottom = 28;
+                  const barArea = chartHeight - chartPadTop - chartPadBottom;
                   const globalMax = Math.max(
                     ...visibleMetrics.flatMap((m) => snapshotTrends.map((t) => t[m.key])),
                     0.01
                   );
+                  const maxVisibleSets = 5;
+                  const totalSets = snapshotTrends.length;
+                  const needsScroll = totalSets > maxVisibleSets;
+                  const svgRefWidth = 800;
+                  const setsInView = needsScroll ? totalSets : Math.min(totalSets, maxVisibleSets);
+                  const groupPadding = setsInView === 1 ? 0.25 : 0.12;
+                  const groupWidth = needsScroll ? svgRefWidth / maxVisibleSets : svgRefWidth / setsInView;
+                  const gap = groupWidth * groupPadding;
+                  const usableGroupWidth = groupWidth - gap;
+                  const totalSvgWidth = needsScroll ? totalSets * groupWidth : svgRefWidth;
+                  const maxBarWidth = 48;
+                  const barGap = 3;
+                  const rawBarWidth = visibleMetrics.length > 0
+                    ? (usableGroupWidth - (visibleMetrics.length - 1) * barGap) / visibleMetrics.length
+                    : 0;
+                  const barWidth = Math.min(rawBarWidth, maxBarWidth);
+                  const totalBarsWidth = visibleMetrics.length * barWidth + (visibleMetrics.length - 1) * barGap;
+                  const gridLineCount = 4;
+                  const gridLines = Array.from({ length: gridLineCount + 1 }, (_, i) => {
+                    const frac = i / gridLineCount;
+                    return { y: chartPadTop + barArea * (1 - frac) };
+                  });
+
                   return (
                     <BlockStack gap="200">
-                      {/* Chart area */}
-                      <div style={{ position: "relative", border: "1px solid var(--p-color-border-subdued)", borderRadius: 8, padding: "12px 16px" }}>
-                        <svg width="100%" height={chartHeight + 24} viewBox={`0 0 ${Math.max(chartWidth, 200)} ${chartHeight + 24}`} preserveAspectRatio="xMidYMax meet">
+                      <div style={{
+                        position: "relative",
+                        border: "1px solid var(--p-color-border-subdued)",
+                        borderRadius: 8,
+                        padding: "12px 16px",
+                        overflowX: needsScroll ? "auto" : "hidden",
+                        overflowY: "hidden",
+                      }}>
+                        <svg
+                          width={needsScroll ? totalSvgWidth : "100%"}
+                          height={chartHeight}
+                          viewBox={`0 0 ${totalSvgWidth} ${chartHeight}`}
+                          preserveAspectRatio={needsScroll ? "none" : "xMidYMid meet"}
+                          style={{ display: "block" }}
+                        >
+                          {gridLines.map((line, i) => (
+                            <line key={`grid-${i}`} x1={0} y1={line.y} x2={totalSvgWidth} y2={line.y} stroke="#e5e7eb" strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "none" : "4 3"} />
+                          ))}
                           {snapshotTrends.map((t, si) => {
-                            const groupX = si * (barGroupWidth + groupGap) + groupGap / 2;
-                            const barWidth = visibleMetrics.length > 0 ? Math.min((barGroupWidth - (visibleMetrics.length - 1) * 2) / visibleMetrics.length, 24) : 0;
-                            const totalBarsWidth = visibleMetrics.length * barWidth + (visibleMetrics.length - 1) * 2;
-                            const barsStartX = groupX + (barGroupWidth - totalBarsWidth) / 2;
+                            const groupCenterX = si * groupWidth + groupWidth / 2;
+                            const barsStartX = groupCenterX - totalBarsWidth / 2;
                             return (
                               <g key={si}>
                                 {visibleMetrics.map((m, mi) => {
                                   const val = t[m.key];
-                                  const barH = Math.max((val / globalMax) * (chartHeight - 20), 2);
-                                  const x = barsStartX + mi * (barWidth + 2);
-                                  const y = chartHeight - 10 - barH;
+                                  const barH = Math.max((val / globalMax) * barArea, 2);
+                                  const x = barsStartX + mi * (barWidth + barGap);
+                                  const y = chartPadTop + barArea - barH;
                                   return (
                                     <g key={m.key}>
-                                      <rect x={x} y={y} width={barWidth} height={barH} fill={m.color} rx={2} opacity={0.85} />
+                                      <rect x={x} y={y} width={barWidth} height={barH} fill={m.color} rx={3} opacity={0.85} />
                                       {val > 0 && (
-                                        <text x={x + barWidth / 2} y={y - 3} textAnchor="middle" fontSize="9" fill={m.color} fontWeight="600">
-                                          {m.format(val)}
-                                        </text>
+                                        <text x={x + barWidth / 2} y={y - 5} textAnchor="middle" fontSize="10" fill={m.color} fontWeight="600">{m.format(val)}</text>
                                       )}
                                     </g>
                                   );
                                 })}
-                                {/* X-axis label */}
-                                <text x={groupX + barGroupWidth / 2} y={chartHeight + 14} textAnchor="middle" fontSize="10" fill="#6b7280">
-                                  {t.name}
-                                </text>
+                                <text x={groupCenterX} y={chartHeight - 6} textAnchor="middle" fontSize="11" fill="#6b7280" fontWeight="500">{t.name}</text>
                               </g>
                             );
                           })}
-                          {/* Baseline */}
-                          <line x1={0} y1={chartHeight - 10} x2={chartWidth} y2={chartHeight - 10} stroke="#e5e7eb" strokeWidth="1" />
                         </svg>
                       </div>
                     </BlockStack>
@@ -2363,11 +2391,11 @@ export default function ProjectDetails() {
               </Layout.Section>
             )}
 
-            {/* Click Map — categorized CTA clicks */}
+            {/* Engagement by Zone — donut chart + horizontal bar breakdown */}
             <Layout.Section>
               <Card>
                 <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">Click Map</Text>
+                  <Text as="h2" variant="headingMd">Engagement by Zone</Text>
                   {(() => {
                     const ctaData = displayStats?.ctaByCategory || {};
                     const categoryOrder = ["Header", "Image", "Button", "Link", "Widget", "Footer"];
@@ -2379,32 +2407,101 @@ export default function ProjectDetails() {
                     if (activeCategories.length === 0) {
                       return <Text as="p" tone="subdued">No click data yet. Clicks will be categorized by zone (Header, Image, Button, Link, Widget, Footer) as visitors interact with the page.</Text>;
                     }
-                    const totalClicks = activeCategories.reduce((sum, cat) => sum + ctaData[cat].reduce((s: number, i: any) => s + i.count, 0), 0);
+                    const catTotals = activeCategories.map((cat) => ({
+                      cat,
+                      total: ctaData[cat].reduce((s: number, i: any) => s + i.count, 0),
+                      items: ctaData[cat],
+                      color: categoryColors[cat] || "#94A3B8",
+                    }));
+                    const totalClicks = catTotals.reduce((s, c) => s + c.total, 0);
+                    const radius = 70;
+                    const circumference = 2 * Math.PI * radius;
+                    let offset = 0;
+
                     return (
-                      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeCategories.length, 6)}, 1fr)`, gap: 16 }}>
-                        {activeCategories.map((cat) => {
-                          const items = ctaData[cat] || [];
-                          const catTotal = items.reduce((s: number, i: any) => s + i.count, 0);
-                          const pct = totalClicks > 0 ? Math.round((catTotal / totalClicks) * 100) : 0;
-                          return (
-                            <div key={cat} style={{ borderLeft: `3px solid ${categoryColors[cat] || "#94A3B8"}`, paddingLeft: 12 }}>
-                              <BlockStack gap="200">
-                                <InlineStack align="space-between" blockAlign="center">
-                                  <Text as="span" variant="headingSm">{cat}</Text>
-                                  <Text as="span" variant="bodySm" tone="subdued">{catTotal} ({pct}%)</Text>
+                      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 32, alignItems: "start" }}>
+                        {/* Donut chart */}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                          <svg width="180" height="180" viewBox="0 0 180 180">
+                            {catTotals.map((c) => {
+                              const frac = totalClicks > 0 ? c.total / totalClicks : 0;
+                              const dashLength = frac * circumference;
+                              const dashGap = circumference - dashLength;
+                              const currentOffset = offset;
+                              offset += dashLength;
+                              return (
+                                <circle
+                                  key={c.cat}
+                                  cx="90" cy="90" r={radius}
+                                  fill="none"
+                                  stroke={c.color}
+                                  strokeWidth="24"
+                                  strokeDasharray={`${dashLength} ${dashGap}`}
+                                  strokeDashoffset={-currentOffset}
+                                  transform="rotate(-90 90 90)"
+                                />
+                              );
+                            })}
+                            <text x="90" y="85" textAnchor="middle" fontSize="22" fontWeight="700" fill="#1a1a1a">{totalClicks}</text>
+                            <text x="90" y="104" textAnchor="middle" fontSize="11" fill="#6b7280">total clicks</text>
+                          </svg>
+                          <BlockStack gap="200">
+                            {catTotals.map((c) => {
+                              const pct = totalClicks > 0 ? Math.round((c.total / totalClicks) * 100) : 0;
+                              return (
+                                <InlineStack key={c.cat} gap="200" blockAlign="center">
+                                  <div style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: c.color, flexShrink: 0 }} />
+                                  <Text as="span" variant="bodySm">{c.cat}</Text>
+                                  <Text as="span" variant="bodySm" tone="subdued">{c.total} ({pct}%)</Text>
                                 </InlineStack>
-                                <BlockStack gap="100">
-                                  {items.slice(0, 8).map((item: any) => (
-                                    <InlineStack key={item.label} align="space-between" blockAlign="start">
-                                      <Text as="span" variant="bodySm" breakWord>{item.label}</Text>
-                                      <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
-                                    </InlineStack>
-                                  ))}
-                                </BlockStack>
+                              );
+                            })}
+                          </BlockStack>
+                        </div>
+
+                        {/* Horizontal bar breakdown per zone */}
+                        <BlockStack gap="300">
+                          {catTotals.map((c) => {
+                            const pct = totalClicks > 0 ? Math.round((c.total / totalClicks) * 100) : 0;
+                            return (
+                              <BlockStack key={c.cat} gap="100">
+                                <InlineStack align="space-between">
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: c.color }} />
+                                    <Text as="span" variant="bodyMd" fontWeight="semibold">{c.cat}</Text>
+                                  </InlineStack>
+                                  <Text as="span" variant="bodySm" tone="subdued">{c.total} clicks ({pct}%)</Text>
+                                </InlineStack>
+                                <div style={{ paddingLeft: 20 }}>
+                                  {c.items.slice(0, 5).map((item: any) => {
+                                    const itemPct = c.total > 0 ? (item.count / c.total) * 100 : 0;
+                                    return (
+                                      <div key={item.label} style={{ display: "grid", gridTemplateColumns: "1fr 50px", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                                        <div style={{ position: "relative", height: 22, borderRadius: 4, backgroundColor: "var(--p-color-bg-surface-secondary)", overflow: "hidden" }}>
+                                          <div style={{
+                                            position: "absolute",
+                                            top: 0, left: 0, bottom: 0,
+                                            width: `${itemPct}%`,
+                                            backgroundColor: c.color,
+                                            opacity: 0.2,
+                                            borderRadius: 4,
+                                          }} />
+                                          <div style={{ position: "relative", padding: "2px 8px", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                            {item.label}
+                                          </div>
+                                        </div>
+                                        <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
+                                      </div>
+                                    );
+                                  })}
+                                  {c.items.length > 5 && (
+                                    <Text as="span" variant="bodySm" tone="subdued">+{c.items.length - 5} more</Text>
+                                  )}
+                                </div>
                               </BlockStack>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </BlockStack>
                       </div>
                     );
                   })()}
