@@ -113,12 +113,17 @@
         sourceCategory = 'Paid Social';
       } else if (mediumLower === 'email') {
         sourceCategory = 'Email';
-      } else if (mediumLower === 'organic') {
+      } else if (mediumLower === 'organic' || mediumLower === 'product_sync' || mediumLower === 'product_listing') {
         sourceCategory = 'Organic Search';
       } else if (mediumLower === 'social') {
         sourceCategory = 'Organic Social';
       } else if (mediumLower === 'referral') {
         sourceCategory = 'Referral';
+      } else if (/^(google|bing|yahoo|duckduckgo|baidu|yandex)$/i.test(sourceLower)) {
+        // Known search engine with unknown medium — treat as Organic Search
+        sourceCategory = 'Organic Search';
+      } else if (isSocialSource) {
+        sourceCategory = 'Organic Social';
       }
     } else if (referrer) {
       // Referrer-based classification

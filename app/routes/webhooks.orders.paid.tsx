@@ -75,9 +75,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const snapshot = project.snapshots[0];
 
-      // Find the best visit to attribute this conversion to:
-      // Priority 1: Visit that added to cart but hasn't converted yet
-      let visit = await prisma.visit.findFirst({
+      // Only attribute conversion to a visit that actually added to cart
+      // (no fallback to random visits — a missed conversion beats a false one)
+      const visit = await prisma.visit.findFirst({
         where: {
           snapshotId: snapshot.id,
           addedToCart: true,
@@ -85,17 +85,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         orderBy: { startedAt: "desc" },
       });
-
-      // Priority 2: Any unconverted visit
-      if (!visit) {
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshotId: snapshot.id,
-            converted: false,
-          },
-          orderBy: { startedAt: "desc" },
-        });
-      }
 
       if (visit) {
         // Skip if already converted (dedup pixel + webhook)
