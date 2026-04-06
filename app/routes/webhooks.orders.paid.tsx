@@ -14,6 +14,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const orderTotal = order.total_price ? parseFloat(order.total_price) : null;
     const orderCurrency = order.currency || null;
 
+    // Extract session ID from cart/note attributes (written by tracker.js)
+    const noteAttributes = order.note_attributes || [];
+    const sessionId = noteAttributes.find((a: any) => a.name === '_mw_sid')?.value || null;
+
+    console.log(`[MW Webhook] Order #${order.order_number || order.name} — session: ${sessionId || "none"}, total: ${orderTotal} ${orderCurrency}`);
+
     if (lineItems.length === 0) {
       console.log("[MW Webhook] Order has no line items, skipping");
       return new Response();
@@ -23,20 +29,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productIds = new Set<string>();
     for (const item of lineItems) {
       if (item.product_id) {
-        // Convert numeric Shopify ID to GID format used in our DB
         const gid = `gid://shopify/Product/${item.product_id}`;
         productIds.add(gid);
       }
     }
-
-    console.log(`[MW Webhook] Order #${order.order_number || order.name} — ${productIds.size} unique products, total: ${orderTotal} ${orderCurrency}`);
 
     if (productIds.size === 0) {
       console.log("[MW Webhook] No product IDs found in line items, skipping");
       return new Response();
     }
 
-    // Calculate per-product revenue share (split order total evenly across tracked products)
+    // Calculate per-product revenue share
     const perProductRevenue = orderTotal && productIds.size > 0 ? orderTotal / productIds.size : null;
 
     let conversionsTracked = 0;
@@ -44,7 +47,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     for (const productGid of productIds) {
-      // Find project tracking this product with an active/recently completed snapshot
       const project = await prisma.project.findFirst({
         where: {
           shop,
@@ -69,25 +71,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (!project || project.snapshots.length === 0) {
-        // Product not being tracked — this is normal, skip silently
         continue;
       }
 
       const snapshot = project.snapshots[0];
+      let visit = null;
+      let matchTier = "";
 
-      // Only attribute conversion to a visit that actually added to cart
-      // (no fallback to random visits — a missed conversion beats a false one)
-      const visit = await prisma.visit.findFirst({
-        where: {
-          snapshotId: snapshot.id,
-          addedToCart: true,
-          converted: false,
-        },
-        orderBy: { startedAt: "desc" },
-      });
+      // Tier 1: Exact session match with ATC (most accurate)
+      if (sessionId) {
+        visit = await prisma.visit.findFirst({
+          where: {
+            snapshotId: snapshot.id,
+            sessionId,
+            addedToCart: true,
+            converted: false,
+          },
+          orderBy: { startedAt: "desc" },
+        });
+        if (visit) matchTier = "session+ATC";
+      }
+
+      // Tier 2: Exact session match without ATC (Buy Now / direct checkout)
+      if (!visit && sessionId) {
+        visit = await prisma.visit.findFirst({
+          where: {
+            snapshotId: snapshot.id,
+            sessionId,
+            converted: false,
+          },
+          orderBy: { startedAt: "desc" },
+        });
+        if (visit) matchTier = "session";
+      }
+
+      // Tier 3: No session ID available — match by ATC only (best effort)
+      if (!visit) {
+        visit = await prisma.visit.findFirst({
+          where: {
+            snapshotId: snapshot.id,
+            addedToCart: true,
+            converted: false,
+          },
+          orderBy: { startedAt: "desc" },
+        });
+        if (visit) matchTier = "ATC-only";
+      }
+
+      // No fallback beyond this — a missed conversion beats a false one
 
       if (visit) {
-        // Skip if already converted (dedup pixel + webhook)
         if (visit.converted) {
           console.log(`[MW Webhook] Visit ${visit.id} already converted, skipping`);
           continue;
@@ -103,9 +136,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           },
         });
         conversionsTracked++;
-        console.log(`[MW Webhook] Converted visit ${visit.id} for product ${productGid} (snapshot: ${snapshot.id}, revenue: ${perProductRevenue})`);
+        console.log(`[MW Webhook] Converted visit ${visit.id} via ${matchTier} (product: ${productGid}, revenue: ${perProductRevenue})`);
       } else {
-        console.log(`[MW Webhook] No unconverted visit found for product ${productGid} in snapshot ${snapshot.id}`);
+        console.log(`[MW Webhook] No match for product ${productGid} in snapshot ${snapshot.id} (session: ${sessionId || "none"})`);
       }
     }
 
