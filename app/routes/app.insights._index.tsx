@@ -293,12 +293,6 @@ export default function InsightsFeed() {
                 </BlockStack>
               </Layout.Section>
 
-              {/* Sidebar */}
-              <Layout.Section variant="oneThird">
-                <BlockStack gap="400">
-                  <LeaderboardCard leaders={leaderboard} />
-                </BlockStack>
-              </Layout.Section>
             </Layout>
           </Box>
         </Tabs>
