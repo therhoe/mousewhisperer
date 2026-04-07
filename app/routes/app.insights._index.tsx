@@ -202,11 +202,7 @@ export default function InsightsFeed() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="Insights Board">
-        <button variant="primary" onClick={() => navigate("/app/insights/new")}>
-          New Insight
-        </button>
-      </TitleBar>
+      <TitleBar title="Insights Board" />
 
       <BlockStack gap="400">
         {!hasProfile && <ProfileSetupBanner />}

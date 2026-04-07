@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useSearchParams, useRouteError, isRouteErrorResponse, Link } from "@remix-run/react";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -29,6 +29,16 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { generateCSV, generatePDF } from "../utils/export.server";
+import { sanitizeHTML } from "../utils/sanitize.server";
+
+const INSIGHT_CATEGORIES = [
+  { label: "Select a category", value: "" },
+  { label: "High Bot Traffic", value: "HIGH_BOT_TRAFFIC" },
+  { label: "Low Engagement", value: "LOW_ENGAGEMENT" },
+  { label: "Source Quality", value: "SOURCE_QUALITY" },
+  { label: "Conversion Drop", value: "CONVERSION_DROP" },
+  { label: "General", value: "GENERAL" },
+];
 
 // Map grouped source filter to actual sourceCategory values
 const SOURCE_FILTER_MAP: Record<string, string[]> = {
@@ -928,6 +938,73 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
+  if (actionType === "create-insight") {
+    const title = (formData.get("insightTitle") as string)?.trim();
+    const content = formData.get("insightContent") as string;
+    const category = formData.get("insightCategory") as string;
+    const snapshotId = formData.get("snapshotId") as string;
+
+    if (!title || title.length < 3) {
+      return json({ error: "Title must be at least 3 characters." }, { status: 400 });
+    }
+    if (!content || content.trim().length === 0) {
+      return json({ error: "Description cannot be empty." }, { status: 400 });
+    }
+    if (!category) {
+      return json({ error: "Please select a category." }, { status: 400 });
+    }
+
+    const profile = await prisma.insightProfile.findUnique({ where: { shop } });
+    if (!profile) {
+      return json({ error: "Please set up your community profile first." }, { status: 400 });
+    }
+
+    // Build snapshot stats
+    const [typeCounts, metrics, sourceCats, deviceCounts, atcCount, convCount] = await Promise.all([
+      prisma.visit.groupBy({ by: ["visitorType"], where: { snapshotId }, _count: true }),
+      prisma.visit.aggregate({ where: { snapshotId, visitorType: "REAL" }, _avg: { timeOnPage: true, scrollDepth: true } }),
+      prisma.visit.groupBy({ by: ["sourceCategory"], where: { snapshotId }, _count: true, orderBy: { _count: { sourceCategory: "desc" } }, take: 5 }),
+      prisma.visit.groupBy({ by: ["deviceType"], where: { snapshotId }, _count: true, orderBy: { _count: { deviceType: "desc" } } }),
+      prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
+      prisma.visit.count({ where: { snapshotId, converted: true } }),
+    ]);
+
+    let total = 0, real = 0, zombie = 0, bot = 0;
+    typeCounts.forEach((t) => {
+      total += t._count;
+      if (t.visitorType === "REAL") real = t._count;
+      if (t.visitorType === "ZOMBIE") zombie = t._count;
+      if (t.visitorType === "BOT") bot = t._count;
+    });
+    const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+
+    const snapshotStats = {
+      totalSessions: total,
+      realPercent: pct(real),
+      zombiePercent: pct(zombie),
+      botPercent: pct(bot),
+      avgTimeOnPage: metrics._avg.timeOnPage ? Math.round(metrics._avg.timeOnPage / 1000) : 0,
+      avgScrollDepth: Math.round(metrics._avg.scrollDepth || 0),
+      addToCartRate: pct(atcCount),
+      conversionRate: pct(convCount),
+      topSourceCategories: sourceCats.map((s) => ({ name: s.sourceCategory || "Direct", percent: pct(s._count) })),
+      deviceBreakdown: deviceCounts.map((d) => ({ type: d.deviceType || "Unknown", percent: pct(d._count) })),
+    };
+
+    const sanitizedContent = sanitizeHTML(content);
+    const insight = await prisma.insight.create({
+      data: {
+        profileId: profile.id,
+        title,
+        content: sanitizedContent,
+        category: category as any,
+        snapshotStats,
+      },
+    });
+
+    return redirect(`/app/insights/${insight.id}`);
+  }
+
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
@@ -1208,6 +1285,10 @@ export default function ProjectDetails() {
   // Compare mode state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+  const [isInsightModalOpen, setIsInsightModalOpen] = useState(false);
+  const [insightTitle, setInsightTitle] = useState("");
+  const [insightContent, setInsightContent] = useState("");
+  const [insightCategory, setInsightCategory] = useState("");
 
 
   // Real-time stats state
@@ -1887,6 +1968,11 @@ export default function ProjectDetails() {
               <InlineStack align="space-between">
                 <Text as="h2" variant="headingMd">Snapshots</Text>
                 <InlineStack gap="200">
+                  {selectedSnapshot?.status === "COMPLETED" && (
+                    <Button onClick={() => { setInsightTitle(""); setInsightContent(""); setInsightCategory(""); setIsInsightModalOpen(true); }}>
+                      Create Insight
+                    </Button>
+                  )}
                   {snapshots.length > 1 && (
                     <Button onClick={() => setIsCompareModalOpen(true)}>Compare</Button>
                   )}
@@ -2398,111 +2484,165 @@ export default function ProjectDetails() {
                   <Text as="h2" variant="headingMd">Engagement by Zone</Text>
                   {(() => {
                     const ctaData = displayStats?.ctaByCategory || {};
-                    const categoryOrder = ["Header", "Image", "Button", "Link", "Widget", "Footer"];
                     const categoryColors: Record<string, string> = {
                       Header: "#6366F1", Image: "#0EA5E9", Button: "#F59E0B",
                       Link: "#10B981", Widget: "#8B5CF6", Footer: "#64748B",
                     };
-                    const activeCategories = categoryOrder.filter((cat) => ctaData[cat] && ctaData[cat].length > 0);
-                    if (activeCategories.length === 0) {
-                      return <Text as="p" tone="subdued">No click data yet. Clicks will be categorized by zone (Header, Image, Button, Link, Widget, Footer) as visitors interact with the page.</Text>;
+                    // Separate body zones from header/footer
+                    const bodyOrder = ["Image", "Button", "Link", "Widget"];
+                    const bodyCategories = bodyOrder.filter((cat) => ctaData[cat] && ctaData[cat].length > 0);
+                    const headerData = ctaData["Header"] || [];
+                    const footerData = ctaData["Footer"] || [];
+
+                    if (bodyCategories.length === 0 && headerData.length === 0 && footerData.length === 0) {
+                      return <Text as="p" tone="subdued">No click data yet. Clicks will be categorized by zone as visitors interact with the page.</Text>;
                     }
-                    const catTotals = activeCategories.map((cat) => ({
+
+                    const bodyCatTotals = bodyCategories.map((cat) => ({
                       cat,
                       total: ctaData[cat].reduce((s: number, i: any) => s + i.count, 0),
                       items: ctaData[cat],
                       color: categoryColors[cat] || "#94A3B8",
                     }));
-                    const totalClicks = catTotals.reduce((s, c) => s + c.total, 0);
+                    const bodyTotalClicks = bodyCatTotals.reduce((s, c) => s + c.total, 0);
                     const radius = 70;
                     const circumference = 2 * Math.PI * radius;
                     let offset = 0;
 
                     return (
-                      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 32, alignItems: "start" }}>
-                        {/* Donut chart */}
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-                          <svg width="180" height="180" viewBox="0 0 180 180">
-                            {catTotals.map((c) => {
-                              const frac = totalClicks > 0 ? c.total / totalClicks : 0;
-                              const dashLength = frac * circumference;
-                              const dashGap = circumference - dashLength;
-                              const currentOffset = offset;
-                              offset += dashLength;
-                              return (
-                                <circle
-                                  key={c.cat}
-                                  cx="90" cy="90" r={radius}
-                                  fill="none"
-                                  stroke={c.color}
-                                  strokeWidth="24"
-                                  strokeDasharray={`${dashLength} ${dashGap}`}
-                                  strokeDashoffset={-currentOffset}
-                                  transform="rotate(-90 90 90)"
-                                />
-                              );
-                            })}
-                            <text x="90" y="85" textAnchor="middle" fontSize="22" fontWeight="700" fill="#1a1a1a">{totalClicks}</text>
-                            <text x="90" y="104" textAnchor="middle" fontSize="11" fill="#6b7280">total clicks</text>
-                          </svg>
-                          <BlockStack gap="200">
-                            {catTotals.map((c) => {
-                              const pct = totalClicks > 0 ? Math.round((c.total / totalClicks) * 100) : 0;
-                              return (
-                                <InlineStack key={c.cat} gap="200" blockAlign="center">
-                                  <div style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: c.color, flexShrink: 0 }} />
-                                  <Text as="span" variant="bodySm">{c.cat}</Text>
-                                  <Text as="span" variant="bodySm" tone="subdued">{c.total} ({pct}%)</Text>
-                                </InlineStack>
-                              );
-                            })}
-                          </BlockStack>
-                        </div>
-
-                        {/* Horizontal bar breakdown per zone */}
-                        <BlockStack gap="300">
-                          {catTotals.map((c) => {
-                            const pct = totalClicks > 0 ? Math.round((c.total / totalClicks) * 100) : 0;
-                            return (
-                              <BlockStack key={c.cat} gap="100">
-                                <InlineStack align="space-between">
-                                  <InlineStack gap="200" blockAlign="center">
-                                    <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: c.color }} />
-                                    <Text as="span" variant="bodyMd" fontWeight="semibold">{c.cat}</Text>
-                                  </InlineStack>
-                                  <Text as="span" variant="bodySm" tone="subdued">{c.total} clicks ({pct}%)</Text>
-                                </InlineStack>
-                                <div style={{ paddingLeft: 20 }}>
-                                  {c.items.slice(0, 5).map((item: any) => {
-                                    const itemPct = c.total > 0 ? (item.count / c.total) * 100 : 0;
-                                    return (
-                                      <div key={item.label} style={{ display: "grid", gridTemplateColumns: "1fr 50px", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                                        <div style={{ position: "relative", height: 22, borderRadius: 4, backgroundColor: "var(--p-color-bg-surface-secondary)", overflow: "hidden" }}>
-                                          <div style={{
-                                            position: "absolute",
-                                            top: 0, left: 0, bottom: 0,
-                                            width: `${itemPct}%`,
-                                            backgroundColor: c.color,
-                                            opacity: 0.2,
-                                            borderRadius: 4,
-                                          }} />
-                                          <div style={{ position: "relative", padding: "2px 8px", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                            {item.label}
-                                          </div>
-                                        </div>
-                                        <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
-                                      </div>
-                                    );
-                                  })}
-                                  {c.items.length > 5 && (
-                                    <Text as="span" variant="bodySm" tone="subdued">+{c.items.length - 5} more</Text>
-                                  )}
-                                </div>
+                      <BlockStack gap="500">
+                        {/* Body zones — donut + breakdowns */}
+                        {bodyCategories.length > 0 && (
+                          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 32, alignItems: "start" }}>
+                            {/* Donut chart — body zones only */}
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                              <svg width="180" height="180" viewBox="0 0 180 180">
+                                {bodyCatTotals.map((c) => {
+                                  const frac = bodyTotalClicks > 0 ? c.total / bodyTotalClicks : 0;
+                                  const dashLength = frac * circumference;
+                                  const dashGap = circumference - dashLength;
+                                  const currentOffset = offset;
+                                  offset += dashLength;
+                                  return (
+                                    <circle
+                                      key={c.cat}
+                                      cx="90" cy="90" r={radius}
+                                      fill="none"
+                                      stroke={c.color}
+                                      strokeWidth="24"
+                                      strokeDasharray={`${dashLength} ${dashGap}`}
+                                      strokeDashoffset={-currentOffset}
+                                      transform="rotate(-90 90 90)"
+                                    />
+                                  );
+                                })}
+                                <text x="90" y="85" textAnchor="middle" fontSize="22" fontWeight="700" fill="#1a1a1a">{bodyTotalClicks}</text>
+                                <text x="90" y="104" textAnchor="middle" fontSize="11" fill="#6b7280">body clicks</text>
+                              </svg>
+                              <BlockStack gap="200">
+                                {bodyCatTotals.map((c) => {
+                                  const pct = bodyTotalClicks > 0 ? Math.round((c.total / bodyTotalClicks) * 100) : 0;
+                                  return (
+                                    <InlineStack key={c.cat} gap="200" blockAlign="center">
+                                      <div style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: c.color, flexShrink: 0 }} />
+                                      <Text as="span" variant="bodySm">{c.cat}</Text>
+                                      <Text as="span" variant="bodySm" tone="subdued">{c.total} ({pct}%)</Text>
+                                    </InlineStack>
+                                  );
+                                })}
                               </BlockStack>
-                            );
-                          })}
-                        </BlockStack>
-                      </div>
+                            </div>
+
+                            {/* Horizontal bar breakdown — body zones only */}
+                            <BlockStack gap="300">
+                              {bodyCatTotals.map((c) => {
+                                const pct = bodyTotalClicks > 0 ? Math.round((c.total / bodyTotalClicks) * 100) : 0;
+                                return (
+                                  <BlockStack key={c.cat} gap="100">
+                                    <InlineStack align="space-between">
+                                      <InlineStack gap="200" blockAlign="center">
+                                        <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: c.color }} />
+                                        <Text as="span" variant="bodyMd" fontWeight="semibold">{c.cat}</Text>
+                                      </InlineStack>
+                                      <Text as="span" variant="bodySm" tone="subdued">{c.total} clicks ({pct}%)</Text>
+                                    </InlineStack>
+                                    <div style={{ paddingLeft: 20 }}>
+                                      {c.items.slice(0, 5).map((item: any) => {
+                                        const itemPct = c.total > 0 ? (item.count / c.total) * 100 : 0;
+                                        return (
+                                          <div key={item.label} style={{ display: "grid", gridTemplateColumns: "1fr 50px", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                                            <div style={{ position: "relative", height: 22, borderRadius: 4, backgroundColor: "var(--p-color-bg-surface-secondary)", overflow: "hidden" }}>
+                                              <div style={{
+                                                position: "absolute", top: 0, left: 0, bottom: 0,
+                                                width: `${itemPct}%`,
+                                                backgroundColor: c.color, opacity: 0.2, borderRadius: 4,
+                                              }} />
+                                              <div style={{ position: "relative", padding: "2px 8px", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                {item.label}
+                                              </div>
+                                            </div>
+                                            <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
+                                          </div>
+                                        );
+                                      })}
+                                      {c.items.length > 5 && (
+                                        <Text as="span" variant="bodySm" tone="subdued">+{c.items.length - 5} more</Text>
+                                      )}
+                                    </div>
+                                  </BlockStack>
+                                );
+                              })}
+                            </BlockStack>
+                          </div>
+                        )}
+
+                        {/* Header & Footer — separate cards at the bottom */}
+                        {(headerData.length > 0 || footerData.length > 0) && (
+                          <>
+                            <Divider />
+                            <div style={{ display: "grid", gridTemplateColumns: footerData.length > 0 && headerData.length > 0 ? "1fr 1fr" : "1fr", gap: 16 }}>
+                              {headerData.length > 0 && (
+                                <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                                  <BlockStack gap="200">
+                                    <InlineStack align="space-between" blockAlign="center">
+                                      <InlineStack gap="200" blockAlign="center">
+                                        <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: categoryColors.Header }} />
+                                        <Text as="span" variant="bodyMd" fontWeight="semibold">Header</Text>
+                                      </InlineStack>
+                                      <Text as="span" variant="bodySm" tone="subdued">{headerData.reduce((s: number, i: any) => s + i.count, 0)} clicks</Text>
+                                    </InlineStack>
+                                    {headerData.slice(0, 5).map((item: any) => (
+                                      <InlineStack key={item.label} align="space-between">
+                                        <Text as="span" variant="bodySm">{item.label}</Text>
+                                        <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
+                                      </InlineStack>
+                                    ))}
+                                  </BlockStack>
+                                </Box>
+                              )}
+                              {footerData.length > 0 && (
+                                <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                                  <BlockStack gap="200">
+                                    <InlineStack align="space-between" blockAlign="center">
+                                      <InlineStack gap="200" blockAlign="center">
+                                        <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: categoryColors.Footer }} />
+                                        <Text as="span" variant="bodyMd" fontWeight="semibold">Footer</Text>
+                                      </InlineStack>
+                                      <Text as="span" variant="bodySm" tone="subdued">{footerData.reduce((s: number, i: any) => s + i.count, 0)} clicks</Text>
+                                    </InlineStack>
+                                    {footerData.slice(0, 5).map((item: any) => (
+                                      <InlineStack key={item.label} align="space-between">
+                                        <Text as="span" variant="bodySm">{item.label}</Text>
+                                        <Text as="span" variant="bodySm" tone="subdued">{item.count}</Text>
+                                      </InlineStack>
+                                    ))}
+                                  </BlockStack>
+                                </Box>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </BlockStack>
                     );
                   })()}
                 </BlockStack>
@@ -2835,6 +2975,89 @@ export default function ProjectDetails() {
               })}
             </BlockStack>
           </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Create Insight Modal */}
+      <Modal
+        open={isInsightModalOpen}
+        onClose={() => setIsInsightModalOpen(false)}
+        title="Share Insight from Snapshot"
+        primaryAction={{
+          content: "Post Insight",
+          onAction: () => {
+            const fd = new FormData();
+            fd.append("action", "create-insight");
+            fd.append("insightTitle", insightTitle);
+            fd.append("insightContent", insightContent);
+            fd.append("insightCategory", insightCategory);
+            fd.append("snapshotId", selectedSnapshot?.id || "");
+            submit(fd, { method: "POST" });
+            setIsInsightModalOpen(false);
+          },
+          disabled: !insightTitle || insightTitle.length < 3 || !insightContent.trim() || !insightCategory,
+          loading: isLoading,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsInsightModalOpen(false) }]}
+      >
+        <Modal.Section>
+          {/* Snapshot stats summary */}
+          {displayStats && (
+            <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" fontWeight="semibold">
+                  Snapshot: {selectedSnapshot?.name || `#${selectedSnapshot?.number}`}
+                </Text>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                  <div style={{ textAlign: "center" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Real</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">{displayStats.realPercent}%</Text>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">ATC</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">{displayStats.atcRate}%</Text>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Conv</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">{displayStats.convRate}%</Text>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Avg Time</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">{formatTime(displayStats.avgTimeOnPage)}</Text>
+                  </div>
+                </div>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  These stats will be included with your insight post.
+                </Text>
+              </BlockStack>
+            </Box>
+          )}
+        </Modal.Section>
+        <Modal.Section>
+          <FormLayout>
+            <TextField
+              label="Title"
+              value={insightTitle}
+              onChange={setInsightTitle}
+              placeholder="e.g., High zombie traffic after redesign"
+              maxLength={200}
+              autoComplete="off"
+            />
+            <Select
+              label="Category"
+              options={INSIGHT_CATEGORIES}
+              value={insightCategory}
+              onChange={setInsightCategory}
+            />
+            <TextField
+              label="Description"
+              value={insightContent}
+              onChange={setInsightContent}
+              multiline={4}
+              placeholder="Describe what you observed and any questions for the community..."
+              autoComplete="off"
+            />
+          </FormLayout>
         </Modal.Section>
       </Modal>
     </Page>
