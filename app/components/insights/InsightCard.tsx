@@ -1,4 +1,4 @@
-import { Card, BlockStack, InlineStack, Text } from "@shopify/polaris";
+import { Card, Text, Badge, Button } from "@shopify/polaris";
 import { Link } from "@remix-run/react";
 import { CategoryBadge } from "./CategoryBadge";
 import type { InsightCategory } from "@prisma/client";
@@ -17,62 +17,28 @@ interface InsightCardProps {
   profile: {
     displayName: string;
     avatarEmoji: string | null;
-    storeCategory: string | null;
+    avatarUrl?: string | null;
+    reputation?: number;
   };
+  snapshotStats?: {
+    totalSessions?: number;
+    realPercent?: number;
+    addToCartRate?: number;
+    conversionRate?: number;
+  } | null;
 }
 
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
-
-function SolvedStamp() {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 10px",
-        borderRadius: 12,
-        fontSize: 12,
-        fontWeight: 700,
-        letterSpacing: "0.5px",
-        textTransform: "uppercase",
-        color: "#1a7b3d",
-        background: "#e3f5eb",
-        border: "1.5px solid #b0dfc2",
-      }}
-    >
-      <span style={{ fontSize: 14 }}>&#10003;</span> Solved
-    </span>
-  );
-}
-
-function StatPill({ icon, value }: { icon: string; value: number }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 3,
-        padding: "2px 8px",
-        borderRadius: 10,
-        fontSize: 12,
-        color: "var(--p-color-text-secondary)",
-        background: "var(--p-color-bg-surface-secondary)",
-      }}
-    >
-      {icon} {value}
-    </span>
-  );
+function getLevel(rep: number) {
+  if (rep >= 200) return 10;
+  if (rep >= 150) return 9;
+  if (rep >= 100) return 8;
+  if (rep >= 75) return 7;
+  if (rep >= 50) return 6;
+  if (rep >= 35) return 5;
+  if (rep >= 20) return 4;
+  if (rep >= 10) return 3;
+  if (rep >= 5) return 2;
+  return 1;
 }
 
 export function InsightCard({
@@ -87,66 +53,87 @@ export function InsightCard({
   isBookmarked,
   createdAt,
   profile,
+  snapshotStats,
 }: InsightCardProps) {
+  const level = getLevel(profile.reputation || 0);
+  const isImageAvatar = profile.avatarUrl?.startsWith("http");
+
   return (
     <Link to={`/app/insights/${id}`} style={{ textDecoration: "none", color: "inherit" }}>
-      <div
-        style={{
-          borderLeft: hasAcceptedAnswer ? "3px solid #1a7b3d" : "3px solid transparent",
-          borderRadius: "var(--p-border-radius-200)",
-        }}
-      >
-        <Card>
-          <BlockStack gap="300">
-            {/* Top row: author + time */}
-            <InlineStack align="space-between" blockAlign="center">
-              <InlineStack gap="200" blockAlign="center">
-                <span style={{ fontSize: "1.4rem" }}>{profile.avatarEmoji || "🐭"}</span>
-                <BlockStack gap="0">
-                  <Text as="span" variant="bodySm" fontWeight="semibold">
-                    {profile.displayName}
-                  </Text>
-                  {profile.storeCategory && (
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      {profile.storeCategory}
-                    </Text>
-                  )}
-                </BlockStack>
-              </InlineStack>
-              <InlineStack gap="200" blockAlign="center">
-                {isBookmarked && (
-                  <span style={{ fontSize: 14, opacity: 0.6 }}>🔖</span>
-                )}
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {timeAgo(createdAt)}
-                </Text>
-              </InlineStack>
-            </InlineStack>
-
-            {/* Title + solved stamp */}
-            <InlineStack gap="300" blockAlign="center" wrap>
-              <Text as="h3" variant="headingSm">{title}</Text>
-              {hasAcceptedAnswer && <SolvedStamp />}
-            </InlineStack>
-
-            {/* Content preview */}
-            {contentPreview && (
-              <Text as="p" variant="bodySm" tone="subdued" truncate>
-                {contentPreview}
-              </Text>
+      <Card>
+        {/* Header: Avatar+Name on left, LVL badge on right */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {isImageAvatar ? (
+              <img src={profile.avatarUrl!} alt={profile.displayName} style={{ width: 32, height: 32, borderRadius: 8, objectFit: "cover" }} />
+            ) : (
+              <span style={{ fontSize: 24 }}>{profile.avatarEmoji || "\uD83D\uDC2D"}</span>
             )}
+            <Text as="span" variant="bodySm" fontWeight="semibold">{profile.displayName}</Text>
+          </div>
+          <Badge tone="info">LVL {level}</Badge>
+        </div>
 
-            {/* Footer: category + stat pills */}
-            <InlineStack gap="200" blockAlign="center" wrap>
-              <CategoryBadge category={category} />
-              <span style={{ flexGrow: 1 }} />
-              <StatPill icon="🙋" value={meTooCount} />
-              <StatPill icon="💬" value={answerCount} />
-              <StatPill icon="👁" value={viewCount} />
-            </InlineStack>
-          </BlockStack>
-        </Card>
-      </div>
+        {/* Body: Content */}
+        <div style={{ marginBottom: 12 }}>
+          {/* Title + Solved */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+            <Text as="span" variant="headingSm">{title}</Text>
+            {hasAcceptedAnswer && <Badge tone="success">Solved</Badge>}
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <CategoryBadge category={category} />
+          </div>
+
+          {/* Content preview */}
+          {contentPreview && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {contentPreview}
+            </Text>
+          )}
+
+          {/* Snapshot metrics */}
+          {snapshotStats && (
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8,
+              background: "#f6f6f7", borderRadius: 8, padding: "8px 4px", marginTop: 12,
+            }}>
+              <div style={{ textAlign: "center" }}>
+                <Text as="p" variant="bodySm" tone="subdued">ATC</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.addToCartRate ?? 0}%</Text>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <Text as="p" variant="bodySm" tone="subdued">CVR</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.conversionRate ?? 0}%</Text>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Sessions</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.totalSessions ?? 0}</Text>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Real%</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.realPercent ?? 0}%</Text>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          borderTop: "1px solid #e4e5e7", paddingTop: 10,
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "#6d7175" }}>{"\uD83D\uDC41"} {viewCount}</span>
+            <span style={{ fontSize: 13, color: "#6d7175" }}>{"\uD83D\uDE4B"} {meTooCount} me too</span>
+            <span style={{ fontSize: 13, color: "#6d7175" }}>{"\uD83D\uDCAC"} {answerCount} answers</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Button size="slim">Reply</Button>
+            {isBookmarked && <span style={{ fontSize: 14, opacity: 0.6 }}>{"\uD83D\uDD16"}</span>}
+          </div>
+        </div>
+      </Card>
     </Link>
   );
 }

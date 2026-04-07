@@ -100,7 +100,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
         profile: {
-          select: { displayName: true, avatarEmoji: true, storeCategory: true },
+          select: { displayName: true, avatarEmoji: true, avatarUrl: true, reputation: true, storeCategory: true },
         },
         ...(profile
           ? { bookmarks: { where: { profileId: profile.id }, select: { id: true } } }
@@ -138,6 +138,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     isBookmarked: insight.bookmarks?.length > 0,
     createdAt: insight.createdAt,
     profile: insight.profile,
+    snapshotStats: insight.snapshotStats || null,
   }));
 
   const leaderboard = leaders.map((l: any) => ({
