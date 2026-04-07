@@ -62,6 +62,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const displayName = (formData.get("displayName") as string)?.trim();
   const storeCategory = (formData.get("storeCategory") as string) || null;
   const avatarEmoji = (formData.get("avatarEmoji") as string) || "🐭";
+  const bio = (formData.get("bio") as string)?.trim() || null;
+  const avatarUrl = (formData.get("avatarUrl") as string)?.trim() || null;
   const returnTo = (formData.get("returnTo") as string) || "/app/insights";
 
   if (!displayName || displayName.length < 2 || displayName.length > 50) {
@@ -73,8 +75,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   await prisma.insightProfile.upsert({
     where: { shop },
-    create: { shop, displayName, storeCategory, avatarEmoji },
-    update: { displayName, storeCategory, avatarEmoji },
+    create: { shop, displayName, storeCategory, avatarEmoji, bio, avatarUrl },
+    update: { displayName, storeCategory, avatarEmoji, bio, avatarUrl },
   });
 
   return redirect(returnTo);
@@ -90,10 +92,12 @@ export default function InsightsProfile() {
   const [displayName, setDisplayName] = useState(profile?.displayName || defaultName);
   const [storeCategory, setStoreCategory] = useState(profile?.storeCategory || "");
   const [avatarEmoji, setAvatarEmoji] = useState(profile?.avatarEmoji || "🐭");
+  const [bio, setBio] = useState(profile?.bio || "");
+  const [avatarUrl, setAvatarUrl] = useState(profile?.avatarUrl || "");
 
   const handleSave = () => {
     submit(
-      { displayName, storeCategory, avatarEmoji, returnTo },
+      { displayName, storeCategory, avatarEmoji, bio, avatarUrl, returnTo },
       { method: "post" },
     );
   };
@@ -161,6 +165,24 @@ export default function InsightsProfile() {
                 Selected: {avatarEmoji}
               </Text>
             </BlockStack>
+            <TextField
+              label="Bio"
+              value={bio}
+              onChange={setBio}
+              autoComplete="off"
+              maxLength={200}
+              multiline={2}
+              helpText="A short description of your CRO focus (max 200 chars)."
+            />
+
+            <TextField
+              label="Avatar Image URL"
+              value={avatarUrl}
+              onChange={setAvatarUrl}
+              autoComplete="off"
+              placeholder="https://cdn.shopify.com/..."
+              helpText="HTTPS URL to a custom avatar image. Leave blank to use the emoji above."
+            />
           </FormLayout>
         </Card>
 

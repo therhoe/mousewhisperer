@@ -6,31 +6,24 @@ import {
   Page,
   Layout,
   Card,
-  IndexTable,
   Text,
   Badge,
-  useIndexResourceState,
-  EmptyState,
   Button,
   BlockStack,
   InlineStack,
-  ProgressBar,
   Modal,
   TextField,
   FormLayout,
   Banner,
-  List,
   Box,
   Icon,
   Divider,
-  CalloutCard,
   ChoiceList,
   Popover,
 } from "@shopify/polaris";
 import {
   CheckCircleIcon,
   MinusCircleIcon,
-  ProfileIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -45,8 +38,17 @@ import {
 const APP_CLIENT_ID = "be249e7dc1288f980804d0bf5e40cde0";
 const THEME_BLOCK_HANDLE = "tracker";
 
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/&[^;]+;/g, " ").trim();
+function getLevel(rep: number) {
+  if (rep >= 200) return { level: 10, title: "Grandmaster", next: 200, prev: 150 };
+  if (rep >= 150) return { level: 9, title: "Master", next: 200, prev: 150 };
+  if (rep >= 100) return { level: 8, title: "Expert", next: 150, prev: 100 };
+  if (rep >= 75) return { level: 7, title: "Veteran", next: 100, prev: 75 };
+  if (rep >= 50) return { level: 6, title: "Specialist", next: 75, prev: 50 };
+  if (rep >= 35) return { level: 5, title: "Analyst", next: 50, prev: 35 };
+  if (rep >= 20) return { level: 4, title: "Scout", next: 35, prev: 20 };
+  if (rep >= 10) return { level: 3, title: "Observer", next: 20, prev: 10 };
+  if (rep >= 5) return { level: 2, title: "Rookie", next: 10, prev: 5 };
+  return { level: 1, title: "Newcomer", next: 5, prev: 0 };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -72,21 +74,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
-  const [projects, activeCount, completedCount, topAnswers, trendingInsights, notifications, unreadCount] =
+  const [projects, activeCount, completedCount, _topAnswers, _trendingInsights, notifications, unreadCount] =
     await Promise.all([
-      // Existing project query
+      // Project query — snapshot metadata only (no visits)
       prisma.project.findMany({
         where: { shop },
         orderBy: { createdAt: "desc" },
         include: {
           snapshots: {
             orderBy: { number: "desc" },
-            include: {
-              visits: {
-                select: {
-                  visitorType: true,
-                },
-              },
+            select: {
+              id: true,
+              number: true,
+              name: true,
+              status: true,
+              targetVisitors: true,
             },
           },
         },
@@ -128,19 +130,94 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       getUnreadCount(shop),
     ]);
 
-  // Calculate stats for each project based on active snapshot
-  const projectsWithStats = projects.map((project) => {
+  // Determine display snapshot per project
+  const projectSnapshots = projects.map((project) => {
     const activeSnapshot = project.snapshots.find((s) => s.status === "ACTIVE");
-    const latestSnapshot = project.snapshots[0]; // Already ordered by number desc
-    const displaySnapshot = activeSnapshot || latestSnapshot;
+    const displaySnapshot = activeSnapshot || project.snapshots[0];
+    return { project, displaySnapshot };
+  });
 
-    // Calculate stats from active/latest snapshot
-    const visits = displaySnapshot?.visits || [];
-    const realCount = visits.filter((v) => v.visitorType === "REAL").length;
-    const zombieCount = visits.filter((v) => v.visitorType === "ZOMBIE").length;
-    const botCount = visits.filter((v) => v.visitorType === "BOT").length;
+  const snapshotIds = projectSnapshots
+    .map((p) => p.displaySnapshot?.id)
+    .filter(Boolean) as string[];
+
+  // Batch aggregate queries for all display snapshots
+  const [visitorCounts, atcCounts, convCounts, revenueSums, productClickCounts] =
+    snapshotIds.length > 0
+      ? await Promise.all([
+          prisma.visit.groupBy({
+            by: ["snapshotId", "visitorType"],
+            where: { snapshotId: { in: snapshotIds } },
+            _count: true,
+          }),
+          prisma.visit.groupBy({
+            by: ["snapshotId"],
+            where: { snapshotId: { in: snapshotIds }, addedToCart: true },
+            _count: true,
+          }),
+          prisma.visit.groupBy({
+            by: ["snapshotId"],
+            where: { snapshotId: { in: snapshotIds }, converted: true },
+            _count: true,
+          }),
+          prisma.visit.groupBy({
+            by: ["snapshotId"],
+            where: { snapshotId: { in: snapshotIds }, converted: true, orderValue: { not: null } },
+            _sum: { orderValue: true },
+          }),
+          prisma.visit.groupBy({
+            by: ["snapshotId"],
+            where: {
+              snapshotId: {
+                in: projectSnapshots
+                  .filter((p) => p.project.resourceType === "COLLECTION" && p.displaySnapshot)
+                  .map((p) => p.displaySnapshot!.id),
+              },
+              exitUrl: { contains: "/products/" },
+            },
+            _count: true,
+          }),
+        ])
+      : [[], [], [], [], []];
+
+  // Build lookup maps
+  const metricsMap = new Map<string, { real: number; zombie: number; bot: number; atc: number; conv: number; revenue: number; productClicks: number }>();
+  for (const row of visitorCounts) {
+    const m = metricsMap.get(row.snapshotId) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
+    if (row.visitorType === "REAL") m.real = row._count;
+    else if (row.visitorType === "ZOMBIE") m.zombie = row._count;
+    else if (row.visitorType === "BOT") m.bot = row._count;
+    metricsMap.set(row.snapshotId, m);
+  }
+  for (const row of atcCounts) {
+    const m = metricsMap.get(row.snapshotId) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
+    m.atc = row._count;
+    metricsMap.set(row.snapshotId, m);
+  }
+  for (const row of convCounts) {
+    const m = metricsMap.get(row.snapshotId) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
+    m.conv = row._count;
+    metricsMap.set(row.snapshotId, m);
+  }
+  for (const row of revenueSums) {
+    const m = metricsMap.get(row.snapshotId) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
+    m.revenue = row._sum.orderValue || 0;
+    metricsMap.set(row.snapshotId, m);
+  }
+  for (const row of productClickCounts) {
+    const m = metricsMap.get(row.snapshotId) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
+    m.productClicks = row._count;
+    metricsMap.set(row.snapshotId, m);
+  }
+
+  const projectsWithStats = projectSnapshots.map(({ project, displaySnapshot }) => {
+    const sid = displaySnapshot?.id;
+    const m = sid ? metricsMap.get(sid) || { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 } : { real: 0, zombie: 0, bot: 0, atc: 0, conv: 0, revenue: 0, productClicks: 0 };
     const targetVisitors = displaySnapshot?.targetVisitors || 1000;
-    const progress = Math.min(100, Math.round((realCount / targetVisitors) * 100));
+    const progress = Math.min(100, Math.round((m.real / targetVisitors) * 100));
+    const atcRate = project.resourceType === "PRODUCT" && m.real > 0 ? Math.round((m.atc / m.real) * 1000) / 10 : undefined;
+    const ctrRate = project.resourceType === "COLLECTION" && m.real > 0 ? Math.round((m.productClicks / m.real) * 1000) / 10 : undefined;
+    const cvrRate = m.real > 0 ? Math.round((m.conv / m.real) * 1000) / 10 : 0;
 
     return {
       id: project.id,
@@ -151,10 +228,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       snapshotName: displaySnapshot?.name || `Snapshot ${displaySnapshot?.number || 1}`,
       snapshotCount: project.snapshots.length,
       targetVisitors,
-      realCount,
-      zombieCount,
-      botCount,
+      realCount: m.real,
+      zombieCount: m.zombie,
+      botCount: m.bot,
       progress,
+      atcRate,
+      ctrRate,
+      cvrRate,
+      revenue: m.revenue,
       createdAt: project.createdAt,
     };
   });
@@ -168,24 +249,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     profile: profile
       ? {
           avatarEmoji: profile.avatarEmoji,
+          avatarUrl: profile.avatarUrl,
+          bio: profile.bio,
           displayName: profile.displayName,
           reputation: profile.reputation,
           answersCount: profile._count.answers,
           insightsCount: profile._count.insights,
         }
       : null,
-    topAnswers: topAnswers.map((a) => ({
-      id: a.id,
-      insightId: a.insight.id,
-      insightTitle: a.insight.title,
-      upvoteCount: a.upvoteCount,
-    })),
-    trendingInsights: trendingInsights.map((i) => ({
-      id: i.id,
-      title: i.title,
-      meTooCount: i.meTooCount,
-      contentPreview: stripHtml(i.content).slice(0, 80),
-    })),
     notifications: notifications.map((n) => ({
       id: n.id,
       type: n.type,
@@ -326,8 +397,6 @@ export default function Index() {
     activeCount,
     completedCount,
     profile,
-    topAnswers,
-    trendingInsights,
     notifications: initialNotifications,
     unreadCount: initialUnreadCount,
   } = useLoaderData<typeof loader>();
@@ -369,6 +438,8 @@ export default function Index() {
 
   const isLoading = navigation.state !== "idle";
 
+  const [activeTab, setActiveTab] = useState<"products" | "collections">("products");
+
   // Check if setup is complete (has at least one project)
   const hasProjects = projects.length > 0;
   const showSetupGuide = !setupGuideDismissed;
@@ -381,14 +452,6 @@ export default function Index() {
     formData.append("action", "dismissSetup");
     submit(formData, { method: "POST" });
   }, [submit]);
-
-  const resourceName = {
-    singular: "project",
-    plural: "projects",
-  };
-
-  const { selectedResources, allResourcesSelected, handleSelectionChange } =
-    useIndexResourceState(projects);
 
   // Opens the type selection modal first
   const handleOpenPicker = useCallback(() => {
@@ -506,86 +569,6 @@ export default function Index() {
     HIGH_BOT_TRAFFIC: "\uD83E\uDD16",
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "ACTIVE":
-        return <Badge tone="success">Active</Badge>;
-      case "COMPLETED":
-        return <Badge tone="info">Completed</Badge>;
-      case "PAUSED":
-        return <Badge tone="warning">Paused</Badge>;
-      case "NO_SNAPSHOT":
-        return <Badge tone="attention">No Snapshot</Badge>;
-      default:
-        return <Badge>{status}</Badge>;
-    }
-  };
-
-  const rowMarkup = projects.map((project, index) => (
-    <IndexTable.Row
-      id={project.id}
-      key={project.id}
-      selected={selectedResources.includes(project.id)}
-      position={index}
-    >
-      <IndexTable.Cell>
-        <BlockStack gap="100">
-          <InlineStack gap="200" blockAlign="center">
-            <Text variant="bodyMd" fontWeight="bold" as="span">
-              <Link to={`/app/project/${project.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                {project.productTitle}
-              </Link>
-            </Text>
-            <Badge tone={project.resourceType === "COLLECTION" ? "info" : "success"}>
-              {project.resourceType === "COLLECTION" ? "Collection" : "Product"}
-            </Badge>
-          </InlineStack>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {project.snapshotName} {project.snapshotCount > 1 && `(${project.snapshotCount} snapshots)`}
-          </Text>
-        </BlockStack>
-      </IndexTable.Cell>
-      <IndexTable.Cell>{getStatusBadge(project.status)}</IndexTable.Cell>
-      <IndexTable.Cell>
-        <BlockStack gap="100">
-          <Text as="span" variant="bodySm">
-            {project.realCount} / {project.targetVisitors}
-          </Text>
-          <div style={{ width: "100px" }}>
-            <ProgressBar progress={project.progress} size="small" tone="primary" />
-          </div>
-        </BlockStack>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span" variant="bodyMd" tone="success">
-          {project.realCount}
-        </Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span" variant="bodyMd" tone="caution">
-          {project.zombieCount}
-        </Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span" variant="bodyMd" tone="critical">
-          {project.botCount}
-        </Text>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
-
-  const emptyStateMarkup = (
-    <EmptyState
-      heading="Create your first audit"
-      action={{
-        content: "Create New Audit",
-        onAction: handleOpenPicker,
-      }}
-      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-    >
-      <p>Select a product or collection to start tracking visitor engagement and traffic quality.</p>
-    </EmptyState>
-  );
 
   // Setup guide component
   const setupGuideMarkup = showSetupGuide ? (
@@ -875,60 +858,77 @@ export default function Index() {
       <Layout>
         {setupGuideMarkup}
 
-        {/* Audit Status Cards */}
+        {/* RPG Profile Card */}
         <Layout.Section>
-          <InlineStack gap="400" wrap={false}>
-            <div style={{ flex: 1 }}>
+          {profile ? (() => {
+            const lvl = getLevel(profile.reputation);
+            const xpProgress = Math.round(((profile.reputation - lvl.prev) / (lvl.next - lvl.prev)) * 100);
+            const badges: { label: string; emoji: string; tone: "success" | "info" | "warning" }[] = [];
+            if (profile.answersCount >= 5) badges.push({ label: "Top Contributor", emoji: "\uD83C\uDF1F", tone: "success" });
+            if (profile.insightsCount >= 3) badges.push({ label: "Insight Pioneer", emoji: "\uD83D\uDCA1", tone: "info" });
+            if (completedCount >= 10) badges.push({ label: `${completedCount} Audits`, emoji: "\uD83D\uDD25", tone: "warning" });
+            return (
               <Card>
-                <BlockStack gap="300">
-                  <Text as="p" variant="bodySm" tone="subdued">Active</Text>
-                  <Text as="p" variant="headingXl" alignment="center">
-                    {activeCount}
-                  </Text>
-                </BlockStack>
+                <div style={{ display: "flex", gap: 0 }}>
+                  {/* Left: Avatar + Info */}
+                  <div style={{ display: "flex", flex: 1, gap: 16 }}>
+                    <Link to="/app/insights/profile?returnTo=/app" style={{ textDecoration: "none" }}>
+                      <div style={{ flexShrink: 0, width: 120, minHeight: 180, borderRadius: 10, background: "#f6f6f7", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {profile.avatarUrl ? (
+                          <img src={profile.avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} />
+                        ) : (
+                          <span style={{ fontSize: "4rem" }}>{profile.avatarEmoji || "\uD83D\uDC2D"}</span>
+                        )}
+                      </div>
+                    </Link>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+                      <Text as="span" variant="headingLg" fontWeight="bold">{profile.displayName}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{lvl.title}</Text>
+                      {profile.bio && <Text as="p" variant="bodySm">{profile.bio}</Text>}
+                      {badges.length > 0 && (
+                        <InlineStack gap="200" wrap>
+                          {badges.map((b) => (
+                            <Badge key={b.label} tone={b.tone}>{b.emoji} {b.label}</Badge>
+                          ))}
+                        </InlineStack>
+                      )}
+                      <div style={{ marginTop: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">{profile.reputation} pts</Text>
+                          <Badge tone="info">LVL {lvl.level}</Badge>
+                          <Text as="span" variant="bodySm" tone="subdued">{lvl.next - profile.reputation} pts to LVL {lvl.level + 1}</Text>
+                        </div>
+                        <div style={{ height: 8, background: "#e4e5e7", borderRadius: 4, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${xpProgress}%`, background: "#2c6ecb", borderRadius: 3, transition: "width 0.5s ease" }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Divider */}
+                  <div style={{ width: 1, background: "#e4e5e7", margin: "0 20px", flexShrink: 0 }} />
+                  {/* Right: 2x2 Metrics */}
+                  <div style={{ flex: "0 0 220px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignContent: "center" }}>
+                    <div style={{ textAlign: "center", padding: "12px 0" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">Answers</Text>
+                      <Text as="p" variant="headingXl">{profile.answersCount}</Text>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 0" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">Insights</Text>
+                      <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 0" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">Audits</Text>
+                      <Text as="p" variant="headingXl">{completedCount}</Text>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 0" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">Streak</Text>
+                      <Text as="p" variant="headingXl">{activeCount > 0 ? activeCount : completedCount > 0 ? "\u2713" : "\u2014"}</Text>
+                    </div>
+                  </div>
+                </div>
               </Card>
-            </div>
-            <div style={{ flex: 1 }}>
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="p" variant="bodySm" tone="subdued">Completed</Text>
-                  <Text as="p" variant="headingXl" alignment="center">
-                    {completedCount}
-                  </Text>
-                </BlockStack>
-              </Card>
-            </div>
-          </InlineStack>
-        </Layout.Section>
-
-        {/* Profile Card */}
-        <Layout.Section>
-          {profile ? (
-            <Card>
-              <div style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-                <BlockStack gap="100" inlineAlign="center">
-                  <span style={{ fontSize: "2.5rem" }}>
-                    {profile.avatarEmoji || "\uD83D\uDC2D"}
-                  </span>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {profile.displayName}
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="100" inlineAlign="center">
-                  <Text as="p" variant="headingXl">{profile.answersCount}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">answers</Text>
-                </BlockStack>
-                <BlockStack gap="100" inlineAlign="center">
-                  <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">insights</Text>
-                </BlockStack>
-                <BlockStack gap="100" inlineAlign="center">
-                  <Text as="p" variant="headingXl">{profile.reputation}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">points</Text>
-                </BlockStack>
-              </div>
-            </Card>
-          ) : (
+            );
+          })() : (
             <Banner
               title="Set up your community profile"
               tone="info"
@@ -937,121 +937,123 @@ export default function Index() {
                 url: "/app/insights/profile?returnTo=/app",
               }}
             >
-              <p>
-                Create a display name and avatar to start posting insights and helping fellow merchants.
-              </p>
+              <p>Create a display name and avatar to start posting insights and helping fellow merchants.</p>
             </Banner>
           )}
         </Layout.Section>
 
-        {/* Top Answers & Trending Insights */}
-        <Layout.Section>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <style>{`.mw-card-stretch > div { height: 100%; } .mw-card-stretch > div > div { height: 100%; }`}</style>
-              <div className="mw-card-stretch" style={{ flex: 1 }}>
-              <Card>
-                <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between" }}>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Top Answers</Text>
-                  {topAnswers.length === 0 ? (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {profile ? "You haven't posted any answers yet." : "Set up your profile to start answering."}
-                    </Text>
-                  ) : (
-                    <BlockStack gap="200">
-                      {topAnswers.map((answer: any, idx: number) => (
-                        <InlineStack key={answer.id} gap="200" blockAlign="start">
-                          <Text as="span" variant="bodySm" tone="subdued">{idx + 1}.</Text>
-                          <Link
-                            to={`/app/insights/${answer.insightId}`}
-                            style={{ textDecoration: "none", color: "inherit" }}
-                          >
-                            <Text as="span" variant="bodySm">
-                              {answer.insightTitle}
-                            </Text>
-                          </Link>
-                        </InlineStack>
-                      ))}
-                    </BlockStack>
-                  )}
-                </BlockStack>
-                  <InlineStack align="end">
-                    <Link to="/app/insights" style={{ textDecoration: "none" }}>
-                      <Button variant="plain">view all</Button>
-                    </Link>
-                  </InlineStack>
-                </div>
-              </Card>
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div className="mw-card-stretch" style={{ flex: 1 }}>
-              <Card>
-                <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between" }}>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Trending Insights</Text>
-                  {trendingInsights.length === 0 ? (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      No trending insights this week.
-                    </Text>
-                  ) : (
-                    <BlockStack gap="200">
-                      {trendingInsights.map((insight: any, idx: number) => (
-                        <InlineStack key={insight.id} gap="200" blockAlign="start">
-                          <Text as="span" variant="bodySm" tone="subdued">{idx + 1}.</Text>
-                          <Link
-                            to={`/app/insights/${insight.id}`}
-                            style={{ textDecoration: "none", color: "inherit" }}
-                          >
-                            <Text as="span" variant="bodySm">
-                              {insight.title}
-                            </Text>
-                          </Link>
-                        </InlineStack>
-                      ))}
-                    </BlockStack>
-                  )}
-                </BlockStack>
-                  <InlineStack align="end">
-                    <Link to="/app/insights?sort=trending" style={{ textDecoration: "none" }}>
-                      <Button variant="plain">view all</Button>
-                    </Link>
-                  </InlineStack>
-                </div>
-              </Card>
-              </div>
-            </div>
-          </div>
-        </Layout.Section>
-
-        {/* Project Table */}
+        {/* Tabbed Audit Table */}
         <Layout.Section>
           <Card padding="0">
-            {projects.length === 0 ? (
-              emptyStateMarkup
-            ) : (
-              <IndexTable
-                resourceName={resourceName}
-                itemCount={projects.length}
-                selectedItemsCount={
-                  allResourcesSelected ? "All" : selectedResources.length
-                }
-                onSelectionChange={handleSelectionChange}
-                headings={[
-                  { title: "Page" },
-                  { title: "Status" },
-                  { title: "Progress" },
-                  { title: "Real Users" },
-                  { title: "Zombies" },
-                  { title: "Bots" },
-                ]}
-                selectable={false}
-              >
-                {rowMarkup}
-              </IndexTable>
-            )}
+            {/* Tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid var(--p-color-border-subdued)" }}>
+              {(["products", "collections"] as const).map((tab) => {
+                const isActive = activeTab === tab;
+                const label = tab.charAt(0).toUpperCase() + tab.slice(1);
+                const count = tab === "products"
+                  ? projects.filter((p: any) => p.resourceType === "PRODUCT").length
+                  : projects.filter((p: any) => p.resourceType === "COLLECTION").length;
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    style={{
+                      flex: 1, padding: "12px 16px", background: "none", border: "none",
+                      borderBottom: isActive ? "2px solid #2c6ecb" : "2px solid transparent",
+                      cursor: "pointer", fontSize: 14,
+                      fontWeight: isActive ? 600 : 400,
+                      color: isActive ? "#202223" : "#6d7175",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {label} {count > 0 && <span style={{ color: "#8c9196", fontWeight: 400 }}>({count})</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Table rows */}
+            {(() => {
+              const filtered = activeTab === "products"
+                ? projects.filter((p: any) => p.resourceType === "PRODUCT")
+                : projects.filter((p: any) => p.resourceType === "COLLECTION");
+              const isProduct = activeTab === "products";
+              const metricLabel1 = isProduct ? "ATC" : "CTR";
+
+              if (filtered.length === 0) {
+                return (
+                  <div style={{ padding: "40px 16px", textAlign: "center" }}>
+                    <Text as="p" variant="bodyMd" tone="subdued">No {activeTab} audits yet.</Text>
+                    <div style={{ marginTop: 12 }}>
+                      <Button onClick={handleOpenPicker}>Create {activeTab.slice(0, -1)} audit</Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return filtered.map((p: any, idx: number) => {
+                const progressPct = Math.min(100, Math.round((p.realCount / p.targetVisitors) * 100));
+                const metric1 = isProduct ? p.atcRate : p.ctrRate;
+                const isDone = progressPct >= 100;
+                return (
+                  <Link key={p.id} to={`/app/project/${p.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                    <div
+                      style={{
+                        padding: "14px 20px",
+                        borderBottom: idx < filtered.length - 1 ? "1px solid #ebebeb" : "none",
+                        cursor: "pointer", transition: "background 0.15s",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--p-color-bg-surface-hover)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+                        {/* Name + snapshot */}
+                        <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                          <Text variant="bodyMd" fontWeight="bold" as="span">{p.productTitle}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {p.snapshotName}{p.snapshotCount > 1 ? ` \u00B7 ${p.snapshotCount} snapshots` : ""}
+                          </Text>
+                        </div>
+                        {/* Progress */}
+                        <div style={{ flex: "1 1 180px", maxWidth: 220 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{p.realCount}/{p.targetVisitors}</Text>
+                          </div>
+                          <div style={{ height: 6, background: "#e4e5e7", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${progressPct}%`, background: isDone ? "#29845a" : "#2c6ecb", borderRadius: 3, transition: "width 0.3s" }} />
+                          </div>
+                        </div>
+                        {/* Metrics */}
+                        <div style={{ display: "flex", gap: 28, flexShrink: 0 }}>
+                          <div style={{ textAlign: "center", minWidth: 52 }}>
+                            <Text as="p" variant="bodySm" tone="subdued">{metricLabel1}</Text>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">{metric1 != null ? `${metric1}%` : "\u2014"}</Text>
+                          </div>
+                          <div style={{ textAlign: "center", minWidth: 52 }}>
+                            <Text as="p" variant="bodySm" tone="subdued">CVR</Text>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">{p.cvrRate}%</Text>
+                          </div>
+                          <div style={{ textAlign: "center", minWidth: 64 }}>
+                            <Text as="p" variant="bodySm" tone="subdued">REV</Text>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">${Math.round(p.revenue).toLocaleString()}</Text>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              });
+            })()}
           </Card>
+        </Layout.Section>
+
+        {/* Legend */}
+        <Layout.Section>
+          <InlineStack align="center" gap="400">
+            <span style={{ fontSize: 12, color: "#29845a" }}>{"\u25CF"} Real</span>
+            <span style={{ fontSize: 12, color: "#b98900" }}>{"\u25CF"} Zombie</span>
+            <span style={{ fontSize: 12, color: "#d72c0d" }}>{"\u25CF"} Bot</span>
+          </InlineStack>
         </Layout.Section>
       </Layout>
 

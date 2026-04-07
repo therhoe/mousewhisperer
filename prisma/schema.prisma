@@ -194,6 +194,8 @@ model InsightProfile {
   displayName   String
   storeCategory String?
   avatarEmoji   String?
+  bio           String?
+  avatarUrl     String?
   reputation    Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
