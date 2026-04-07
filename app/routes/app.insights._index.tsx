@@ -102,6 +102,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         profile: {
           select: { displayName: true, avatarEmoji: true, avatarUrl: true, reputation: true, storeCategory: true },
         },
+        answers: {
+          orderBy: [{ isAccepted: "desc" }, { upvoteCount: "desc" }],
+          take: 5,
+          include: {
+            profile: {
+              select: { displayName: true, avatarEmoji: true, avatarUrl: true, reputation: true },
+            },
+          },
+        },
         ...(profile
           ? { bookmarks: { where: { profileId: profile.id }, select: { id: true } } }
           : {}),
@@ -139,6 +148,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     createdAt: insight.createdAt,
     profile: insight.profile,
     snapshotStats: insight.snapshotStats || null,
+    answers: (insight.answers || []).map((a: any) => ({
+      id: a.id,
+      content: stripHtml(a.content),
+      upvoteCount: a.upvoteCount,
+      isAccepted: a.isAccepted,
+      createdAt: a.createdAt,
+      profile: a.profile,
+    })),
   }));
 
   const leaderboard = leaders.map((l: any) => ({
