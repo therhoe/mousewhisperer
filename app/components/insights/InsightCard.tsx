@@ -102,13 +102,11 @@ export function InsightCard({
 
   return (
     <Card>
-      {/* Header: LVL badge left, Avatar+Name left (per user request) */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      {/* Header: Avatar + Name + LVL on left */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <AvatarIcon profile={profile} />
+        <Text as="span" variant="bodySm" fontWeight="semibold">{profile.displayName}</Text>
         <Badge tone="info">LVL {level}</Badge>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Text as="span" variant="bodySm" fontWeight="semibold">{profile.displayName}</Text>
-          <AvatarIcon profile={profile} />
-        </div>
       </div>
 
       {/* Body: Screenshot left (30%) + Content right (70%) */}
