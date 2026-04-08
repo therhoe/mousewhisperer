@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "@remix-run/react";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -17,6 +17,7 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { PixelArtEditor } from "../components/PixelArtEditor";
 
 const STORE_CATEGORIES = [
   { label: "Select a category", value: "" },
@@ -134,37 +135,6 @@ export default function InsightsProfile() {
               helpText="Helps others find merchants in similar niches."
             />
 
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                Avatar
-              </Text>
-              <InlineStack gap="200" wrap>
-                {EMOJI_OPTIONS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => setAvatarEmoji(emoji)}
-                    style={{
-                      fontSize: "1.5rem",
-                      width: 40,
-                      height: 40,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      borderRadius: 8,
-                      border: avatarEmoji === emoji ? "2px solid var(--p-color-border-emphasis)" : "2px solid transparent",
-                      background: avatarEmoji === emoji ? "var(--p-color-bg-surface-selected)" : "transparent",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Selected: {avatarEmoji}
-              </Text>
-            </BlockStack>
             <TextField
               label="Bio"
               value={bio}
@@ -174,16 +144,23 @@ export default function InsightsProfile() {
               multiline={2}
               helpText="A short description of your CRO focus (max 200 chars)."
             />
-
-            <TextField
-              label="Avatar Image URL"
-              value={avatarUrl}
-              onChange={setAvatarUrl}
-              autoComplete="off"
-              placeholder="https://cdn.shopify.com/..."
-              helpText="HTTPS URL to a custom avatar image. Leave blank to use the emoji above."
-            />
           </FormLayout>
+        </Card>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Avatar</Text>
+            {avatarUrl && (
+              <InlineStack gap="300" blockAlign="center">
+                <img src={avatarUrl} alt="Current avatar" style={{ width: 64, height: 64, borderRadius: 8, imageRendering: "pixelated", objectFit: "cover" }} />
+                <Text as="span" variant="bodySm" tone="subdued">Current avatar</Text>
+              </InlineStack>
+            )}
+            <PixelArtEditor
+              onSave={(dataUrl) => setAvatarUrl(dataUrl)}
+              currentAvatarUrl={avatarUrl}
+            />
+          </BlockStack>
         </Card>
 
         <Box paddingBlockEnd="400">
