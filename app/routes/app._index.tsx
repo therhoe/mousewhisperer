@@ -875,7 +875,7 @@ export default function Index() {
                     <Link to="/app/insights/profile?returnTo=/app" style={{ textDecoration: "none" }}>
                       <div style={{ flexShrink: 0, width: 120, minHeight: 180, borderRadius: 10, background: "#f6f6f7", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         {profile.avatarUrl ? (
-                          <img src={profile.avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} />
+                          <img src={profile.avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, imageRendering: "pixelated" }} />
                         ) : (
                           <span style={{ fontSize: "4rem" }}>{profile.avatarEmoji || "\uD83D\uDC2D"}</span>
                         )}

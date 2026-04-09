@@ -70,8 +70,8 @@ function timeAgo(dateStr: string): string {
 }
 
 function AvatarIcon({ profile, size = 32 }: { profile: { avatarEmoji: string | null; avatarUrl?: string | null; displayName: string }; size?: number }) {
-  if (profile.avatarUrl?.startsWith("http")) {
-    return <img src={profile.avatarUrl} alt={profile.displayName} style={{ width: size, height: size, borderRadius: size * 0.25, objectFit: "cover" }} />;
+  if (profile.avatarUrl) {
+    return <img src={profile.avatarUrl} alt={profile.displayName} style={{ width: size, height: size, borderRadius: size * 0.25, objectFit: "cover", imageRendering: "pixelated" }} />;
   }
   return <span style={{ fontSize: size * 0.75 }}>{profile.avatarEmoji || "\uD83D\uDC2D"}</span>;
 }
