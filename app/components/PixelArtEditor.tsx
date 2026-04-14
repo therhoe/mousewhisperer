@@ -1,5 +1,11 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
+import {
+  SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS,
+  HEAD_PARTS, HAIR_PARTS, EYE_PARTS, MOUTH_PARTS,
+  BODY_PARTS, LEG_PARTS, SHOE_PARTS, ACCESSORY_PARTS,
+  compositeCharacter,
+} from "./AvatarParts";
 
 const GRID_SIZE = 32;
 const CELL_PX = 12;
@@ -628,7 +634,51 @@ interface PixelArtEditorProps {
 }
 
 export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps) {
-  const [activeTab, setActiveTab] = useState<"premade" | "custom">("premade");
+  const [activeTab, setActiveTab] = useState<"premade" | "builder" | "custom">("premade");
+  // Builder state
+  const [builderSkin, setBuilderSkin] = useState(0);
+  const [builderHairColor, setBuilderHairColor] = useState(2);
+  const [builderOutfitColor, setBuilderOutfitColor] = useState(1);
+  const [builderHead, setBuilderHead] = useState(0);
+  const [builderHair, setBuilderHair] = useState(0);
+  const [builderEyes, setBuilderEyes] = useState(0);
+  const [builderMouth, setBuilderMouth] = useState(1);
+  const [builderBody, setBuilderBody] = useState(0);
+  const [builderLegs, setBuilderLegs] = useState(0);
+  const [builderShoes, setBuilderShoes] = useState(0);
+  const [builderAccessory, setBuilderAccessory] = useState(0);
+
+  const builderPixels = compositeCharacter(
+    SKIN_TONES[builderSkin].color,
+    HAIR_COLORS[builderHairColor].color,
+    OUTFIT_COLORS[builderOutfitColor].color,
+    builderHead, builderHair, builderEyes, builderMouth,
+    builderBody, builderLegs, builderShoes, builderAccessory,
+  );
+
+  const handleSaveBuilder = useCallback(() => {
+    const dataUrl = pixelDataToDataUrl(builderPixels);
+    onSave(dataUrl);
+  }, [builderPixels, onSave]);
+
+  const handleLoadBuilderToEditor = useCallback(() => {
+    setPixelData(new Map(builderPixels));
+    setActiveTab("custom");
+  }, [builderPixels]);
+
+  const handleRandomize = useCallback(() => {
+    setBuilderSkin(Math.floor(Math.random() * SKIN_TONES.length));
+    setBuilderHairColor(Math.floor(Math.random() * HAIR_COLORS.length));
+    setBuilderOutfitColor(Math.floor(Math.random() * OUTFIT_COLORS.length));
+    setBuilderHead(Math.floor(Math.random() * HEAD_PARTS.length));
+    setBuilderHair(Math.floor(Math.random() * HAIR_PARTS.length));
+    setBuilderEyes(Math.floor(Math.random() * EYE_PARTS.length));
+    setBuilderMouth(Math.floor(Math.random() * MOUTH_PARTS.length));
+    setBuilderBody(Math.floor(Math.random() * BODY_PARTS.length));
+    setBuilderLegs(Math.floor(Math.random() * LEG_PARTS.length));
+    setBuilderShoes(Math.floor(Math.random() * SHOE_PARTS.length));
+    setBuilderAccessory(Math.floor(Math.random() * ACCESSORY_PARTS.length));
+  }, []);
   const [selectedColor, setSelectedColor] = useState("#2C6ECB");
   const [tool, setTool] = useState<"pencil" | "eraser">("pencil");
   const [pixelData, setPixelData] = useState<Map<string, string>>(() => new Map());
@@ -684,10 +734,10 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
     <BlockStack gap="400">
       {/* Tab switcher */}
       <div style={{ display: "flex", borderBottom: "1px solid #e4e5e7" }}>
-        {(["premade", "custom"] as const).map((tab) => (
+        {([["premade", "Pre-made"], ["builder", "Builder"], ["custom", "Free Draw"]] as const).map(([tab, label]) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => setActiveTab(tab as any)}
             style={{
               flex: 1, padding: "10px 16px", background: "none", border: "none",
               borderBottom: activeTab === tab ? "2px solid #2c6ecb" : "2px solid transparent",
@@ -695,7 +745,7 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
               color: activeTab === tab ? "#202223" : "#6d7175",
             }}
           >
-            {tab === "premade" ? "Pre-made Characters" : "Custom Editor"}
+            {label}
           </button>
         ))}
       </div>
@@ -731,6 +781,77 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
           </InlineStack>
         </BlockStack>
       )}
+
+      {activeTab === "builder" && (() => {
+        const categories = [
+          { label: "Skin", options: SKIN_TONES, value: builderSkin, set: setBuilderSkin, type: "color" as const },
+          { label: "Hair Color", options: HAIR_COLORS, value: builderHairColor, set: setBuilderHairColor, type: "color" as const },
+          { label: "Outfit Color", options: OUTFIT_COLORS, value: builderOutfitColor, set: setBuilderOutfitColor, type: "color" as const },
+          { label: "Head", options: HEAD_PARTS, value: builderHead, set: setBuilderHead, type: "part" as const },
+          { label: "Hair", options: HAIR_PARTS, value: builderHair, set: setBuilderHair, type: "part" as const },
+          { label: "Eyes", options: EYE_PARTS, value: builderEyes, set: setBuilderEyes, type: "part" as const },
+          { label: "Mouth", options: MOUTH_PARTS, value: builderMouth, set: setBuilderMouth, type: "part" as const },
+          { label: "Body", options: BODY_PARTS, value: builderBody, set: setBuilderBody, type: "part" as const },
+          { label: "Legs", options: LEG_PARTS, value: builderLegs, set: setBuilderLegs, type: "part" as const },
+          { label: "Shoes", options: SHOE_PARTS, value: builderShoes, set: setBuilderShoes, type: "part" as const },
+          { label: "Accessory", options: ACCESSORY_PARTS, value: builderAccessory, set: setBuilderAccessory, type: "part" as const },
+        ];
+        return (
+          <div style={{ display: "flex", gap: 24 }}>
+            {/* Preview */}
+            <div style={{ flexShrink: 0, textAlign: "center" }}>
+              <PixelPreview data={builderPixels} size={192} />
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                <Button variant="primary" onClick={handleSaveBuilder}>Use this avatar</Button>
+                <Button onClick={handleLoadBuilderToEditor}>Edit in Free Draw</Button>
+                <Button onClick={handleRandomize}>Randomize</Button>
+              </div>
+            </div>
+
+            {/* Parts panel */}
+            <div style={{ flex: 1, maxHeight: 420, overflowY: "auto" }}>
+              <BlockStack gap="300">
+                {categories.map((cat) => (
+                  <div key={cat.label}>
+                    <Text as="p" variant="bodySm" fontWeight="semibold">{cat.label}</Text>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                      {cat.type === "color"
+                        ? (cat.options as Array<{ name: string; color: string }>).map((opt, i) => (
+                            <button
+                              key={opt.name}
+                              onClick={() => cat.set(i)}
+                              title={opt.name}
+                              style={{
+                                width: 28, height: 28, borderRadius: 6, cursor: "pointer",
+                                backgroundColor: opt.color,
+                                border: cat.value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
+                              }}
+                            />
+                          ))
+                        : (cat.options as Array<{ name: string; icon: string }>).map((opt, i) => (
+                            <button
+                              key={opt.name}
+                              onClick={() => cat.set(i)}
+                              title={opt.name}
+                              style={{
+                                padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13,
+                                border: cat.value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
+                                background: cat.value === i ? "#f0f5ff" : "white",
+                                fontWeight: cat.value === i ? 600 : 400,
+                              }}
+                            >
+                              {opt.icon} {opt.name}
+                            </button>
+                          ))
+                      }
+                    </div>
+                  </div>
+                ))}
+              </BlockStack>
+            </div>
+          </div>
+        );
+      })()}
 
       {activeTab === "custom" && (
         <div style={{ display: "flex", gap: 16 }}>
