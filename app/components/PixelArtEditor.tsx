@@ -34,6 +34,7 @@ const PREMADE_AVATARS = [
   { name: "Wizard", data: generateWizard() },
   { name: "Warrior", data: generateWarrior() },
   { name: "Bard", data: generateBard() },
+  { name: "Hero", data: generateHeroOutline() },
 ];
 
 // Simple character generator helpers
@@ -249,6 +250,51 @@ function generateBard(): Map<string, string> {
     // Music notes
     d.set("4,15", "#FFD700"); d.set("3,14", "#FFD700");
   });
+}
+
+function generateHeroOutline(): Map<string, string> {
+  const d = new Map<string, string>();
+  // Head outline
+  [[10,5],[11,5],[12,5],[13,5],[14,5],[15,5],[16,5],[17,5],
+   [9,6],[18,6],[8,7],[19,7],[8,8],[19,8],[8,9],[19,9],
+   [7,10],[20,10],[7,11],[20,11],[8,12],[19,12],[8,13],[19,13],
+   [9,14],[18,14]].forEach(([x,y]) => d.set(`${x},${y}`, "#000000"));
+  // Body outline
+  [[10,15],[11,15],[12,15],[13,15],[14,15],[15,15],[16,15],[17,15],
+   [9,16],[18,16],[8,17],[19,17],
+   [8,18],[10,18],[17,18],[19,18],
+   [8,19],[10,19],[17,19],[19,19],
+   [8,20],[10,20],[17,20],[19,20],
+   [8,21],[9,21],[10,21],[17,21],[18,21],[19,21],
+   [10,22],[17,22],[10,23],[17,23],
+   [10,24],[13,24],[14,24],[17,24],
+   [10,25],[11,25],[12,25],[15,25],[16,25],[17,25]].forEach(([x,y]) => d.set(`${x},${y}`, "#000000"));
+  // Fill head with skin
+  drawRect(d, 11, 6, 7, 1, "#FFDBB4");
+  drawRect(d, 9, 7, 10, 6, "#FFDBB4");
+  drawRect(d, 8, 10, 1, 2, "#FFDBB4");
+  drawRect(d, 10, 14, 8, 1, "#FFDBB4");
+  // Eyes
+  d.set("11,9", "#1A1A2E"); d.set("12,9", "#1A1A2E");
+  d.set("15,9", "#1A1A2E"); d.set("16,9", "#1A1A2E");
+  // Mouth
+  d.set("13,12", "#C8956C"); d.set("14,12", "#C8956C");
+  // Hair
+  drawRect(d, 10, 5, 8, 2, "#4A3728");
+  // Body fill - shirt
+  drawRect(d, 10, 16, 8, 1, "#DC143C");
+  drawRect(d, 9, 17, 10, 1, "#DC143C");
+  // Arms
+  drawRect(d, 9, 18, 1, 4, "#DC143C");
+  drawRect(d, 18, 18, 1, 4, "#DC143C");
+  // Torso
+  drawRect(d, 11, 18, 6, 4, "#DC143C");
+  // Pants
+  drawRect(d, 11, 22, 6, 2, "#2C6ECB");
+  // Legs
+  drawRect(d, 11, 24, 2, 2, "#2C6ECB");
+  drawRect(d, 15, 24, 2, 2, "#2C6ECB");
+  return d;
 }
 
 // Render pixel data to a canvas and return data URL
