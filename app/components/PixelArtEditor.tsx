@@ -35,6 +35,13 @@ const PREMADE_AVATARS = [
   { name: "Warrior", data: generateWarrior() },
   { name: "Bard", data: generateBard() },
   { name: "Hero", data: generateHeroOutline() },
+  { name: "Super", data: generateSuperman() },
+  { name: "Casual", data: generateCasualGuy() },
+  { name: "Executive", data: generateBusinessMan() },
+  { name: "Chill", data: generateCasualDude() },
+  { name: "Medic", data: generateMedicHero() },
+  { name: "Student", data: generateBlueShirtGuy() },
+  { name: "Elder", data: generateElderMonk() },
 ];
 
 // Simple character generator helpers
@@ -250,6 +257,291 @@ function generateBard(): Map<string, string> {
     // Music notes
     d.set("4,15", "#FFD700"); d.set("3,14", "#FFD700");
   });
+}
+
+// ── Characters based on reference pixel art images ──
+
+function generateSuperman(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#1A1A2E";
+  const BLUE = "#2C6ECB", YELLOW = "#F5C518", RED = "#DC143C", CAPE_DARK = "#8B4513", CAPE_MID = "#C46A3A";
+  // Hair (tall rounded)
+  drawRect(d, 12, 3, 8, 2, HAIR);
+  drawRect(d, 11, 5, 10, 2, HAIR);
+  // Head
+  drawRect(d, 11, 7, 10, 6, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("17,9", BLK); d.set("18,9", BLK);
+  // Mouth
+  drawRect(d, 14, 11, 4, 1, BLK);
+  // Outline around head
+  [10,11,12,13,14,15,16,17,18,19].forEach(x => d.set(`${x},6`, BLK));
+  d.set("10,7", BLK); d.set("21,7", BLK);
+  d.set("10,8", BLK); d.set("21,8", BLK);
+  d.set("10,13", BLK); d.set("21,13", BLK);
+  // Body - blue suit
+  drawRect(d, 10, 14, 12, 7, BLUE);
+  // Yellow belt
+  drawRect(d, 10, 20, 12, 1, YELLOW);
+  // Emblem on chest
+  drawRect(d, 14, 16, 4, 3, YELLOW);
+  d.set("15,17", RED); d.set("16,17", RED);
+  // Cape (left side flowing)
+  drawRect(d, 5, 15, 4, 2, RED);
+  drawRect(d, 4, 17, 4, 2, CAPE_MID);
+  drawRect(d, 3, 19, 4, 2, CAPE_DARK);
+  drawRect(d, 4, 21, 3, 1, CAPE_DARK);
+  // Cape right side
+  drawRect(d, 22, 14, 2, 5, RED);
+  // Arms
+  drawRect(d, 8, 14, 2, 5, SKIN);
+  drawRect(d, 22, 19, 2, 2, SKIN);
+  // Red shorts over blue
+  drawRect(d, 10, 21, 12, 1, RED);
+  // Legs
+  drawRect(d, 11, 22, 4, 4, BLUE);
+  drawRect(d, 17, 22, 4, 4, BLUE);
+  // Boots
+  drawRect(d, 10, 26, 5, 2, RED);
+  drawRect(d, 17, 26, 5, 2, RED);
+  return d;
+}
+
+function generateCasualGuy(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513", HAIR_DARK = "#5C2E00";
+  const BLUE = "#5B9BD5", BROWN = "#8B6914";
+  // Hair
+  drawRect(d, 12, 4, 7, 2, HAIR);
+  drawRect(d, 11, 5, 9, 2, HAIR);
+  drawRect(d, 13, 3, 5, 1, HAIR);
+  // Side hair
+  d.set("11,6", HAIR_DARK); d.set("19,6", HAIR_DARK);
+  d.set("11,7", HAIR_DARK); d.set("19,7", HAIR_DARK);
+  // Head
+  drawRect(d, 12, 7, 7, 6, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("16,9", BLK); d.set("17,9", BLK);
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // Body - blue shirt
+  drawRect(d, 10, 14, 11, 6, BLUE);
+  // Arms
+  drawRect(d, 8, 14, 2, 5, BLUE);
+  drawRect(d, 21, 14, 2, 5, BLUE);
+  // Hands
+  drawRect(d, 8, 19, 2, 2, SKIN);
+  drawRect(d, 21, 19, 2, 2, SKIN);
+  // Pants
+  drawRect(d, 11, 20, 4, 5, BROWN);
+  drawRect(d, 16, 20, 4, 5, BROWN);
+  // Shoes
+  drawRect(d, 10, 25, 5, 2, BLK);
+  drawRect(d, 16, 25, 5, 2, BLK);
+  return d;
+}
+
+function generateBusinessMan(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR_SIDE = "#4A3728";
+  const NAVY = "#1E3A5F", WHITE = "#FFFFFF";
+  // Hair (short sides, headphone-like appearance)
+  drawRect(d, 11, 5, 9, 2, BLK);
+  drawRect(d, 10, 6, 1, 4, HAIR_SIDE);
+  drawRect(d, 20, 6, 1, 4, HAIR_SIDE);
+  // Head
+  drawRect(d, 11, 7, 9, 6, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("17,9", BLK); d.set("18,9", BLK);
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // White shirt collar/tie
+  drawRect(d, 14, 14, 3, 7, WHITE);
+  // Navy suit jacket
+  drawRect(d, 10, 14, 4, 7, NAVY);
+  drawRect(d, 17, 14, 4, 7, NAVY);
+  // Arms
+  drawRect(d, 8, 14, 2, 6, NAVY);
+  drawRect(d, 21, 14, 2, 6, NAVY);
+  // Hands
+  drawRect(d, 8, 20, 2, 2, SKIN);
+  drawRect(d, 21, 20, 2, 2, SKIN);
+  // Pants
+  drawRect(d, 11, 21, 4, 5, BLK);
+  drawRect(d, 16, 21, 4, 5, BLK);
+  // Shoes
+  drawRect(d, 10, 26, 5, 2, BLK);
+  drawRect(d, 16, 26, 5, 2, BLK);
+  return d;
+}
+
+function generateCasualDude(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#FFDBB4", HAIR = "#5C2E00";
+  const ORANGE = "#E8963A", BLUE_SHORT = "#5B6BC0";
+  // Messy hair
+  drawRect(d, 12, 3, 7, 1, HAIR);
+  drawRect(d, 11, 4, 9, 3, HAIR);
+  drawRect(d, 18, 3, 3, 2, HAIR); // sticking up right
+  d.set("11,5", HAIR); d.set("20,5", HAIR);
+  // Head
+  drawRect(d, 12, 7, 7, 6, SKIN);
+  // Ears
+  d.set("11,9", SKIN); d.set("19,9", SKIN);
+  // Eyes (lighter, slightly sleepy)
+  d.set("13,9", "#94A3B8"); d.set("14,9", "#94A3B8");
+  d.set("16,9", "#94A3B8"); d.set("17,9", "#94A3B8");
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // Orange t-shirt
+  drawRect(d, 10, 14, 11, 6, ORANGE);
+  // Arms
+  drawRect(d, 8, 14, 2, 5, ORANGE);
+  drawRect(d, 21, 14, 2, 5, ORANGE);
+  // Hands
+  drawRect(d, 8, 19, 2, 2, SKIN);
+  drawRect(d, 21, 19, 2, 2, SKIN);
+  // Blue shorts
+  drawRect(d, 11, 20, 4, 4, BLUE_SHORT);
+  drawRect(d, 16, 20, 4, 4, BLUE_SHORT);
+  // Legs
+  drawRect(d, 11, 24, 4, 2, SKIN);
+  drawRect(d, 16, 24, 4, 2, SKIN);
+  // Shoes
+  drawRect(d, 10, 26, 5, 2, BLK);
+  drawRect(d, 16, 26, 5, 2, BLK);
+  return d;
+}
+
+function generateMedicHero(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513";
+  const BLUE = "#2C6ECB", YELLOW = "#F5C518", RED = "#DC143C", CAPE = "#2C6ECB";
+  // Hair
+  drawRect(d, 12, 4, 7, 2, HAIR);
+  drawRect(d, 11, 5, 9, 2, HAIR);
+  d.set("13,3", HAIR); d.set("14,3", HAIR); d.set("15,3", HAIR);
+  // Head
+  drawRect(d, 12, 7, 7, 6, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("16,9", BLK); d.set("17,9", BLK);
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // Cape (left side)
+  drawRect(d, 6, 14, 3, 7, CAPE);
+  drawRect(d, 5, 16, 1, 5, CAPE);
+  // Cape right
+  drawRect(d, 22, 14, 2, 5, CAPE);
+  // Body - yellow top
+  drawRect(d, 10, 14, 11, 4, YELLOW);
+  // Blue lower body
+  drawRect(d, 10, 18, 11, 3, BLUE);
+  // Red cross emblem
+  drawRect(d, 14, 15, 3, 1, RED);
+  drawRect(d, 15, 14, 1, 3, RED);
+  // Arms
+  drawRect(d, 8, 14, 2, 5, YELLOW);
+  drawRect(d, 21, 14, 1, 5, YELLOW);
+  // Hands
+  drawRect(d, 8, 19, 2, 2, SKIN);
+  // Legs
+  drawRect(d, 11, 21, 4, 4, BLUE);
+  drawRect(d, 16, 21, 4, 4, BLUE);
+  // Boots
+  drawRect(d, 10, 25, 5, 2, RED);
+  drawRect(d, 16, 25, 5, 2, RED);
+  // Hammer/tool above right hand
+  drawRect(d, 22, 11, 2, 3, "#94A3B8");
+  drawRect(d, 21, 10, 4, 1, "#94A3B8");
+  return d;
+}
+
+function generateBlueShirtGuy(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513", HAIR_SIDE = "#5C2E00";
+  const BLUE = "#5B9BD5", GREY = "#B0BEC5";
+  // Hair
+  drawRect(d, 12, 4, 7, 2, HAIR);
+  drawRect(d, 11, 5, 9, 2, HAIR);
+  // Side hair / ears area
+  d.set("11,7", HAIR_SIDE); d.set("19,7", HAIR_SIDE);
+  d.set("11,8", HAIR_SIDE); d.set("19,8", HAIR_SIDE);
+  // Head
+  drawRect(d, 12, 7, 7, 6, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("16,9", BLK); d.set("17,9", BLK);
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // Blue shirt
+  drawRect(d, 10, 14, 11, 6, BLUE);
+  // Arms
+  drawRect(d, 8, 14, 2, 5, BLK);
+  drawRect(d, 21, 14, 2, 5, BLK);
+  // Hands
+  drawRect(d, 8, 19, 2, 2, SKIN);
+  drawRect(d, 21, 19, 2, 2, SKIN);
+  // Grey pants
+  drawRect(d, 11, 20, 4, 5, GREY);
+  drawRect(d, 16, 20, 4, 5, GREY);
+  // Shoes
+  drawRect(d, 10, 25, 5, 2, BLK);
+  drawRect(d, 16, 25, 5, 2, BLK);
+  return d;
+}
+
+function generateElderMonk(): Map<string, string> {
+  const d = new Map<string, string>();
+  const BLK = "#1A1A2E", SKIN = "#E8B887", GREY_HAIR = "#94A3B8";
+  const WHITE = "#F5F5F5", BROWN_BELT = "#8B4513";
+  // Grey hair (receding)
+  drawRect(d, 12, 5, 7, 1, GREY_HAIR);
+  drawRect(d, 10, 6, 2, 4, GREY_HAIR);
+  drawRect(d, 19, 6, 2, 4, GREY_HAIR);
+  drawRect(d, 11, 5, 9, 1, GREY_HAIR);
+  // Grey eyebrows
+  d.set("13,8", GREY_HAIR); d.set("14,8", GREY_HAIR);
+  d.set("16,8", GREY_HAIR); d.set("17,8", GREY_HAIR);
+  // Head
+  drawRect(d, 12, 6, 7, 7, SKIN);
+  // Eyes
+  d.set("13,9", BLK); d.set("14,9", BLK);
+  d.set("16,9", BLK); d.set("17,9", BLK);
+  // Mouth
+  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
+  // Neck
+  drawRect(d, 14, 13, 3, 1, SKIN);
+  // White robe
+  drawRect(d, 9, 14, 13, 8, WHITE);
+  // Brown belt
+  drawRect(d, 9, 19, 13, 1, BROWN_BELT);
+  // Arms (robe sleeves)
+  drawRect(d, 7, 14, 2, 5, WHITE);
+  drawRect(d, 22, 14, 2, 5, WHITE);
+  // Hands
+  drawRect(d, 7, 19, 2, 2, SKIN);
+  drawRect(d, 22, 19, 2, 2, SKIN);
+  // Lower robe / legs
+  drawRect(d, 11, 22, 4, 4, WHITE);
+  drawRect(d, 16, 22, 4, 4, WHITE);
+  // Sandals
+  drawRect(d, 10, 26, 5, 2, BROWN_BELT);
+  drawRect(d, 16, 26, 5, 2, BROWN_BELT);
+  return d;
 }
 
 function generateHeroOutline(): Map<string, string> {
