@@ -9,6 +9,7 @@ import {
 
 const GRID_SIZE = 32;
 const CELL_PX = 12;
+const BLK = "#000000";
 
 const PALETTE = [
   // Skin tones
@@ -61,8 +62,6 @@ function drawRect(data: Map<string, string>, x: number, y: number, w: number, h:
 // Matches the chunky black-outlined pixel art style of newhero / newcrofly
 // Shared body template: arms extend out with hands, two legs with gap
 // ══════════════════════════════════════════════════════
-
-const BLK = "#000000";
 
 // Body outline (same across all characters) — arms, torso sides, legs
 function drawBodyOutline(d: Map<string, string>) {
