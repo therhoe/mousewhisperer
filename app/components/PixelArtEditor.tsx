@@ -26,46 +26,6 @@ const PALETTE = [
   "#F6F6F7", "#E4E5E7", "#94A3B8", "#000000", "transparent",
 ];
 
-const PREMADE_AVATARS = [
-  // Exact from .pixil files
-  { name: "Hero", data: generateNewHero() },
-  { name: "Crofly", data: generateNewCrofly() },
-  // Caped characters (left region is a cape)
-  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", top: "#2979FF", left: "#D50000", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#C4A35A", top: "#8B5CF6", left: "#6D28D9", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#F0F0F0", left: "#D50000", accent: "#D50000", noHairPuff: true }) },
-  { name: "Champion", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#FFC42A", left: "#29845A", accent: "#D50000", noHairPuff: true }) },
-  // Characters with Crofly-style left sleeve (top puff hair)
-  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", top: "#94A3B8", left: "#94A3B8", accent: "#FFC42A" }) },
-  { name: "Ranger", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B6914", top: "#29845A", left: "#29845A", accent: "#C4A35A" }) },
-  { name: "Rogue", data: generateOutlinedCharacter({ skin: "#C8956C", hair: "#1A1A2E", top: "#1A1A2E", left: "#1A1A2E", accent: "#4A3728" }) },
-  { name: "Viking", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#B8860B", top: "#8B4513", left: "#8B4513", accent: "#94A3B8" }) },
-  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#FFC42A" }) },
-  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#94A3B8" }) },
-  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#29845A", left: "#29845A", accent: "#FFC42A" }) },
-  { name: "Executive", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#3D2314", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFFFFF" }) },
-  { name: "Casual", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
-  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", top: "#FFC42A", left: "#FFC42A", accent: "#D50000" }) },
-  { name: "Student", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
-  { name: "Elder", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#94A3B8", top: "#F5F5F5", left: "#F5F5F5", accent: "#8B4513" }) },
-  { name: "Chill", data: generateOutlinedCharacter({ skin: "#FFDBB4", hair: "#5C2E00", top: "#E8963A", left: "#E8963A", accent: "#FFC42A" }) },
-];
-
-// Simple character generator helpers
-function drawRect(data: Map<string, string>, x: number, y: number, w: number, h: number, color: string) {
-  for (let dy = 0; dy < h; dy++) {
-    for (let dx = 0; dx < w; dx++) {
-      data.set(`${x + dx},${y + dy}`, color);
-    }
-  }
-}
-
-// ══════════════════════════════════════════════════════
-// OUTLINED CHARACTER SYSTEM
-// Matches the chunky black-outlined pixel art style of newhero / newcrofly
-// Shared body template: arms extend out with hands, two legs with gap
-// ══════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════
 // CROFLY PIXEL TEMPLATE — exact coordinates grouped by region
@@ -215,6 +175,47 @@ function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
 
   return d;
 }
+
+const PREMADE_AVATARS = [
+  // Exact from .pixil files
+  { name: "Hero", data: generateNewHero() },
+  { name: "Crofly", data: generateNewCrofly() },
+  // Caped characters (left region is a cape)
+  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", top: "#2979FF", left: "#D50000", accent: "#FFC42A", noHairPuff: true }) },
+  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#C4A35A", top: "#8B5CF6", left: "#6D28D9", accent: "#FFC42A", noHairPuff: true }) },
+  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFC42A", noHairPuff: true }) },
+  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#F0F0F0", left: "#D50000", accent: "#D50000", noHairPuff: true }) },
+  { name: "Champion", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#FFC42A", left: "#29845A", accent: "#D50000", noHairPuff: true }) },
+  // Characters with Crofly-style left sleeve (top puff hair)
+  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", top: "#94A3B8", left: "#94A3B8", accent: "#FFC42A" }) },
+  { name: "Ranger", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B6914", top: "#29845A", left: "#29845A", accent: "#C4A35A" }) },
+  { name: "Rogue", data: generateOutlinedCharacter({ skin: "#C8956C", hair: "#1A1A2E", top: "#1A1A2E", left: "#1A1A2E", accent: "#4A3728" }) },
+  { name: "Viking", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#B8860B", top: "#8B4513", left: "#8B4513", accent: "#94A3B8" }) },
+  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#FFC42A" }) },
+  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#94A3B8" }) },
+  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#29845A", left: "#29845A", accent: "#FFC42A" }) },
+  { name: "Executive", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#3D2314", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFFFFF" }) },
+  { name: "Casual", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
+  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", top: "#FFC42A", left: "#FFC42A", accent: "#D50000" }) },
+  { name: "Student", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
+  { name: "Elder", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#94A3B8", top: "#F5F5F5", left: "#F5F5F5", accent: "#8B4513" }) },
+  { name: "Chill", data: generateOutlinedCharacter({ skin: "#FFDBB4", hair: "#5C2E00", top: "#E8963A", left: "#E8963A", accent: "#FFC42A" }) },
+];
+
+// Simple character generator helpers
+function drawRect(data: Map<string, string>, x: number, y: number, w: number, h: number, color: string) {
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      data.set(`${x + dx},${y + dy}`, color);
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// OUTLINED CHARACTER SYSTEM
+// Matches the chunky black-outlined pixel art style of newhero / newcrofly
+// Shared body template: arms extend out with hands, two legs with gap
+// ══════════════════════════════════════════════════════
 
 // ── Exact pre-mades from .pixil files ──
 function generateNewHero(): Map<string, string> {
