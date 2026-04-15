@@ -5,39 +5,6 @@ type PixelMap = Map<string, string>;
 
 const BLK = "#000000";
 
-function rect(d: PixelMap, x: number, y: number, w: number, h: number, c: string) {
-  for (let dy = 0; dy < h; dy++)
-    for (let dx = 0; dx < w; dx++)
-      d.set(`${x + dx},${y + dy}`, c);
-}
-
-// Draws the shared body outline (arms, torso, legs) used by all characters
-function drawBodyOutline(d: PixelMap) {
-  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
-  d.set("12,18", BLK); d.set("21,18", BLK);
-  d.set("10,19", BLK); d.set("11,19", BLK);
-  d.set("9,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
-  d.set("8,21", BLK); d.set("11,21", BLK);
-  d.set("7,22", BLK); d.set("8,22", BLK); d.set("11,22", BLK);
-  d.set("7,23", BLK); d.set("11,23", BLK);
-  d.set("6,24", BLK); d.set("11,24", BLK);
-  d.set("6,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
-  d.set("5,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
-  for (let x = 5; x <= 11; x++) d.set(`${x},27`, BLK);
-  d.set("13,27", BLK);
-  d.set("20,20", BLK); d.set("21,20", BLK);
-  d.set("22,21", BLK);
-  d.set("20,22", BLK); d.set("22,22", BLK);
-  d.set("20,23", BLK); d.set("22,23", BLK);
-  d.set("20,24", BLK); d.set("22,24", BLK);
-  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
-  d.set("20,26", BLK);
-  d.set("20,27", BLK);
-  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
-  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
-  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
-}
-
 // ── Skin Tones ──
 export const SKIN_TONES = [
   { name: "Light", color: "#FFCD94" },
@@ -77,29 +44,62 @@ export const OUTFIT_COLORS = [
 ];
 
 // ══════════════════════════════════════════════════════
-// HEAD SHAPES — each draws the head outline + skin fill
+// HEAD SHAPES — use the exact hero/crofly outline shape
 // ══════════════════════════════════════════════════════
+
+function drawStandardHeadOutline(d: PixelMap) {
+  // Top
+  d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
+  d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK); d.set("20,6", BLK);
+  d.set("11,7", BLK); d.set("21,7", BLK);
+  d.set("11,8", BLK); d.set("21,8", BLK);
+  // Left side
+  d.set("11,9", BLK); d.set("11,10", BLK);
+  d.set("11,11", BLK); d.set("11,12", BLK); d.set("11,13", BLK);
+  d.set("10,14", BLK); d.set("10,15", BLK);
+  d.set("11,16", BLK); d.set("11,17", BLK);
+  d.set("12,18", BLK);
+  // Right side
+  d.set("22,9", BLK); d.set("22,10", BLK);
+  d.set("22,11", BLK); d.set("22,12", BLK); d.set("22,13", BLK);
+  d.set("22,14", BLK); d.set("22,15", BLK); d.set("22,16", BLK); d.set("22,17", BLK);
+  d.set("21,18", BLK);
+}
+
+function fillFace(d: PixelMap, skin: string) {
+  for (let y = 7; y <= 18; y++)
+    for (let x = 12; x <= 21; x++)
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
+  for (let x = 13; x <= 19; x++) if (!d.has(`${x},6`)) d.set(`${x},6`, skin);
+}
 
 export const HEAD_PARTS = [
   {
-    name: "Round",
+    name: "Standard",
     icon: "🟢",
     build: (skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      // Head outline (same shape as newhero)
+      drawStandardHeadOutline(d);
+      fillFace(d, skin);
+      return d;
+    },
+  },
+  {
+    name: "Round",
+    icon: "⚪",
+    build: (skin: string): PixelMap => {
+      const d: PixelMap = new Map();
+      // Slightly rounder top
       d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
       d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK);
       d.set("11,7", BLK); d.set("20,7", BLK);
       d.set("11,8", BLK); d.set("20,8", BLK);
-      for (let y = 9; y <= 15; y++) { d.set(`11,${y}`, BLK); d.set(`21,${y}`, BLK); }
-      d.set("12,16", BLK); d.set("20,16", BLK);
-      d.set("12,17", BLK); d.set("20,17", BLK);
-      d.set("13,18", BLK); d.set("14,18", BLK); d.set("17,18", BLK); d.set("18,18", BLK); d.set("19,18", BLK);
-      d.set("15,18", BLK); d.set("16,18", BLK);
-      // Skin fill
-      for (let y = 7; y <= 17; y++)
-        for (let x = 12; x <= 20; x++)
+      for (let y = 9; y <= 17; y++) { d.set(`11,${y}`, BLK); d.set(`20,${y}`, BLK); }
+      d.set("12,18", BLK); d.set("19,18", BLK);
+      for (let y = 7; y <= 18; y++)
+        for (let x = 12; x <= 19; x++)
           if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
+      for (let x = 13; x <= 18; x++) if (!d.has(`${x},6`)) d.set(`${x},6`, skin);
       return d;
     },
   },
@@ -108,47 +108,12 @@ export const HEAD_PARTS = [
     icon: "🟧",
     build: (skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      // Square head outline
-      for (let x = 12; x <= 19; x++) d.set(`${x},6`, BLK);
-      for (let y = 7; y <= 17; y++) { d.set(`11,${y}`, BLK); d.set(`20,${y}`, BLK); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},18`, BLK);
-      // Skin fill
+      for (let x = 12; x <= 20; x++) d.set(`${x},6`, BLK);
+      for (let y = 7; y <= 17; y++) { d.set(`11,${y}`, BLK); d.set(`21,${y}`, BLK); }
+      for (let x = 12; x <= 20; x++) d.set(`${x},18`, BLK);
       for (let y = 7; y <= 17; y++)
-        for (let x = 12; x <= 19; x++)
+        for (let x = 12; x <= 20; x++)
           d.set(`${x},${y}`, skin);
-      return d;
-    },
-  },
-  {
-    name: "Tall",
-    icon: "📐",
-    build: (skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      // Taller head outline
-      d.set("14,4", BLK); d.set("15,4", BLK); d.set("16,4", BLK); d.set("17,4", BLK);
-      d.set("13,5", BLK); d.set("18,5", BLK);
-      d.set("12,6", BLK); d.set("19,6", BLK);
-      for (let y = 7; y <= 17; y++) { d.set(`12,${y}`, BLK); d.set(`19,${y}`, BLK); }
-      for (let x = 13; x <= 18; x++) d.set(`${x},18`, BLK);
-      for (let y = 6; y <= 17; y++)
-        for (let x = 13; x <= 18; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
-      return d;
-    },
-  },
-  {
-    name: "Wide",
-    icon: "⬜",
-    build: (skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 13; x <= 18; x++) d.set(`${x},6`, BLK);
-      d.set("12,7", BLK); d.set("19,7", BLK);
-      for (let y = 8; y <= 16; y++) { d.set(`10,${y}`, BLK); d.set(`21,${y}`, BLK); }
-      d.set("11,17", BLK); d.set("20,17", BLK);
-      for (let x = 12; x <= 19; x++) d.set(`${x},18`, BLK);
-      for (let y = 7; y <= 17; y++)
-        for (let x = 11; x <= 20; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
       return d;
     },
   },
@@ -164,8 +129,8 @@ export const HAIR_PARTS = [
     icon: "💇",
     build: (hair: string): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 13; x <= 18; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
+      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
+      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
       return d;
     },
   },
@@ -174,10 +139,10 @@ export const HAIR_PARTS = [
     icon: "🌊",
     build: (hair: string): PixelMap => {
       const d: PixelMap = new Map();
-      d.set("13,5", hair); d.set("17,5", hair); d.set("18,5", hair);
-      for (let x = 12; x <= 19; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
-      d.set("12,9", hair); d.set("19,9", hair);
+      d.set("13,5", hair); d.set("17,5", hair); d.set("19,5", hair);
+      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
+      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
+      d.set("12,9", hair); d.set("20,9", hair);
       return d;
     },
   },
@@ -186,11 +151,12 @@ export const HAIR_PARTS = [
     icon: "👩",
     build: (hair: string): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 13; x <= 18; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
-      // Side hair down
-      d.set("12,9", hair); d.set("12,10", hair); d.set("12,11", hair); d.set("12,12", hair);
-      d.set("20,9", hair); d.set("20,10", hair); d.set("20,11", hair); d.set("20,12", hair);
+      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
+      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
+      d.set("12,9", hair); d.set("20,9", hair);
+      d.set("12,10", hair); d.set("21,10", hair);
+      d.set("12,11", hair); d.set("21,11", hair);
+      d.set("12,12", hair); d.set("21,12", hair);
       return d;
     },
   },
@@ -198,17 +164,15 @@ export const HAIR_PARTS = [
     name: "Side Hair",
     icon: "💁",
     build: (hair: string): PixelMap => {
-      // Like newcrofly: hair covers left side of head
+      // Crofly-style: tall puff on top-left + hair on top
       const d: PixelMap = new Map();
-      // Top puff on left
-      for (let x = 7; x <= 10; x++) d.set(`${x},6`, hair);
-      d.set("7,7", hair); d.set("10,7", hair); d.set("11,7", hair);
-      d.set("7,8", hair); d.set("10,8", hair); d.set("11,8", hair);
-      // Side of head
-      for (let y = 7; y <= 15; y++) d.set(`11,${y}`, hair);
-      for (let x = 13; x <= 18; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
-      for (let x = 12; x <= 20; x++) d.set(`${x},9`, hair);
-      d.set("11,10", hair);
+      d.set("7,5", hair); d.set("8,5", hair); d.set("9,5", hair); d.set("10,5", hair);
+      d.set("7,6", hair); d.set("10,6", hair);
+      d.set("7,7", hair); d.set("8,7", hair); d.set("9,7", hair);
+      for (let x = 13; x <= 18; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
+      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
+      for (let x = 12; x <= 14; x++) d.set(`${x},9`, hair);
+      d.set("12,10", hair); d.set("13,10", hair); d.set("14,10", hair);
       return d;
     },
   },
@@ -217,11 +181,9 @@ export const HAIR_PARTS = [
     icon: "🦔",
     build: (hair: string): PixelMap => {
       const d: PixelMap = new Map();
-      d.set("15,3", hair); d.set("16,3", hair);
-      d.set("15,4", hair); d.set("16,4", hair);
-      d.set("15,5", hair); d.set("16,5", hair);
+      for (let y = 3; y <= 5; y++) { d.set(`15,${y}`, hair); d.set(`16,${y}`, hair); }
       for (let x = 14; x <= 17; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
+      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
       return d;
     },
   },
@@ -231,9 +193,8 @@ export const HAIR_PARTS = [
     build: (hair: string): PixelMap => {
       const d: PixelMap = new Map();
       d.set("12,5", hair); d.set("14,5", hair); d.set("16,5", hair); d.set("18,5", hair); d.set("20,5", hair);
-      for (let x = 11; x <= 20; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
-      d.set("11,9", hair); d.set("20,9", hair);
+      for (let x = 11; x <= 21; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
+      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
       return d;
     },
   },
@@ -245,7 +206,7 @@ export const HAIR_PARTS = [
 ];
 
 // ══════════════════════════════════════════════════════
-// EYE STYLES (2x2 blocks on face)
+// EYE STYLES (2x2 blocks on face — positions match hero/crofly)
 // ══════════════════════════════════════════════════════
 
 export const EYE_PARTS = [
@@ -266,13 +227,10 @@ export const EYE_PARTS = [
     icon: "😳",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
-      // 2x3 eyes
-      d.set("14,10", BLK); d.set("15,10", BLK);
-      d.set("14,11", BLK); d.set("15,11", BLK);
-      d.set("14,12", BLK); d.set("15,12", BLK);
-      d.set("17,10", BLK); d.set("18,10", BLK);
-      d.set("17,11", BLK); d.set("18,11", BLK);
-      d.set("17,12", BLK); d.set("18,12", BLK);
+      for (let y = 10; y <= 12; y++) {
+        d.set(`14,${y}`, BLK); d.set(`15,${y}`, BLK);
+        d.set(`17,${y}`, BLK); d.set(`18,${y}`, BLK);
+      }
       return d;
     },
   },
@@ -317,16 +275,15 @@ export const EYE_PARTS = [
     icon: "😎",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 13; x <= 15; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
-      for (let x = 17; x <= 19; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
-      d.set("16,10", BLK); // bridge
+      for (let x = 13; x <= 16; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
+      for (let x = 17; x <= 20; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
       return d;
     },
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// MOUTH STYLES
+// MOUTH STYLES (matches 2-pixel mouth from hero/crofly)
 // ══════════════════════════════════════════════════════
 
 export const MOUTH_PARTS = [
@@ -371,8 +328,79 @@ export const MOUTH_PARTS = [
 ];
 
 // ══════════════════════════════════════════════════════
-// BODY STYLES (fills torso + arms)
+// BODY OUTLINES
 // ══════════════════════════════════════════════════════
+
+function drawBodyOutlineNoCape(d: PixelMap) {
+  d.set("10,19", BLK); d.set("11,19", BLK);
+  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
+  d.set("12,18", BLK); d.set("21,18", BLK);
+  // Symmetric left arm
+  d.set("10,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
+  d.set("9,21", BLK); d.set("11,21", BLK);
+  d.set("9,22", BLK); d.set("11,22", BLK);
+  d.set("9,23", BLK); d.set("11,23", BLK);
+  d.set("9,24", BLK); d.set("11,24", BLK);
+  d.set("9,25", BLK); d.set("10,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
+  d.set("11,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
+  d.set("11,27", BLK); d.set("13,27", BLK);
+  // Right arm
+  d.set("20,20", BLK); d.set("21,20", BLK);
+  d.set("22,21", BLK);
+  d.set("20,22", BLK); d.set("22,22", BLK);
+  d.set("20,23", BLK); d.set("22,23", BLK);
+  d.set("20,24", BLK); d.set("22,24", BLK);
+  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
+  d.set("20,26", BLK);
+  d.set("20,27", BLK);
+  // Legs
+  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
+  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
+  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
+}
+
+function drawBodyOutlineWithCape(d: PixelMap) {
+  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
+  d.set("12,18", BLK); d.set("21,18", BLK);
+  d.set("10,19", BLK); d.set("11,19", BLK);
+  d.set("9,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
+  d.set("8,21", BLK); d.set("11,21", BLK);
+  d.set("7,22", BLK); d.set("8,22", BLK); d.set("11,22", BLK);
+  d.set("7,23", BLK); d.set("11,23", BLK);
+  d.set("6,24", BLK); d.set("11,24", BLK);
+  d.set("6,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
+  d.set("5,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
+  for (let x = 5; x <= 11; x++) d.set(`${x},27`, BLK);
+  d.set("13,27", BLK);
+  d.set("20,20", BLK); d.set("21,20", BLK);
+  d.set("22,21", BLK);
+  d.set("20,22", BLK); d.set("22,22", BLK);
+  d.set("20,23", BLK); d.set("22,23", BLK);
+  d.set("20,24", BLK); d.set("22,24", BLK);
+  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
+  d.set("20,26", BLK);
+  d.set("20,27", BLK);
+  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
+  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
+  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
+}
+
+// ══════════════════════════════════════════════════════
+// BODY STYLES (torso + arms — always uses no-cape outline)
+// ══════════════════════════════════════════════════════
+
+function fillTorsoAndArms(d: PixelMap, outfit: string, skin: string) {
+  // Torso fill
+  for (let y = 20; y <= 24; y++)
+    for (let x = 12; x <= 19; x++)
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
+  // Left arm fill
+  d.set("10,21", outfit); d.set("10,22", outfit); d.set("10,23", outfit); d.set("10,24", outfit);
+  // Right arm fill
+  d.set("21,21", outfit); d.set("21,22", outfit); d.set("21,23", outfit);
+  // Hands
+  d.set("12,24", skin); d.set("21,24", skin);
+}
 
 export const BODY_PARTS = [
   {
@@ -380,17 +408,8 @@ export const BODY_PARTS = [
     icon: "👕",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      drawBodyOutline(d);
-      // Torso fill
-      for (let y = 20; y <= 24; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-      // Arms fill
-      for (let y = 20; y <= 26; y++)
-        for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-      // Hand peek
-      d.set("12,24", skin); d.set("21,24", skin);
+      drawBodyOutlineNoCape(d);
+      fillTorsoAndArms(d, outfit, skin);
       return d;
     },
   },
@@ -399,15 +418,14 @@ export const BODY_PARTS = [
     icon: "🛡️",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      drawBodyOutline(d);
+      drawBodyOutlineNoCape(d);
       const grey = "#94A3B8";
       for (let y = 20; y <= 24; y++)
         for (let x = 12; x <= 19; x++)
           if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, grey);
-      for (let y = 20; y <= 26; y++)
-        for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, grey);
-      // Emblem
+      d.set("10,21", grey); d.set("10,22", grey); d.set("10,23", grey); d.set("10,24", grey);
+      d.set("21,21", grey); d.set("21,22", grey); d.set("21,23", grey);
+      // Emblem center
       d.set("15,22", outfit); d.set("16,22", outfit);
       d.set("15,23", outfit); d.set("16,23", outfit);
       d.set("12,24", skin); d.set("21,24", skin);
@@ -419,19 +437,13 @@ export const BODY_PARTS = [
     icon: "🤵",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      drawBodyOutline(d);
-      for (let y = 20; y <= 24; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-      for (let y = 20; y <= 26; y++)
-        for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
+      drawBodyOutlineNoCape(d);
+      fillTorsoAndArms(d, outfit, skin);
       // White shirt
       d.set("15,20", "#FFFFFF"); d.set("16,20", "#FFFFFF");
       d.set("15,21", "#FFFFFF"); d.set("16,21", "#FFFFFF");
       // Tie
       d.set("15,22", "#D50000"); d.set("16,22", "#D50000");
-      d.set("12,24", skin); d.set("21,24", skin);
       return d;
     },
   },
@@ -440,16 +452,11 @@ export const BODY_PARTS = [
     icon: "🥋",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      drawBodyOutline(d);
-      for (let y = 20; y <= 24; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-      for (let y = 20; y <= 26; y++)
-        for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
+      drawBodyOutlineNoCape(d);
+      fillTorsoAndArms(d, outfit, skin);
       // Belt
       for (let x = 12; x <= 19; x++) d.set(`${x},23`, "#8B4513");
-      d.set("12,24", skin); d.set("21,24", skin);
+      d.set("10,23", "#8B4513"); d.set("21,23", "#8B4513");
       return d;
     },
   },
@@ -458,17 +465,19 @@ export const BODY_PARTS = [
     icon: "🦸",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      drawBodyOutline(d);
+      drawBodyOutlineWithCape(d);
+      // Torso
       for (let y = 20; y <= 24; y++)
         for (let x = 12; x <= 19; x++)
           if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
+      // Cape fill (left side)
       for (let y = 20; y <= 26; y++)
         for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
+          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, "#D50000");
+      // Right arm
+      d.set("21,21", outfit); d.set("21,22", outfit); d.set("21,23", outfit);
       // Emblem star
       d.set("15,21", "#FFC42A"); d.set("16,21", "#FFC42A");
-      d.set("14,22", "#FFC42A"); d.set("17,22", "#FFC42A");
-      d.set("15,23", "#FFC42A"); d.set("16,23", "#FFC42A");
       d.set("12,24", skin); d.set("21,24", skin);
       return d;
     },
@@ -476,7 +485,7 @@ export const BODY_PARTS = [
 ];
 
 // ══════════════════════════════════════════════════════
-// LEG / BOTTOM STYLES
+// LEG STYLES
 // ══════════════════════════════════════════════════════
 
 export const LEG_PARTS = [
@@ -485,8 +494,11 @@ export const LEG_PARTS = [
     icon: "👖",
     build: (outfit: string): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 14; x <= 15; x++) { d.set(`${x},25`, outfit); d.set(`${x},26`, outfit); d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
-      for (let x = 18; x <= 19; x++) { d.set(`${x},25`, outfit); d.set(`${x},26`, outfit); d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
+      for (let y = 25; y <= 26; y++)
+        for (let x = 14; x <= 19; x++)
+          d.set(`${x},${y}`, outfit);
+      for (let x = 14; x <= 15; x++) { d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
+      for (let x = 18; x <= 19; x++) { d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
       return d;
     },
   },
@@ -495,9 +507,9 @@ export const LEG_PARTS = [
     icon: "🩳",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 14; x <= 15; x++) { d.set(`${x},25`, outfit); d.set(`${x},26`, outfit); }
-      for (let x = 18; x <= 19; x++) { d.set(`${x},25`, outfit); d.set(`${x},26`, outfit); }
-      // Bare legs
+      for (let y = 25; y <= 26; y++)
+        for (let x = 14; x <= 19; x++)
+          d.set(`${x},${y}`, outfit);
       for (let x = 14; x <= 15; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
       for (let x = 18; x <= 19; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
       return d;
@@ -508,7 +520,9 @@ export const LEG_PARTS = [
     icon: "👗",
     build: (outfit: string, skin: string): PixelMap => {
       const d: PixelMap = new Map();
-      for (let x = 12; x <= 19; x++) { d.set(`${x},25`, outfit); d.set(`${x},26`, outfit); }
+      for (let y = 25; y <= 26; y++)
+        for (let x = 13; x <= 20; x++)
+          d.set(`${x},${y}`, outfit);
       for (let x = 14; x <= 15; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
       for (let x = 18; x <= 19; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
       return d;
@@ -522,7 +536,7 @@ export const LEG_PARTS = [
 
 export const SHOE_PARTS = [
   {
-    name: "Boots",
+    name: "Dark",
     icon: "🥾",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
@@ -532,7 +546,7 @@ export const SHOE_PARTS = [
     },
   },
   {
-    name: "Sneakers",
+    name: "White",
     icon: "👟",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
@@ -542,7 +556,7 @@ export const SHOE_PARTS = [
     },
   },
   {
-    name: "Red Boots",
+    name: "Red",
     icon: "🟥",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
@@ -579,7 +593,7 @@ export const ACCESSORY_PARTS = [
     build: (): PixelMap => {
       const d: PixelMap = new Map();
       d.set("13,4", "#FFC42A"); d.set("15,4", "#FFC42A"); d.set("17,4", "#FFC42A"); d.set("19,4", "#FFC42A");
-      d.set("13,5", "#FFC42A"); d.set("14,5", "#FFC42A"); d.set("15,5", "#FFC42A"); d.set("16,5", "#FFC42A"); d.set("17,5", "#FFC42A"); d.set("18,5", "#FFC42A"); d.set("19,5", "#FFC42A");
+      for (let x = 13; x <= 19; x++) d.set(`${x},5`, "#FFC42A");
       return d;
     },
   },
@@ -588,19 +602,8 @@ export const ACCESSORY_PARTS = [
     icon: "😇",
     build: (): PixelMap => {
       const d: PixelMap = new Map();
-      d.set("13,3", "#FFC42A"); d.set("14,3", "#FFC42A"); d.set("15,3", "#FFC42A"); d.set("16,3", "#FFC42A"); d.set("17,3", "#FFC42A"); d.set("18,3", "#FFC42A");
+      for (let x = 13; x <= 18; x++) d.set(`${x},3`, "#FFC42A");
       d.set("12,4", "#FFC42A"); d.set("19,4", "#FFC42A");
-      return d;
-    },
-  },
-  {
-    name: "Cape",
-    icon: "🦸",
-    build: (outfit: string): PixelMap => {
-      const d: PixelMap = new Map();
-      // Cape behind hero
-      for (let y = 19; y <= 27; y++) { d.set(`23,${y}`, outfit); d.set(`24,${y}`, outfit); }
-      d.set("25,22", outfit); d.set("25,23", outfit); d.set("25,24", outfit);
       return d;
     },
   },
@@ -626,7 +629,6 @@ export function compositeCharacter(
   const result: PixelMap = new Map();
 
   const layers = [
-    ACCESSORY_PARTS[accessoryIdx]?.build(outfitColor), // back (cape)
     BODY_PARTS[bodyIdx]?.build(outfitColor, skinColor),
     LEG_PARTS[legIdx]?.build(outfitColor, skinColor),
     SHOE_PARTS[shoeIdx]?.build(),
@@ -634,6 +636,7 @@ export function compositeCharacter(
     HAIR_PARTS[hairIdx]?.build(hairColor),
     EYE_PARTS[eyeIdx]?.build(),
     MOUTH_PARTS[mouthIdx]?.build(),
+    ACCESSORY_PARTS[accessoryIdx]?.build(),
   ];
 
   layers.forEach((layer) => {

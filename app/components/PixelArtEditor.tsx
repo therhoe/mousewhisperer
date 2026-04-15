@@ -27,25 +27,29 @@ const PALETTE = [
 ];
 
 const PREMADE_AVATARS = [
+  // Exact from .pixil files
   { name: "Hero", data: generateNewHero() },
   { name: "Crofly", data: generateNewCrofly() },
-  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", hairStyle: "short", top: "#94A3B8", bottom: "#4A3728", accent: "#FFD700" }) },
-  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8D5B7", hairStyle: "short", top: "#8B5CF6", bottom: "#4A3728", accent: "#FFD700" }) },
+  // Caped characters (drawn in hero/crofly style with cape flowing to left)
+  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", hairStyle: "short", top: "#2979FF", bottom: "#2979FF", accent: "#D50000", capeColor: "#D50000" }) },
+  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#C4A35A", hairStyle: "long", top: "#8B5CF6", bottom: "#4A3728", accent: "#FFC42A", capeColor: "#8B5CF6" }) },
+  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", hairStyle: "long", top: "#2979FF", bottom: "#2979FF", accent: "#FFC42A", capeColor: "#1E3A5F" }) },
+  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "long", top: "#F0F0F0", bottom: "#F0F0F0", accent: "#D50000", capeColor: "#D50000" }) },
+  { name: "Champion", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", hairStyle: "short", top: "#FFC42A", bottom: "#D50000", accent: "#D50000", capeColor: "#29845A" }) },
+  // Non-caped characters (symmetric arms)
+  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", hairStyle: "short", top: "#94A3B8", bottom: "#4A3728", accent: "#FFC42A" }) },
   { name: "Ranger", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B6914", hairStyle: "messy", top: "#29845A", bottom: "#4A3728", accent: "#C4A35A" }) },
-  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "long", top: "#FFFFFF", bottom: "#F0F0F0", accent: "#DC143C" }) },
   { name: "Rogue", data: generateOutlinedCharacter({ skin: "#C8956C", hair: "#1A1A2E", hairStyle: "short", top: "#1A1A2E", bottom: "#1A1A2E", accent: "#4A3728" }) },
   { name: "Viking", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#B8860B", hairStyle: "messy", top: "#8B4513", bottom: "#4A3728", accent: "#94A3B8" }) },
-  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", hairStyle: "short", top: "#DC143C", bottom: "#1A1A2E", accent: "#FFD700" }) },
-  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", hairStyle: "long", top: "#2C6ECB", bottom: "#2C6ECB", accent: "#FFD700" }) },
-  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", hairStyle: "short", top: "#DC143C", bottom: "#4A3728", accent: "#94A3B8" }) },
-  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "messy", top: "#29845A", bottom: "#8B4513", accent: "#FFD700" }) },
+  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", hairStyle: "short", top: "#D50000", bottom: "#1A1A2E", accent: "#FFC42A" }) },
+  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", hairStyle: "short", top: "#D50000", bottom: "#4A3728", accent: "#94A3B8" }) },
+  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "messy", top: "#29845A", bottom: "#8B4513", accent: "#FFC42A" }) },
   { name: "Executive", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#3D2314", hairStyle: "short", top: "#1E3A5F", bottom: "#1A1A2E", accent: "#FFFFFF" }) },
   { name: "Casual", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", hairStyle: "messy", top: "#5B9BD5", bottom: "#8B6914", accent: "#FFFFFF" }) },
-  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", hairStyle: "short", top: "#FFC42A", bottom: "#2C6ECB", accent: "#DC143C" }) },
+  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", hairStyle: "short", top: "#FFC42A", bottom: "#2979FF", accent: "#D50000" }) },
   { name: "Student", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", hairStyle: "short", top: "#5B9BD5", bottom: "#B0BEC5", accent: "#FFFFFF" }) },
   { name: "Elder", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#94A3B8", hairStyle: "short", top: "#F5F5F5", bottom: "#F5F5F5", accent: "#8B4513" }) },
   { name: "Chill", data: generateOutlinedCharacter({ skin: "#FFDBB4", hair: "#5C2E00", hairStyle: "messy", top: "#E8963A", bottom: "#5B6BC0", accent: "#FFC42A" }) },
-  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", hairStyle: "short", top: "#2C6ECB", bottom: "#DC143C", accent: "#FFD700" }) },
 ];
 
 // Simple character generator helpers
@@ -63,13 +67,32 @@ function drawRect(data: Map<string, string>, x: number, y: number, w: number, h:
 // Shared body template: arms extend out with hands, two legs with gap
 // ══════════════════════════════════════════════════════
 
-// Body outline (same across all characters) — arms, torso sides, legs
-function drawBodyOutline(d: Map<string, string>) {
-  // Torso top outline
-  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
-  d.set("12,18", BLK); d.set("21,18", BLK);
+// ── Head outline (matches exact hero/crofly shape) ──
+function drawHeadOutline(d: Map<string, string>) {
+  // Top of head outline — exact from newhero
+  d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
+  d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK); d.set("20,6", BLK);
+  d.set("11,7", BLK); d.set("21,7", BLK);
+  d.set("11,8", BLK); d.set("21,8", BLK);
+  // Left side
+  d.set("11,9", BLK); d.set("11,10", BLK);
+  d.set("11,11", BLK); d.set("11,12", BLK); d.set("11,13", BLK);
+  d.set("10,14", BLK); d.set("10,15", BLK); // jaw bulge
+  d.set("11,16", BLK); d.set("11,17", BLK);
+  d.set("12,18", BLK);
+  // Right side
+  d.set("22,9", BLK); d.set("22,10", BLK);
+  d.set("22,11", BLK); d.set("22,12", BLK); d.set("22,13", BLK);
+  d.set("22,14", BLK); d.set("22,15", BLK); d.set("22,16", BLK); d.set("22,17", BLK);
+  d.set("21,18", BLK);
+  // Bottom — neck transition
+  d.set("13,19", BLK); d.set("14,19", BLK); d.set("15,19", BLK); d.set("16,19", BLK);
+  d.set("17,19", BLK); d.set("18,19", BLK); d.set("19,19", BLK); d.set("20,19", BLK);
+}
+
+// ── Body outline WITH cape (matches newhero/newcrofly exactly) ──
+function drawBodyOutlineWithCape(d: Map<string, string>) {
   d.set("10,19", BLK); d.set("11,19", BLK);
-  // Left arm outline going down
   d.set("9,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
   d.set("8,21", BLK); d.set("11,21", BLK);
   d.set("7,22", BLK); d.set("8,22", BLK); d.set("11,22", BLK);
@@ -79,7 +102,35 @@ function drawBodyOutline(d: Map<string, string>) {
   d.set("5,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
   for (let x = 5; x <= 11; x++) d.set(`${x},27`, BLK);
   d.set("13,27", BLK);
-  // Right arm outline
+  // Right arm
+  d.set("20,20", BLK); d.set("21,20", BLK);
+  d.set("22,21", BLK);
+  d.set("20,22", BLK); d.set("22,22", BLK);
+  d.set("20,23", BLK); d.set("22,23", BLK);
+  d.set("20,24", BLK); d.set("22,24", BLK);
+  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
+  d.set("20,26", BLK);
+  d.set("20,27", BLK);
+  // Legs
+  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
+  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
+  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
+}
+
+// ── Body outline WITHOUT cape (symmetric arms) ──
+function drawBodyOutlineNoCape(d: Map<string, string>) {
+  // Shoulders
+  d.set("10,19", BLK); d.set("11,19", BLK);
+  // Left arm — symmetric to right arm
+  d.set("10,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
+  d.set("9,21", BLK); d.set("11,21", BLK);
+  d.set("9,22", BLK); d.set("11,22", BLK);
+  d.set("9,23", BLK); d.set("11,23", BLK);
+  d.set("9,24", BLK); d.set("11,24", BLK);
+  d.set("9,25", BLK); d.set("10,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
+  d.set("11,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
+  d.set("11,27", BLK); d.set("13,27", BLK);
+  // Right arm — existing
   d.set("20,20", BLK); d.set("21,20", BLK);
   d.set("22,21", BLK);
   d.set("20,22", BLK); d.set("22,22", BLK);
@@ -97,111 +148,107 @@ function drawBodyOutline(d: Map<string, string>) {
 type CharOpts = {
   skin: string;
   hair: string;
-  hairStyle: "short" | "messy" | "long" | "bald";
-  top: string;   // shirt/main color
-  bottom: string; // pants/secondary color
-  accent: string; // highlight (boots, emblem, etc.)
+  hairStyle: "short" | "messy" | "long" | "sideHair" | "bald";
+  top: string;   // shirt color
+  bottom: string; // pants/legs color
+  accent: string; // boots/belt highlight
+  capeColor?: string; // if set, draws cape on left side
 };
 
 // Generate a character matching the outlined style
 function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   const d = new Map<string, string>();
-  const { skin, hair, hairStyle, top, bottom, accent } = opts;
+  const { skin, hair, hairStyle, top, bottom, accent, capeColor } = opts;
+  const hasCape = !!capeColor;
 
-  // ── HEAD OUTLINE (matches newhero shape) ──
-  // Top curve
-  d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
-  d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK);
-  d.set("11,7", BLK); d.set("20,7", BLK);
-  d.set("11,8", BLK); d.set("20,8", BLK);
-  d.set("11,9", BLK); d.set("21,9", BLK);
-  d.set("11,10", BLK); d.set("21,10", BLK);
-  d.set("11,11", BLK); d.set("21,11", BLK);
-  d.set("11,12", BLK); d.set("21,12", BLK);
-  d.set("11,13", BLK); d.set("21,13", BLK);
-  d.set("11,14", BLK); d.set("21,14", BLK);
-  d.set("11,15", BLK); d.set("21,15", BLK);
-  d.set("12,16", BLK); d.set("20,16", BLK);
-  d.set("12,17", BLK); d.set("20,17", BLK);
-  d.set("13,18", BLK); d.set("14,18", BLK); d.set("17,18", BLK); d.set("18,18", BLK); d.set("19,18", BLK);
-  // Neck outline
-  d.set("15,18", BLK); d.set("16,18", BLK);
-
-  // ── FACE FILL (skin) ──
-  for (let y = 7; y <= 17; y++) {
-    for (let x = 12; x <= 20; x++) {
+  // ── HEAD ──
+  drawHeadOutline(d);
+  // Face fill (skin)
+  for (let y = 7; y <= 18; y++) {
+    for (let x = 12; x <= 21; x++) {
       if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
     }
   }
-  // Fill corner areas missed
-  d.set("12,7", skin); d.set("19,7", skin); d.set("20,7", skin);
-  d.set("12,8", skin); d.set("19,8", skin);
+  // Fill head top row 6 area
+  for (let x = 13; x <= 19; x++) if (!d.has(`${x},6`)) d.set(`${x},6`, skin);
+  d.set("12,7", skin); d.set("20,7", skin);
+  d.set("12,8", skin); d.set("20,8", skin);
 
   // ── HAIR ──
   if (hairStyle !== "bald") {
-    // Top of head hair
-    for (let x = 14; x <= 17; x++) {
-      d.set(`${x},6`, hair);
-      d.set(`${x},7`, hair);
-    }
-    d.set("13,7", hair); d.set("18,7", hair);
-    // Forehead
-    for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
-    d.set("11,8", BLK); // keep left outline
-    d.set("20,8", BLK); // keep right outline
-
-    if (hairStyle === "messy") {
-      // Side fringe
-      d.set("12,9", hair); d.set("19,9", hair);
-    }
-    if (hairStyle === "long") {
-      // Side hair down to cheeks
-      d.set("12,9", hair); d.set("19,9", hair);
-      d.set("12,10", hair); d.set("20,10", hair);
-      d.set("12,11", hair); d.set("20,11", hair);
-      d.set("12,12", hair); d.set("20,12", hair);
+    if (hairStyle === "sideHair") {
+      // Crofly-style: hair covers left side of head
+      for (let x = 13; x <= 18; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
+      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
+      for (let x = 12; x <= 14; x++) d.set(`${x},9`, hair);
+      d.set("12,10", hair); d.set("13,10", hair); d.set("14,10", hair);
+      // Top puff
+      d.set("7,5", hair); d.set("8,5", hair); d.set("9,5", hair); d.set("10,5", hair);
+      d.set("7,6", hair); d.set("10,6", hair);
+      d.set("7,7", hair); d.set("8,7", hair); d.set("9,7", hair);
+    } else {
+      // Hair on top of head
+      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
+      for (let x = 12; x <= 20; x++) d.set(`${x},7`, hair);
+      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
+      if (hairStyle === "messy") {
+        d.set("13,5", hair); d.set("17,5", hair); d.set("19,5", hair);
+        d.set("12,9", hair); d.set("20,9", hair);
+      }
+      if (hairStyle === "long") {
+        d.set("12,9", hair); d.set("20,9", hair);
+        d.set("12,10", hair); d.set("21,10", hair);
+        d.set("12,11", hair); d.set("21,11", hair);
+      }
     }
   }
 
-  // ── EYES (2x2 blocks) ──
+  // ── EYES (2x2 blocks, like hero/crofly) ──
   d.set("14,11", BLK); d.set("15,11", BLK);
   d.set("14,12", BLK); d.set("15,12", BLK);
   d.set("17,11", BLK); d.set("18,11", BLK);
   d.set("17,12", BLK); d.set("18,12", BLK);
 
-  // ── MOUTH ──
+  // ── MOUTH (2 pixels, like hero/crofly) ──
   d.set("15,15", BLK); d.set("16,15", BLK);
 
   // ── BODY OUTLINE ──
-  drawBodyOutline(d);
+  if (hasCape) {
+    drawBodyOutlineWithCape(d);
+  } else {
+    drawBodyOutlineNoCape(d);
+  }
 
   // ── TORSO FILL (top color) ──
-  for (let y = 20; y <= 21; y++) {
+  for (let y = 20; y <= 24; y++) {
     for (let x = 12; x <= 19; x++) {
       if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
     }
   }
-  for (let y = 22; y <= 24; y++) {
-    for (let x = 12; x <= 19; x++) {
-      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
-    }
-  }
-  // Arms fill
-  for (let y = 20; y <= 26; y++) {
-    for (let x = 6; x <= 10; x++) {
-      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
-    }
-  }
-  // Hands (skin peek at bottom of arms)
+  // Hands peek at bottom of arms (skin)
   d.set("12,24", skin); d.set("21,24", skin);
 
-  // ── BOTTOM / LEGS FILL (bottom color) ──
+  // ── ARMS / CAPE FILL ──
+  if (hasCape) {
+    // Fill cape region with cape color (left side)
+    for (let y = 20; y <= 26; y++) {
+      for (let x = 6; x <= 10; x++) {
+        if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, capeColor!);
+      }
+    }
+  } else {
+    // Left arm fill (skin/top color like right arm)
+    d.set("10,21", top); d.set("10,22", top); d.set("10,23", top); d.set("10,24", top);
+  }
+  // Right arm interior fill
+  d.set("21,21", top); d.set("21,22", top); d.set("21,23", top);
+
+  // ── BOTTOM / LEGS FILL ──
   for (let y = 25; y <= 26; y++) {
     for (let x = 14; x <= 19; x++) {
       if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, bottom);
     }
   }
-  // Leg fills
   d.set("14,27", bottom); d.set("15,27", bottom);
   d.set("18,27", bottom); d.set("19,27", bottom);
   d.set("14,28", bottom); d.set("15,28", bottom);
@@ -210,8 +257,6 @@ function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   // ── BOOTS (accent) ──
   d.set("14,29", accent); d.set("15,29", accent);
   d.set("18,29", accent); d.set("19,29", accent);
-  // Accent on belt
-  d.set("13,24", accent); d.set("20,24", accent);
 
   return d;
 }
