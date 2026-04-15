@@ -2,8 +2,7 @@ import { useState, useCallback } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
 import {
   SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS,
-  HEAD_PARTS, HAIR_PARTS, EYE_PARTS, MOUTH_PARTS,
-  BODY_PARTS, LEG_PARTS, SHOE_PARTS, ACCESSORY_PARTS,
+  HAIR_STYLES, EYE_STYLES, MOUTH_STYLES, ACCESSORIES, CAPE_OPTIONS,
   compositeCharacter,
 } from "./AvatarParts";
 
@@ -12,18 +11,29 @@ const CELL_PX = 12;
 const BLK = "#000000";
 
 const PALETTE = [
-  // Skin tones
-  "#FFDBB4", "#E8B887", "#C8956C", "#8D5524", "#5C3310",
+  // Skin tones (light to dark)
+  "#FFE6C7", "#FFDBB4", "#FFCD94", "#F1C27D", "#E0AC69", "#C68642", "#A57548", "#8D5524", "#6F4E37", "#4E342E", "#3E2723",
   // Hair
-  "#2C1810", "#4A3728", "#8B6914", "#C4A35A", "#E8D5B7", "#D94000", "#B8860B",
-  // Eyes
-  "#1A1A2E", "#2C6ECB", "#29845A", "#8B4513",
-  // Clothing
-  "#DC143C", "#2C6ECB", "#29845A", "#F59E0B", "#8B5CF6", "#FF6B9D", "#1A1A2E", "#FFFFFF",
-  // Accessories
-  "#FFD700", "#C0C0C0", "#CD7F32",
-  // Background/misc
-  "#F6F6F7", "#E4E5E7", "#94A3B8", "#000000", "transparent",
+  "#1A1A2E", "#2C1810", "#3D2314", "#4A3728", "#6F4E37", "#8B4513", "#A0522D", "#B8860B", "#C4A35A", "#E8D5B7", "#D94000", "#C1272D",
+  "#94A3B8", "#E8E8E8", "#B8C5D6",
+  // Reds & pinks
+  "#D50000", "#850000", "#FF1744", "#EC4899", "#FF6B9D", "#FFB3C1",
+  // Oranges & yellows
+  "#E8963A", "#FF9100", "#FFC42A", "#FFEB3B", "#FFF59D",
+  // Greens
+  "#A4DD00", "#29845A", "#14B8A6", "#2E7D32", "#81C784", "#004D40",
+  // Blues & cyans
+  "#06B6D4", "#2979FF", "#2C6ECB", "#1E3A5F", "#0F1E3C", "#448AFF", "#80DEEA",
+  // Purples
+  "#8B5CF6", "#6D28D9", "#311B92", "#B388FF",
+  // Browns & beiges
+  "#D4B896", "#C4A35A", "#8B4513", "#5C3310",
+  // Metals
+  "#FFD700", "#C0C0C0", "#CD7F32", "#B87333",
+  // Greys & neutrals
+  "#F0F0F0", "#E4E5E7", "#BDBDBD", "#94A3B8", "#757575", "#4A5568", "#1A1A2E", "#000000", "#FFFFFF",
+  // Eraser
+  "transparent",
 ];
 
 
@@ -886,26 +896,28 @@ interface PixelArtEditorProps {
 
 export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps) {
   const [activeTab, setActiveTab] = useState<"premade" | "builder" | "custom">("premade");
-  // Builder state
-  const [builderSkin, setBuilderSkin] = useState(0);
+  // Builder state — matches Crofly template
+  const [builderSkin, setBuilderSkin] = useState(1);
   const [builderHairColor, setBuilderHairColor] = useState(2);
-  const [builderOutfitColor, setBuilderOutfitColor] = useState(1);
-  const [builderHead, setBuilderHead] = useState(0);
-  const [builderHair, setBuilderHair] = useState(0);
+  const [builderTop, setBuilderTop] = useState(3); // yellow like crofly
+  const [builderAccent, setBuilderAccent] = useState(0); // red
+  const [builderCape, setBuilderCape] = useState(0); // none
+  const [builderHairStyle, setBuilderHairStyle] = useState(0);
   const [builderEyes, setBuilderEyes] = useState(0);
-  const [builderMouth, setBuilderMouth] = useState(1);
-  const [builderBody, setBuilderBody] = useState(0);
-  const [builderLegs, setBuilderLegs] = useState(0);
-  const [builderShoes, setBuilderShoes] = useState(0);
+  const [builderMouth, setBuilderMouth] = useState(0);
   const [builderAccessory, setBuilderAccessory] = useState(0);
 
-  const builderPixels = compositeCharacter(
-    SKIN_TONES[builderSkin].color,
-    HAIR_COLORS[builderHairColor].color,
-    OUTFIT_COLORS[builderOutfitColor].color,
-    builderHead, builderHair, builderEyes, builderMouth,
-    builderBody, builderLegs, builderShoes, builderAccessory,
-  );
+  const builderPixels = compositeCharacter({
+    skin: SKIN_TONES[builderSkin].color,
+    hair: HAIR_COLORS[builderHairColor].color,
+    top: OUTFIT_COLORS[builderTop].color,
+    accent: OUTFIT_COLORS[builderAccent].color,
+    capeColor: CAPE_OPTIONS[builderCape].color,
+    hairStyleIdx: builderHairStyle,
+    eyeStyleIdx: builderEyes,
+    mouthStyleIdx: builderMouth,
+    accessoryIdx: builderAccessory,
+  });
 
   const handleSaveBuilder = useCallback(() => {
     const dataUrl = pixelDataToDataUrl(builderPixels);
@@ -920,15 +932,13 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
   const handleRandomize = useCallback(() => {
     setBuilderSkin(Math.floor(Math.random() * SKIN_TONES.length));
     setBuilderHairColor(Math.floor(Math.random() * HAIR_COLORS.length));
-    setBuilderOutfitColor(Math.floor(Math.random() * OUTFIT_COLORS.length));
-    setBuilderHead(Math.floor(Math.random() * HEAD_PARTS.length));
-    setBuilderHair(Math.floor(Math.random() * HAIR_PARTS.length));
-    setBuilderEyes(Math.floor(Math.random() * EYE_PARTS.length));
-    setBuilderMouth(Math.floor(Math.random() * MOUTH_PARTS.length));
-    setBuilderBody(Math.floor(Math.random() * BODY_PARTS.length));
-    setBuilderLegs(Math.floor(Math.random() * LEG_PARTS.length));
-    setBuilderShoes(Math.floor(Math.random() * SHOE_PARTS.length));
-    setBuilderAccessory(Math.floor(Math.random() * ACCESSORY_PARTS.length));
+    setBuilderTop(Math.floor(Math.random() * OUTFIT_COLORS.length));
+    setBuilderAccent(Math.floor(Math.random() * OUTFIT_COLORS.length));
+    setBuilderCape(Math.floor(Math.random() * CAPE_OPTIONS.length));
+    setBuilderHairStyle(Math.floor(Math.random() * HAIR_STYLES.length));
+    setBuilderEyes(Math.floor(Math.random() * EYE_STYLES.length));
+    setBuilderMouth(Math.floor(Math.random() * MOUTH_STYLES.length));
+    setBuilderAccessory(Math.floor(Math.random() * ACCESSORIES.length));
   }, []);
   const [selectedColor, setSelectedColor] = useState("#2C6ECB");
   const [tool, setTool] = useState<"pencil" | "eraser">("pencil");
@@ -1037,15 +1047,13 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
         const categories = [
           { label: "Skin", options: SKIN_TONES, value: builderSkin, set: setBuilderSkin, type: "color" as const },
           { label: "Hair Color", options: HAIR_COLORS, value: builderHairColor, set: setBuilderHairColor, type: "color" as const },
-          { label: "Outfit Color", options: OUTFIT_COLORS, value: builderOutfitColor, set: setBuilderOutfitColor, type: "color" as const },
-          { label: "Head", options: HEAD_PARTS, value: builderHead, set: setBuilderHead, type: "part" as const },
-          { label: "Hair", options: HAIR_PARTS, value: builderHair, set: setBuilderHair, type: "part" as const },
-          { label: "Eyes", options: EYE_PARTS, value: builderEyes, set: setBuilderEyes, type: "part" as const },
-          { label: "Mouth", options: MOUTH_PARTS, value: builderMouth, set: setBuilderMouth, type: "part" as const },
-          { label: "Body", options: BODY_PARTS, value: builderBody, set: setBuilderBody, type: "part" as const },
-          { label: "Legs", options: LEG_PARTS, value: builderLegs, set: setBuilderLegs, type: "part" as const },
-          { label: "Shoes", options: SHOE_PARTS, value: builderShoes, set: setBuilderShoes, type: "part" as const },
-          { label: "Accessory", options: ACCESSORY_PARTS, value: builderAccessory, set: setBuilderAccessory, type: "part" as const },
+          { label: "Shirt Color", options: OUTFIT_COLORS, value: builderTop, set: setBuilderTop, type: "color" as const },
+          { label: "Accent Color", options: OUTFIT_COLORS, value: builderAccent, set: setBuilderAccent, type: "color" as const },
+          { label: "Cape", options: CAPE_OPTIONS.map(c => ({ name: c.name, color: c.color || "#F6F6F7" })), value: builderCape, set: setBuilderCape, type: "color" as const },
+          { label: "Hair Style", options: HAIR_STYLES, value: builderHairStyle, set: setBuilderHairStyle, type: "part" as const },
+          { label: "Eyes", options: EYE_STYLES, value: builderEyes, set: setBuilderEyes, type: "part" as const },
+          { label: "Mouth", options: MOUTH_STYLES, value: builderMouth, set: setBuilderMouth, type: "part" as const },
+          { label: "Accessory", options: ACCESSORIES, value: builderAccessory, set: setBuilderAccessory, type: "part" as const },
         ];
         return (
           <div style={{ display: "flex", gap: 24 }}>
@@ -1190,13 +1198,13 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
             {/* Color palette */}
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" fontWeight="semibold">Colors</Text>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxWidth: 180 }}>
-                {PALETTE.map((color) => (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3, maxWidth: 220 }}>
+                {PALETTE.map((color, idx) => (
                   <button
-                    key={color}
+                    key={`${color}-${idx}`}
                     onClick={() => { setSelectedColor(color); setTool("pencil"); }}
                     style={{
-                      width: 24, height: 24, borderRadius: 4, cursor: "pointer",
+                      width: 20, height: 20, borderRadius: 4, cursor: "pointer",
                       backgroundColor: color === "transparent" ? "#fff" : color,
                       border: selectedColor === color ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
                       backgroundImage: color === "transparent" ? "linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc)" : "none",

@@ -1,648 +1,337 @@
-// Avatar part definitions for the character builder — outlined pixel art style
-// Matches the chunky black-outlined art of newhero/newcrofly
+// Avatar builder parts — uses the Crofly outline template
+// Parts modify colors and add optional overlays on top of the fixed outline
 
 type PixelMap = Map<string, string>;
+type Coord = [number, number];
 
 const BLK = "#000000";
 
-// ── Skin Tones ──
+// ══════════════════════════════════════════════════════
+// CROFLY PIXEL TEMPLATE — regions of the fixed outline
+// ══════════════════════════════════════════════════════
+
+export const CROFLY_OUTLINE: Coord[] = [[7,5],[8,5],[9,5],[10,5],[6,6],[11,6],[13,6],[14,6],[15,6],[16,6],[17,6],[18,6],[6,7],[8,7],[9,7],[12,7],[19,7],[20,7],[6,8],[7,8],[9,8],[10,8],[11,8],[21,8],[11,9],[22,9],[10,10],[22,10],[10,11],[22,11],[10,12],[22,12],[10,13],[16,13],[19,13],[22,13],[10,14],[16,14],[19,14],[22,14],[10,15],[22,15],[11,16],[22,16],[11,17],[16,17],[17,17],[22,17],[12,18],[21,18],[10,19],[11,19],[13,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[9,20],[12,20],[13,20],[20,20],[21,20],[8,21],[11,21],[22,21],[7,22],[8,22],[11,22],[20,22],[22,22],[7,23],[11,23],[13,23],[20,23],[22,23],[6,24],[11,24],[13,24],[20,24],[22,24],[6,25],[11,25],[12,25],[13,25],[16,25],[17,25],[20,25],[21,25],[22,25],[5,26],[12,26],[13,26],[20,26],[5,27],[6,27],[7,27],[8,27],[9,27],[10,27],[11,27],[13,27],[20,27],[13,28],[16,28],[17,28],[20,28],[13,29],[14,29],[15,29],[18,29],[19,29],[20,29]];
+export const CROFLY_HAIR: Coord[] = [[7,6],[8,6],[9,6],[10,6],[7,7],[10,7],[11,7],[13,7],[14,7],[15,7],[16,7],[17,7],[18,7],[12,8],[13,8],[14,8],[15,8],[16,8],[17,8],[18,8],[19,8],[20,8],[12,9],[13,9],[14,9],[15,9],[16,9],[17,9],[18,9],[19,9],[20,9],[21,9],[11,10],[12,10],[13,10],[14,10],[16,10],[17,10],[18,10],[21,10],[11,11],[11,12],[11,13],[11,14],[11,15]];
+export const CROFLY_SKIN: Coord[] = [[15,10],[19,10],[20,10],[12,11],[13,11],[14,11],[15,11],[16,11],[17,11],[18,11],[19,11],[20,11],[21,11],[12,12],[13,12],[14,12],[15,12],[16,12],[17,12],[18,12],[19,12],[20,12],[21,12],[12,13],[13,13],[14,13],[15,13],[17,13],[18,13],[20,13],[21,13],[12,14],[13,14],[14,14],[15,14],[17,14],[18,14],[20,14],[21,14],[12,15],[13,15],[14,15],[15,15],[16,15],[17,15],[18,15],[19,15],[20,15],[21,15],[12,16],[13,16],[14,16],[15,16],[16,16],[17,16],[18,16],[19,16],[20,16],[21,16],[12,17],[13,17],[14,17],[15,17],[18,17],[19,17],[20,17],[21,17],[13,18],[14,18],[15,18],[16,18],[17,18],[18,18],[19,18],[20,18],[12,24],[21,24]];
+export const CROFLY_TOP: Coord[] = [[16,20],[17,20],[14,21],[15,21],[16,21],[17,21],[18,21],[19,21],[12,22],[13,22],[14,22],[15,22],[17,22],[18,22],[19,22],[21,22],[12,23],[14,23],[15,23],[16,23],[18,23],[19,23],[21,23],[14,24],[15,24],[16,24],[17,24],[18,24],[19,24],[14,26],[15,26],[16,26],[17,26],[18,26],[19,26],[14,27],[15,27],[18,27],[19,27]];
+export const CROFLY_LEFT: Coord[] = [[14,20],[15,20],[18,20],[19,20],[10,21],[12,21],[13,21],[20,21],[21,21],[9,22],[10,22],[8,23],[9,23],[10,23],[7,24],[8,24],[9,24],[7,25],[8,25],[6,26],[7,26],[16,27],[17,27],[14,28],[15,28],[18,28],[19,28]];
+export const CROFLY_LEFT_SHADOW: Coord[] = [[10,20],[9,21],[10,24],[9,25],[10,25],[8,26],[9,26],[10,26],[11,26]];
+export const CROFLY_LEFT_HIGHLIGHT: Coord[] = [[12,19],[11,20]];
+export const CROFLY_ACCENT: Coord[] = [[16,22],[17,23],[14,25],[15,25],[18,25],[19,25]];
+
+// Hair puff position (top-left area of head)
+const HAIR_PUFF: Coord[] = [[7,6],[8,6],[9,6],[10,6],[7,7],[10,7],[7,8],[8,8],[9,8],[10,8]];
+// Eye pixel positions in Crofly (default: (16,13)(16,14)(19,13)(19,14) — single pixel eyes)
+const CROFLY_EYES: Coord[] = [[16,13],[19,13],[16,14],[19,14]];
+// Mouth pixel positions in Crofly
+const CROFLY_MOUTH: Coord[] = [[16,17],[17,17]];
+
+export function darken(hex: string, amount = 40): string {
+  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
+  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
+  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
+
+export function lighten(hex: string, amount = 30): string {
+  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
+  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
+  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
+
+// ══════════════════════════════════════════════════════
+// COLOR PALETTES (expanded)
+// ══════════════════════════════════════════════════════
+
 export const SKIN_TONES = [
+  { name: "Porcelain", color: "#FFE6C7" },
   { name: "Light", color: "#FFCD94" },
   { name: "Fair", color: "#F1C27D" },
   { name: "Medium", color: "#E0AC69" },
   { name: "Tan", color: "#C68642" },
+  { name: "Olive", color: "#A57548" },
   { name: "Brown", color: "#8D5524" },
-  { name: "Dark", color: "#5C3310" },
+  { name: "Dark Brown", color: "#6F4E37" },
+  { name: "Dark", color: "#4E342E" },
+  { name: "Deep", color: "#3E2723" },
 ];
 
-// ── Hair Colors ──
 export const HAIR_COLORS = [
   { name: "Black", color: "#1A1A2E" },
   { name: "Dark Brown", color: "#3D2314" },
   { name: "Brown", color: "#8B4513" },
   { name: "Auburn", color: "#A0522D" },
+  { name: "Dirty Blonde", color: "#B8860B" },
   { name: "Blonde", color: "#C4A35A" },
-  { name: "Red", color: "#D94000" },
+  { name: "Light Blonde", color: "#E8D5B7" },
+  { name: "Ginger", color: "#D94000" },
+  { name: "Red", color: "#C1272D" },
   { name: "Grey", color: "#94A3B8" },
-  { name: "Blue", color: "#2C6ECB" },
-  { name: "Pink", color: "#FF6B9D" },
   { name: "White", color: "#E8E8E8" },
+  { name: "Silver", color: "#B8C5D6" },
+  { name: "Blue", color: "#2C6ECB" },
+  { name: "Purple", color: "#8B5CF6" },
+  { name: "Pink", color: "#FF6B9D" },
+  { name: "Green", color: "#29845A" },
 ];
 
-// ── Outfit Colors ──
 export const OUTFIT_COLORS = [
   { name: "Red", color: "#D50000" },
-  { name: "Blue", color: "#2979FF" },
-  { name: "Green", color: "#29845A" },
-  { name: "Yellow", color: "#FFC42A" },
-  { name: "Purple", color: "#8B5CF6" },
+  { name: "Dark Red", color: "#850000" },
   { name: "Orange", color: "#E8963A" },
-  { name: "Navy", color: "#1E3A5F" },
-  { name: "Black", color: "#1A1A2E" },
-  { name: "White", color: "#F0F0F0" },
+  { name: "Yellow", color: "#FFC42A" },
+  { name: "Lime", color: "#A4DD00" },
+  { name: "Green", color: "#29845A" },
+  { name: "Teal", color: "#14B8A6" },
+  { name: "Cyan", color: "#06B6D4" },
+  { name: "Blue", color: "#2979FF" },
+  { name: "Dark Blue", color: "#1E3A5F" },
+  { name: "Navy", color: "#0F1E3C" },
+  { name: "Purple", color: "#8B5CF6" },
+  { name: "Magenta", color: "#EC4899" },
   { name: "Pink", color: "#FF6B9D" },
+  { name: "Brown", color: "#8B4513" },
+  { name: "Beige", color: "#D4B896" },
+  { name: "White", color: "#F0F0F0" },
+  { name: "Grey", color: "#94A3B8" },
+  { name: "Dark Grey", color: "#4A5568" },
+  { name: "Black", color: "#1A1A2E" },
 ];
 
 // ══════════════════════════════════════════════════════
-// HEAD SHAPES — use the exact hero/crofly outline shape
+// HAIR STYLES — modify which hair pixels are drawn
 // ══════════════════════════════════════════════════════
 
-function drawStandardHeadOutline(d: PixelMap) {
-  // Top
-  d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
-  d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK); d.set("20,6", BLK);
-  d.set("11,7", BLK); d.set("21,7", BLK);
-  d.set("11,8", BLK); d.set("21,8", BLK);
-  // Left side
-  d.set("11,9", BLK); d.set("11,10", BLK);
-  d.set("11,11", BLK); d.set("11,12", BLK); d.set("11,13", BLK);
-  d.set("10,14", BLK); d.set("10,15", BLK);
-  d.set("11,16", BLK); d.set("11,17", BLK);
-  d.set("12,18", BLK);
-  // Right side
-  d.set("22,9", BLK); d.set("22,10", BLK);
-  d.set("22,11", BLK); d.set("22,12", BLK); d.set("22,13", BLK);
-  d.set("22,14", BLK); d.set("22,15", BLK); d.set("22,16", BLK); d.set("22,17", BLK);
-  d.set("21,18", BLK);
-}
-
-function fillFace(d: PixelMap, skin: string) {
-  for (let y = 7; y <= 18; y++)
-    for (let x = 12; x <= 21; x++)
-      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
-  for (let x = 13; x <= 19; x++) if (!d.has(`${x},6`)) d.set(`${x},6`, skin);
-}
-
-export const HEAD_PARTS = [
+export const HAIR_STYLES = [
   {
-    name: "Standard",
-    icon: "🟢",
-    build: (skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawStandardHeadOutline(d);
-      fillFace(d, skin);
-      return d;
-    },
-  },
-  {
-    name: "Round",
-    icon: "⚪",
-    build: (skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      // Slightly rounder top
-      d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
-      d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK);
-      d.set("11,7", BLK); d.set("20,7", BLK);
-      d.set("11,8", BLK); d.set("20,8", BLK);
-      for (let y = 9; y <= 17; y++) { d.set(`11,${y}`, BLK); d.set(`20,${y}`, BLK); }
-      d.set("12,18", BLK); d.set("19,18", BLK);
-      for (let y = 7; y <= 18; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
-      for (let x = 13; x <= 18; x++) if (!d.has(`${x},6`)) d.set(`${x},6`, skin);
-      return d;
-    },
-  },
-  {
-    name: "Square",
-    icon: "🟧",
-    build: (skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 12; x <= 20; x++) d.set(`${x},6`, BLK);
-      for (let y = 7; y <= 17; y++) { d.set(`11,${y}`, BLK); d.set(`21,${y}`, BLK); }
-      for (let x = 12; x <= 20; x++) d.set(`${x},18`, BLK);
-      for (let y = 7; y <= 17; y++)
-        for (let x = 12; x <= 20; x++)
-          d.set(`${x},${y}`, skin);
-      return d;
-    },
-  },
-];
-
-// ══════════════════════════════════════════════════════
-// HAIR STYLES
-// ══════════════════════════════════════════════════════
-
-export const HAIR_PARTS = [
-  {
-    name: "Short",
+    name: "Crofly",
     icon: "💇",
-    build: (hair: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
-      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
-      return d;
-    },
+    description: "With top-left puff",
+    getHairPixels: (): Coord[] => CROFLY_HAIR,
   },
   {
-    name: "Messy",
-    icon: "🌊",
-    build: (hair: string): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("13,5", hair); d.set("17,5", hair); d.set("19,5", hair);
-      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
-      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
-      d.set("12,9", hair); d.set("20,9", hair);
-      return d;
+    name: "Hero",
+    icon: "👦",
+    description: "Clean cropped",
+    getHairPixels: (): Coord[] => CROFLY_HAIR.filter(([x,y]) => !HAIR_PUFF.some(([px,py]) => px === x && py === y)),
+  },
+  {
+    name: "Spiky",
+    icon: "🦔",
+    description: "Spikes on top",
+    getHairPixels: (): Coord[] => {
+      const base = CROFLY_HAIR.filter(([x,y]) => !HAIR_PUFF.some(([px,py]) => px === x && py === y));
+      return [...base, [14,5] as Coord, [16,5] as Coord, [18,5] as Coord, [13,6] as Coord, [15,6] as Coord, [17,6] as Coord];
     },
   },
   {
     name: "Long",
     icon: "👩",
-    build: (hair: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 13; x <= 19; x++) d.set(`${x},6`, hair);
-      for (let x = 12; x <= 20; x++) { d.set(`${x},7`, hair); d.set(`${x},8`, hair); }
-      d.set("12,9", hair); d.set("20,9", hair);
-      d.set("12,10", hair); d.set("21,10", hair);
-      d.set("12,11", hair); d.set("21,11", hair);
-      d.set("12,12", hair); d.set("21,12", hair);
-      return d;
-    },
-  },
-  {
-    name: "Side Hair",
-    icon: "💁",
-    build: (hair: string): PixelMap => {
-      // Crofly-style: tall puff on top-left + hair on top
-      const d: PixelMap = new Map();
-      d.set("7,5", hair); d.set("8,5", hair); d.set("9,5", hair); d.set("10,5", hair);
-      d.set("7,6", hair); d.set("10,6", hair);
-      d.set("7,7", hair); d.set("8,7", hair); d.set("9,7", hair);
-      for (let x = 13; x <= 18; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
-      for (let x = 12; x <= 14; x++) d.set(`${x},9`, hair);
-      d.set("12,10", hair); d.set("13,10", hair); d.set("14,10", hair);
-      return d;
-    },
-  },
-  {
-    name: "Mohawk",
-    icon: "🦔",
-    build: (hair: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let y = 3; y <= 5; y++) { d.set(`15,${y}`, hair); d.set(`16,${y}`, hair); }
-      for (let x = 14; x <= 17; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
-      return d;
-    },
-  },
-  {
-    name: "Curly",
-    icon: "🌀",
-    build: (hair: string): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("12,5", hair); d.set("14,5", hair); d.set("16,5", hair); d.set("18,5", hair); d.set("20,5", hair);
-      for (let x = 11; x <= 21; x++) { d.set(`${x},6`, hair); d.set(`${x},7`, hair); }
-      for (let x = 12; x <= 20; x++) d.set(`${x},8`, hair);
-      return d;
+    description: "Flowing sides",
+    getHairPixels: (): Coord[] => {
+      const base = CROFLY_HAIR.filter(([x,y]) => !HAIR_PUFF.some(([px,py]) => px === x && py === y));
+      return [...base, [11,11] as Coord, [11,12] as Coord, [11,13] as Coord];
     },
   },
   {
     name: "Bald",
     icon: "🥚",
-    build: (_hair: string): PixelMap => new Map(),
+    description: "No hair",
+    getHairPixels: (): Coord[] => [],
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// EYE STYLES (2x2 blocks on face — positions match hero/crofly)
+// EYE STYLES — override default eye pixels
 // ══════════════════════════════════════════════════════
 
-export const EYE_PARTS = [
+export const EYE_STYLES = [
   {
-    name: "Normal",
+    name: "Default",
     icon: "👀",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,11", BLK); d.set("15,11", BLK);
-      d.set("14,12", BLK); d.set("15,12", BLK);
-      d.set("17,11", BLK); d.set("18,11", BLK);
-      d.set("17,12", BLK); d.set("18,12", BLK);
-      return d;
-    },
+    getEyePixels: (): Coord[] => CROFLY_EYES,
   },
   {
     name: "Wide",
     icon: "😳",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let y = 10; y <= 12; y++) {
-        d.set(`14,${y}`, BLK); d.set(`15,${y}`, BLK);
-        d.set(`17,${y}`, BLK); d.set(`18,${y}`, BLK);
-      }
-      return d;
-    },
+    getEyePixels: (): Coord[] => [[15,13],[16,13],[18,13],[19,13],[15,14],[16,14],[18,14],[19,14]],
   },
   {
     name: "Sleepy",
     icon: "😑",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("13,12", BLK); d.set("14,12", BLK); d.set("15,12", BLK);
-      d.set("17,12", BLK); d.set("18,12", BLK); d.set("19,12", BLK);
-      return d;
-    },
+    getEyePixels: (): Coord[] => [[15,14],[16,14],[18,14],[19,14]],
   },
   {
     name: "Angry",
     icon: "😠",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("13,10", BLK); d.set("14,11", BLK); d.set("15,12", BLK);
-      d.set("19,10", BLK); d.set("18,11", BLK); d.set("17,12", BLK);
-      return d;
-    },
+    getEyePixels: (): Coord[] => [[15,13],[17,13],[16,14],[18,14]],
   },
   {
-    name: "Glasses",
-    icon: "🤓",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      // Left frame
-      d.set("13,10", BLK); d.set("14,10", BLK); d.set("15,10", BLK); d.set("16,10", BLK);
-      d.set("13,11", BLK); d.set("16,11", BLK);
-      d.set("13,12", BLK); d.set("14,12", BLK); d.set("15,12", BLK); d.set("16,12", BLK);
-      // Right frame
-      d.set("17,10", BLK); d.set("18,10", BLK); d.set("19,10", BLK); d.set("20,10", BLK);
-      d.set("17,11", BLK); d.set("20,11", BLK);
-      d.set("17,12", BLK); d.set("18,12", BLK); d.set("19,12", BLK); d.set("20,12", BLK);
-      return d;
-    },
-  },
-  {
-    name: "Sunglasses",
+    name: "Shades",
     icon: "😎",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 13; x <= 16; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
-      for (let x = 17; x <= 20; x++) { d.set(`${x},10`, BLK); d.set(`${x},11`, BLK); }
-      return d;
-    },
+    getEyePixels: (): Coord[] => [[14,13],[15,13],[16,13],[17,13],[18,13],[19,13],[14,14],[15,14],[18,14],[19,14]],
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// MOUTH STYLES (matches 2-pixel mouth from hero/crofly)
+// MOUTH STYLES
 // ══════════════════════════════════════════════════════
 
-export const MOUTH_PARTS = [
+export const MOUTH_STYLES = [
   {
     name: "Neutral",
     icon: "😐",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("15,15", BLK); d.set("16,15", BLK);
-      return d;
-    },
+    getMouthPixels: (): Coord[] => CROFLY_MOUTH,
   },
   {
     name: "Smile",
     icon: "😊",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,15", BLK); d.set("17,15", BLK);
-      d.set("15,16", BLK); d.set("16,16", BLK);
-      return d;
-    },
+    getMouthPixels: (): Coord[] => [[15,17],[16,17],[17,17],[18,17]],
+  },
+  {
+    name: "Wide Grin",
+    icon: "😁",
+    getMouthPixels: (): Coord[] => [[14,17],[15,17],[16,17],[17,17],[18,17],[19,17]],
+  },
+  {
+    name: "Small",
+    icon: "🙂",
+    getMouthPixels: (): Coord[] => [[16,17]],
   },
   {
     name: "Open",
     icon: "😮",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("15,15", BLK); d.set("16,15", BLK);
-      d.set("15,16", BLK); d.set("16,16", BLK);
-      return d;
-    },
-  },
-  {
-    name: "Grin",
-    icon: "😁",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 14; x <= 17; x++) d.set(`${x},15`, BLK);
-      return d;
-    },
+    getMouthPixels: (): Coord[] => [[16,17],[17,17],[16,18],[17,18]],
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// BODY OUTLINES
+// ACCESSORIES — overlay pixels on top
 // ══════════════════════════════════════════════════════
 
-function drawBodyOutlineNoCape(d: PixelMap) {
-  d.set("10,19", BLK); d.set("11,19", BLK);
-  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
-  d.set("12,18", BLK); d.set("21,18", BLK);
-  // Symmetric left arm
-  d.set("10,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
-  d.set("9,21", BLK); d.set("11,21", BLK);
-  d.set("9,22", BLK); d.set("11,22", BLK);
-  d.set("9,23", BLK); d.set("11,23", BLK);
-  d.set("9,24", BLK); d.set("11,24", BLK);
-  d.set("9,25", BLK); d.set("10,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
-  d.set("11,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
-  d.set("11,27", BLK); d.set("13,27", BLK);
-  // Right arm
-  d.set("20,20", BLK); d.set("21,20", BLK);
-  d.set("22,21", BLK);
-  d.set("20,22", BLK); d.set("22,22", BLK);
-  d.set("20,23", BLK); d.set("22,23", BLK);
-  d.set("20,24", BLK); d.set("22,24", BLK);
-  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
-  d.set("20,26", BLK);
-  d.set("20,27", BLK);
-  // Legs
-  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
-  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
-  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
-}
-
-function drawBodyOutlineWithCape(d: PixelMap) {
-  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
-  d.set("12,18", BLK); d.set("21,18", BLK);
-  d.set("10,19", BLK); d.set("11,19", BLK);
-  d.set("9,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
-  d.set("8,21", BLK); d.set("11,21", BLK);
-  d.set("7,22", BLK); d.set("8,22", BLK); d.set("11,22", BLK);
-  d.set("7,23", BLK); d.set("11,23", BLK);
-  d.set("6,24", BLK); d.set("11,24", BLK);
-  d.set("6,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
-  d.set("5,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
-  for (let x = 5; x <= 11; x++) d.set(`${x},27`, BLK);
-  d.set("13,27", BLK);
-  d.set("20,20", BLK); d.set("21,20", BLK);
-  d.set("22,21", BLK);
-  d.set("20,22", BLK); d.set("22,22", BLK);
-  d.set("20,23", BLK); d.set("22,23", BLK);
-  d.set("20,24", BLK); d.set("22,24", BLK);
-  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
-  d.set("20,26", BLK);
-  d.set("20,27", BLK);
-  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
-  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
-  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
-}
-
-// ══════════════════════════════════════════════════════
-// BODY STYLES (torso + arms — always uses no-cape outline)
-// ══════════════════════════════════════════════════════
-
-function fillTorsoAndArms(d: PixelMap, outfit: string, skin: string) {
-  // Torso fill
-  for (let y = 20; y <= 24; y++)
-    for (let x = 12; x <= 19; x++)
-      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-  // Left arm fill
-  d.set("10,21", outfit); d.set("10,22", outfit); d.set("10,23", outfit); d.set("10,24", outfit);
-  // Right arm fill
-  d.set("21,21", outfit); d.set("21,22", outfit); d.set("21,23", outfit);
-  // Hands
-  d.set("12,24", skin); d.set("21,24", skin);
-}
-
-export const BODY_PARTS = [
-  {
-    name: "T-Shirt",
-    icon: "👕",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawBodyOutlineNoCape(d);
-      fillTorsoAndArms(d, outfit, skin);
-      return d;
-    },
-  },
-  {
-    name: "Armor",
-    icon: "🛡️",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawBodyOutlineNoCape(d);
-      const grey = "#94A3B8";
-      for (let y = 20; y <= 24; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, grey);
-      d.set("10,21", grey); d.set("10,22", grey); d.set("10,23", grey); d.set("10,24", grey);
-      d.set("21,21", grey); d.set("21,22", grey); d.set("21,23", grey);
-      // Emblem center
-      d.set("15,22", outfit); d.set("16,22", outfit);
-      d.set("15,23", outfit); d.set("16,23", outfit);
-      d.set("12,24", skin); d.set("21,24", skin);
-      return d;
-    },
-  },
-  {
-    name: "Suit",
-    icon: "🤵",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawBodyOutlineNoCape(d);
-      fillTorsoAndArms(d, outfit, skin);
-      // White shirt
-      d.set("15,20", "#FFFFFF"); d.set("16,20", "#FFFFFF");
-      d.set("15,21", "#FFFFFF"); d.set("16,21", "#FFFFFF");
-      // Tie
-      d.set("15,22", "#D50000"); d.set("16,22", "#D50000");
-      return d;
-    },
-  },
-  {
-    name: "Robe",
-    icon: "🥋",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawBodyOutlineNoCape(d);
-      fillTorsoAndArms(d, outfit, skin);
-      // Belt
-      for (let x = 12; x <= 19; x++) d.set(`${x},23`, "#8B4513");
-      d.set("10,23", "#8B4513"); d.set("21,23", "#8B4513");
-      return d;
-    },
-  },
-  {
-    name: "Cape Hero",
-    icon: "🦸",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      drawBodyOutlineWithCape(d);
-      // Torso
-      for (let y = 20; y <= 24; y++)
-        for (let x = 12; x <= 19; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, outfit);
-      // Cape fill (left side)
-      for (let y = 20; y <= 26; y++)
-        for (let x = 6; x <= 10; x++)
-          if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, "#D50000");
-      // Right arm
-      d.set("21,21", outfit); d.set("21,22", outfit); d.set("21,23", outfit);
-      // Emblem star
-      d.set("15,21", "#FFC42A"); d.set("16,21", "#FFC42A");
-      d.set("12,24", skin); d.set("21,24", skin);
-      return d;
-    },
-  },
-];
-
-// ══════════════════════════════════════════════════════
-// LEG STYLES
-// ══════════════════════════════════════════════════════
-
-export const LEG_PARTS = [
-  {
-    name: "Pants",
-    icon: "👖",
-    build: (outfit: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let y = 25; y <= 26; y++)
-        for (let x = 14; x <= 19; x++)
-          d.set(`${x},${y}`, outfit);
-      for (let x = 14; x <= 15; x++) { d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
-      for (let x = 18; x <= 19; x++) { d.set(`${x},27`, outfit); d.set(`${x},28`, outfit); }
-      return d;
-    },
-  },
-  {
-    name: "Shorts",
-    icon: "🩳",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let y = 25; y <= 26; y++)
-        for (let x = 14; x <= 19; x++)
-          d.set(`${x},${y}`, outfit);
-      for (let x = 14; x <= 15; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
-      for (let x = 18; x <= 19; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
-      return d;
-    },
-  },
-  {
-    name: "Skirt",
-    icon: "👗",
-    build: (outfit: string, skin: string): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let y = 25; y <= 26; y++)
-        for (let x = 13; x <= 20; x++)
-          d.set(`${x},${y}`, outfit);
-      for (let x = 14; x <= 15; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
-      for (let x = 18; x <= 19; x++) { d.set(`${x},27`, skin); d.set(`${x},28`, skin); }
-      return d;
-    },
-  },
-];
-
-// ══════════════════════════════════════════════════════
-// SHOE STYLES
-// ══════════════════════════════════════════════════════
-
-export const SHOE_PARTS = [
-  {
-    name: "Dark",
-    icon: "🥾",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,29", "#4A3728"); d.set("15,29", "#4A3728");
-      d.set("18,29", "#4A3728"); d.set("19,29", "#4A3728");
-      return d;
-    },
-  },
-  {
-    name: "White",
-    icon: "👟",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,29", "#FFFFFF"); d.set("15,29", "#FFFFFF");
-      d.set("18,29", "#FFFFFF"); d.set("19,29", "#FFFFFF");
-      return d;
-    },
-  },
-  {
-    name: "Red",
-    icon: "🟥",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,29", "#D50000"); d.set("15,29", "#D50000");
-      d.set("18,29", "#D50000"); d.set("19,29", "#D50000");
-      return d;
-    },
-  },
-  {
-    name: "Gold",
-    icon: "✨",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("14,29", "#FFC42A"); d.set("15,29", "#FFC42A");
-      d.set("18,29", "#FFC42A"); d.set("19,29", "#FFC42A");
-      return d;
-    },
-  },
-];
-
-// ══════════════════════════════════════════════════════
-// ACCESSORIES
-// ══════════════════════════════════════════════════════
-
-export const ACCESSORY_PARTS = [
+export const ACCESSORIES = [
   {
     name: "None",
     icon: "❌",
-    build: (): PixelMap => new Map(),
+    overlay: (): PixelMap => new Map(),
   },
   {
     name: "Crown",
     icon: "👑",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      d.set("13,4", "#FFC42A"); d.set("15,4", "#FFC42A"); d.set("17,4", "#FFC42A"); d.set("19,4", "#FFC42A");
-      for (let x = 13; x <= 19; x++) d.set(`${x},5`, "#FFC42A");
+    overlay: (): PixelMap => {
+      const d = new Map<string, string>();
+      const gold = "#FFC42A";
+      d.set("13,4", gold); d.set("15,4", gold); d.set("17,4", gold); d.set("19,4", gold);
+      for (let x = 13; x <= 19; x++) d.set(`${x},5`, gold);
       return d;
     },
   },
   {
     name: "Halo",
     icon: "😇",
-    build: (): PixelMap => {
-      const d: PixelMap = new Map();
-      for (let x = 13; x <= 18; x++) d.set(`${x},3`, "#FFC42A");
-      d.set("12,4", "#FFC42A"); d.set("19,4", "#FFC42A");
+    overlay: (): PixelMap => {
+      const d = new Map<string, string>();
+      for (let x = 13; x <= 19; x++) d.set(`${x},3`, "#FFC42A");
+      d.set("12,4", "#FFC42A"); d.set("20,4", "#FFC42A");
+      return d;
+    },
+  },
+  {
+    name: "Horns",
+    icon: "😈",
+    overlay: (): PixelMap => {
+      const d = new Map<string, string>();
+      d.set("12,3", BLK); d.set("12,4", BLK);
+      d.set("20,3", BLK); d.set("20,4", BLK);
       return d;
     },
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// COMPOSITE FUNCTION — layers all parts correctly
+// CAPE COLORS (sets left region independently from top)
 // ══════════════════════════════════════════════════════
 
-export function compositeCharacter(
-  skinColor: string,
-  hairColor: string,
-  outfitColor: string,
-  headIdx: number,
-  hairIdx: number,
-  eyeIdx: number,
-  mouthIdx: number,
-  bodyIdx: number,
-  legIdx: number,
-  shoeIdx: number,
-  accessoryIdx: number,
-): PixelMap {
-  const result: PixelMap = new Map();
+export const CAPE_OPTIONS = [
+  { name: "None", color: null as string | null },
+  { name: "Red", color: "#D50000" },
+  { name: "Blue", color: "#2979FF" },
+  { name: "Green", color: "#29845A" },
+  { name: "Purple", color: "#8B5CF6" },
+  { name: "Yellow", color: "#FFC42A" },
+  { name: "Black", color: "#1A1A2E" },
+  { name: "White", color: "#F0F0F0" },
+];
 
-  const layers = [
-    BODY_PARTS[bodyIdx]?.build(outfitColor, skinColor),
-    LEG_PARTS[legIdx]?.build(outfitColor, skinColor),
-    SHOE_PARTS[shoeIdx]?.build(),
-    HEAD_PARTS[headIdx]?.build(skinColor),
-    HAIR_PARTS[hairIdx]?.build(hairColor),
-    EYE_PARTS[eyeIdx]?.build(),
-    MOUTH_PARTS[mouthIdx]?.build(),
-    ACCESSORY_PARTS[accessoryIdx]?.build(),
-  ];
+// ══════════════════════════════════════════════════════
+// COMPOSITE — builds the full character from all options
+// ══════════════════════════════════════════════════════
 
-  layers.forEach((layer) => {
-    if (!layer) return;
-    layer.forEach((color, key) => result.set(key, color));
+export function compositeCharacter(opts: {
+  skin: string;
+  hair: string;
+  top: string;
+  accent: string;
+  capeColor: string | null;
+  hairStyleIdx: number;
+  eyeStyleIdx: number;
+  mouthStyleIdx: number;
+  accessoryIdx: number;
+}): PixelMap {
+  const d: PixelMap = new Map();
+
+  // 1. Black outline (always)
+  CROFLY_OUTLINE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+
+  // 2. Skin fill
+  CROFLY_SKIN.forEach(([x, y]) => d.set(`${x},${y}`, opts.skin));
+
+  // 3. Top (shirt/torso)
+  CROFLY_TOP.forEach(([x, y]) => d.set(`${x},${y}`, opts.top));
+
+  // 4. Left region (cape or sleeve — same color as top if no cape)
+  const leftColor = opts.capeColor || opts.top;
+  CROFLY_LEFT.forEach(([x, y]) => d.set(`${x},${y}`, leftColor));
+  CROFLY_LEFT_SHADOW.forEach(([x, y]) => d.set(`${x},${y}`, darken(leftColor, 40)));
+  CROFLY_LEFT_HIGHLIGHT.forEach(([x, y]) => d.set(`${x},${y}`, lighten(leftColor, 10)));
+
+  // 5. Accent (belt, boots)
+  CROFLY_ACCENT.forEach(([x, y]) => d.set(`${x},${y}`, opts.accent));
+
+  // 6. Hair (based on style)
+  const hairStyle = HAIR_STYLES[opts.hairStyleIdx] || HAIR_STYLES[0];
+  const hairPixels = hairStyle.getHairPixels();
+  hairPixels.forEach(([x, y]) => d.set(`${x},${y}`, opts.hair));
+
+  // 7. Eyes (override default — clear Crofly eyes first, then set new)
+  CROFLY_EYES.forEach(([x, y]) => {
+    // Only clear if inside face (skin color) — avoid erasing outline
+    const key = `${x},${y}`;
+    if (d.get(key) === BLK) d.delete(key);
+  });
+  const eyeStyle = EYE_STYLES[opts.eyeStyleIdx] || EYE_STYLES[0];
+  eyeStyle.getEyePixels().forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+  // Restore skin pixels for any cleared eye positions that aren't in new style
+  CROFLY_SKIN.forEach(([x, y]) => {
+    if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, opts.skin);
   });
 
-  return result;
+  // 8. Mouth
+  CROFLY_MOUTH.forEach(([x, y]) => {
+    if (d.get(`${x},${y}`) === BLK) d.delete(`${x},${y}`);
+  });
+  const mouthStyle = MOUTH_STYLES[opts.mouthStyleIdx] || MOUTH_STYLES[0];
+  mouthStyle.getMouthPixels().forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+  // Restore skin
+  CROFLY_SKIN.forEach(([x, y]) => {
+    if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, opts.skin);
+  });
+
+  // 9. Accessories (overlay on top)
+  const accessory = ACCESSORIES[opts.accessoryIdx] || ACCESSORIES[0];
+  const overlay = accessory.overlay();
+  overlay.forEach((color, key) => d.set(key, color));
+
+  return d;
 }
