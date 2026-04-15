@@ -26,28 +26,25 @@ const PALETTE = [
 ];
 
 const PREMADE_AVATARS = [
-  // Each is a 32x32 pixel art stored as a sparse map: "x,y" -> color
-  // Generated programmatically as simple RPG-style characters
-  { name: "Knight", data: generateKnight() },
-  { name: "Mage", data: generateMage() },
-  { name: "Archer", data: generateArcher() },
-  { name: "Merchant", data: generateMerchant() },
-  { name: "Healer", data: generateHealer() },
-  { name: "Rogue", data: generateRogue() },
-  { name: "Viking", data: generateViking() },
-  { name: "Ninja", data: generateNinja() },
-  { name: "Pirate", data: generatePirate() },
-  { name: "Wizard", data: generateWizard() },
-  { name: "Warrior", data: generateWarrior() },
-  { name: "Bard", data: generateBard() },
-  { name: "Hero", data: generateHeroOutline() },
-  { name: "Super", data: generateSuperman() },
-  { name: "Casual", data: generateCasualGuy() },
-  { name: "Executive", data: generateBusinessMan() },
-  { name: "Chill", data: generateCasualDude() },
-  { name: "Medic", data: generateMedicHero() },
-  { name: "Student", data: generateBlueShirtGuy() },
-  { name: "Elder", data: generateElderMonk() },
+  { name: "Hero", data: generateNewHero() },
+  { name: "Crofly", data: generateNewCrofly() },
+  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", hairStyle: "short", top: "#94A3B8", bottom: "#4A3728", accent: "#FFD700" }) },
+  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8D5B7", hairStyle: "short", top: "#8B5CF6", bottom: "#4A3728", accent: "#FFD700" }) },
+  { name: "Ranger", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B6914", hairStyle: "messy", top: "#29845A", bottom: "#4A3728", accent: "#C4A35A" }) },
+  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "long", top: "#FFFFFF", bottom: "#F0F0F0", accent: "#DC143C" }) },
+  { name: "Rogue", data: generateOutlinedCharacter({ skin: "#C8956C", hair: "#1A1A2E", hairStyle: "short", top: "#1A1A2E", bottom: "#1A1A2E", accent: "#4A3728" }) },
+  { name: "Viking", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#B8860B", hairStyle: "messy", top: "#8B4513", bottom: "#4A3728", accent: "#94A3B8" }) },
+  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", hairStyle: "short", top: "#DC143C", bottom: "#1A1A2E", accent: "#FFD700" }) },
+  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", hairStyle: "long", top: "#2C6ECB", bottom: "#2C6ECB", accent: "#FFD700" }) },
+  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", hairStyle: "short", top: "#DC143C", bottom: "#4A3728", accent: "#94A3B8" }) },
+  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", hairStyle: "messy", top: "#29845A", bottom: "#8B4513", accent: "#FFD700" }) },
+  { name: "Executive", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#3D2314", hairStyle: "short", top: "#1E3A5F", bottom: "#1A1A2E", accent: "#FFFFFF" }) },
+  { name: "Casual", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", hairStyle: "messy", top: "#5B9BD5", bottom: "#8B6914", accent: "#FFFFFF" }) },
+  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", hairStyle: "short", top: "#FFC42A", bottom: "#2C6ECB", accent: "#DC143C" }) },
+  { name: "Student", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", hairStyle: "short", top: "#5B9BD5", bottom: "#B0BEC5", accent: "#FFFFFF" }) },
+  { name: "Elder", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#94A3B8", hairStyle: "short", top: "#F5F5F5", bottom: "#F5F5F5", accent: "#8B4513" }) },
+  { name: "Chill", data: generateOutlinedCharacter({ skin: "#FFDBB4", hair: "#5C2E00", hairStyle: "messy", top: "#E8963A", bottom: "#5B6BC0", accent: "#FFC42A" }) },
+  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", hairStyle: "short", top: "#2C6ECB", bottom: "#DC143C", accent: "#FFD700" }) },
 ];
 
 // Simple character generator helpers
@@ -59,539 +56,793 @@ function drawRect(data: Map<string, string>, x: number, y: number, w: number, h:
   }
 }
 
-function generateCharacter(skinColor: string, hairColor: string, shirtColor: string, pantsColor: string, extras?: (data: Map<string, string>) => void): Map<string, string> {
-  const d = new Map<string, string>();
-  // Hair (top of head)
-  drawRect(d, 12, 4, 8, 3, hairColor);
-  drawRect(d, 11, 5, 10, 2, hairColor);
-  // Head
-  drawRect(d, 12, 7, 8, 7, skinColor);
-  // Eyes
-  d.set("14,10", "#1A1A2E"); d.set("15,10", "#1A1A2E");
-  d.set("17,10", "#1A1A2E"); d.set("18,10", "#1A1A2E");
-  // Mouth
-  d.set("15,12", "#C8956C"); d.set("16,12", "#C8956C");
-  // Neck
-  drawRect(d, 14, 14, 4, 1, skinColor);
-  // Body/shirt
-  drawRect(d, 10, 15, 12, 7, shirtColor);
-  // Arms
-  drawRect(d, 8, 15, 2, 6, shirtColor);
-  drawRect(d, 22, 15, 2, 6, shirtColor);
-  // Hands
-  drawRect(d, 8, 21, 2, 2, skinColor);
-  drawRect(d, 22, 21, 2, 2, skinColor);
-  // Pants
-  drawRect(d, 11, 22, 4, 5, pantsColor);
-  drawRect(d, 17, 22, 4, 5, pantsColor);
-  // Shoes
-  drawRect(d, 10, 27, 5, 2, "#2C1810");
-  drawRect(d, 17, 27, 5, 2, "#2C1810");
-  if (extras) extras(d);
-  return d;
-}
+// ══════════════════════════════════════════════════════
+// OUTLINED CHARACTER SYSTEM
+// Matches the chunky black-outlined pixel art style of newhero / newcrofly
+// Shared body template: arms extend out with hands, two legs with gap
+// ══════════════════════════════════════════════════════
 
-function generateKnight(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#4A3728", "#94A3B8", "#1A1A2E", (d) => {
-    // Helmet visor
-    drawRect(d, 11, 4, 10, 2, "#94A3B8");
-    drawRect(d, 13, 6, 6, 1, "#94A3B8");
-    // Shield
-    drawRect(d, 5, 16, 3, 5, "#2C6ECB");
-    drawRect(d, 6, 17, 1, 3, "#FFD700");
-    // Sword
-    drawRect(d, 24, 14, 1, 8, "#C0C0C0");
-    drawRect(d, 23, 13, 3, 1, "#FFD700");
-  });
-}
+const BLK = "#000000";
 
-function generateMage(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#E8D5B7", "#8B5CF6", "#4A3728", (d) => {
-    // Wizard hat
-    drawRect(d, 13, 1, 6, 1, "#8B5CF6");
-    drawRect(d, 14, 2, 4, 1, "#8B5CF6");
-    drawRect(d, 15, 3, 2, 1, "#8B5CF6");
-    drawRect(d, 10, 4, 12, 2, "#8B5CF6");
-    // Star on hat
-    d.set("16,2", "#FFD700");
-    // Staff
-    drawRect(d, 25, 10, 1, 14, "#8B4513");
-    drawRect(d, 24, 9, 3, 2, "#8B5CF6");
-    d.set("25,8", "#FFD700");
-  });
-}
-
-function generateArcher(): Map<string, string> {
-  return generateCharacter("#E8B887", "#8B6914", "#29845A", "#4A3728", (d) => {
-    // Hood
-    drawRect(d, 11, 3, 10, 3, "#29845A");
-    // Bow
-    drawRect(d, 6, 13, 1, 10, "#8B4513");
-    d.set("5,15", "#8B4513"); d.set("5,21", "#8B4513");
-    // Arrow
-    drawRect(d, 7, 17, 4, 1, "#8B4513");
-    d.set("7,17", "#C0C0C0");
-    // Quiver
-    drawRect(d, 23, 15, 2, 5, "#8B4513");
-  });
-}
-
-function generateMerchant(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#C4A35A", "#DC143C", "#2C1810", (d) => {
-    // Top hat
-    drawRect(d, 12, 1, 8, 3, "#1A1A2E");
-    drawRect(d, 10, 4, 12, 1, "#1A1A2E");
-    // Gold coins
-    d.set("6,19", "#FFD700"); d.set("7,18", "#FFD700");
-    d.set("25,19", "#FFD700"); d.set("24,18", "#FFD700");
-    // Bowtie
-    drawRect(d, 14, 15, 4, 1, "#FFD700");
-  });
-}
-
-function generateHealer(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#D94000", "#FFFFFF", "#29845A", (d) => {
-    // Cross on shirt
-    drawRect(d, 15, 16, 2, 5, "#DC143C");
-    drawRect(d, 13, 18, 6, 1, "#DC143C");
-    // Halo
-    drawRect(d, 13, 3, 6, 1, "#FFD700");
-    d.set("12,4", "#FFD700"); d.set("19,4", "#FFD700");
-  });
-}
-
-function generateRogue(): Map<string, string> {
-  return generateCharacter("#C8956C", "#2C1810", "#1A1A2E", "#1A1A2E", (d) => {
-    // Mask
-    drawRect(d, 12, 9, 8, 2, "#1A1A2E");
-    d.set("14,10", "#FFFFFF"); d.set("18,10", "#FFFFFF");
-    // Daggers
-    drawRect(d, 6, 18, 1, 5, "#C0C0C0");
-    drawRect(d, 25, 18, 1, 5, "#C0C0C0");
-    // Cape
-    drawRect(d, 9, 16, 1, 8, "#4A3728");
-    drawRect(d, 22, 16, 1, 8, "#4A3728");
-  });
-}
-
-function generateViking(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#B8860B", "#8B4513", "#4A3728", (d) => {
-    // Viking helmet with horns
-    drawRect(d, 11, 4, 10, 2, "#94A3B8");
-    drawRect(d, 9, 3, 2, 3, "#E8D5B7"); // left horn
-    drawRect(d, 21, 3, 2, 3, "#E8D5B7"); // right horn
-    // Beard
-    drawRect(d, 12, 13, 8, 3, "#B8860B");
-    // Axe
-    drawRect(d, 25, 13, 1, 9, "#8B4513");
-    drawRect(d, 26, 14, 2, 3, "#94A3B8");
-  });
-}
-
-function generateNinja(): Map<string, string> {
-  return generateCharacter("#E8B887", "#1A1A2E", "#1A1A2E", "#1A1A2E", (d) => {
-    // Face wrap - only eyes visible
-    drawRect(d, 12, 7, 8, 2, "#1A1A2E");
-    drawRect(d, 12, 11, 8, 3, "#1A1A2E");
-    d.set("14,10", "#E8B887"); d.set("18,10", "#E8B887");
-    // Headband
-    drawRect(d, 11, 8, 10, 1, "#DC143C");
-    // Shuriken
-    d.set("6,17", "#C0C0C0"); d.set("7,16", "#C0C0C0");
-    d.set("7,18", "#C0C0C0"); d.set("8,17", "#C0C0C0");
-  });
-}
-
-function generatePirate(): Map<string, string> {
-  return generateCharacter("#E8B887", "#2C1810", "#DC143C", "#1A1A2E", (d) => {
-    // Pirate hat
-    drawRect(d, 10, 2, 12, 3, "#1A1A2E");
-    drawRect(d, 12, 1, 8, 1, "#1A1A2E");
-    // Skull on hat
-    d.set("15,3", "#FFFFFF"); d.set("16,3", "#FFFFFF");
-    // Eye patch
-    drawRect(d, 17, 9, 3, 2, "#1A1A2E");
-    // Hook hand
-    drawRect(d, 22, 21, 2, 1, "#FFD700");
-    d.set("24, 22", "#FFD700");
-  });
-}
-
-function generateWizard(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#E8D5B7", "#2C6ECB", "#2C6ECB", (d) => {
-    // Tall wizard hat
-    drawRect(d, 14, 0, 4, 1, "#2C6ECB");
-    drawRect(d, 13, 1, 6, 1, "#2C6ECB");
-    drawRect(d, 12, 2, 8, 1, "#2C6ECB");
-    drawRect(d, 11, 3, 10, 2, "#2C6ECB");
-    // Stars on robe
-    d.set("13,18", "#FFD700"); d.set("18,20", "#FFD700");
-    // Long beard
-    drawRect(d, 14, 13, 4, 4, "#E8D5B7");
-    drawRect(d, 15, 17, 2, 2, "#E8D5B7");
-    // Staff with orb
-    drawRect(d, 25, 10, 1, 14, "#8B4513");
-    drawRect(d, 24, 8, 3, 3, "#29845A");
-  });
-}
-
-function generateWarrior(): Map<string, string> {
-  return generateCharacter("#8D5524", "#2C1810", "#DC143C", "#4A3728", (d) => {
-    // Headband
-    drawRect(d, 11, 6, 10, 1, "#DC143C");
-    // Shoulder pads
-    drawRect(d, 8, 15, 2, 2, "#94A3B8");
-    drawRect(d, 22, 15, 2, 2, "#94A3B8");
-    // Sword
-    drawRect(d, 25, 12, 1, 10, "#C0C0C0");
-    drawRect(d, 24, 11, 3, 2, "#FFD700");
-    // Shield
-    drawRect(d, 5, 16, 3, 4, "#DC143C");
-    d.set("6,17", "#FFD700"); d.set("6,18", "#FFD700");
-  });
-}
-
-function generateBard(): Map<string, string> {
-  return generateCharacter("#FFDBB4", "#D94000", "#29845A", "#8B4513", (d) => {
-    // Feathered hat
-    drawRect(d, 11, 3, 10, 3, "#29845A");
-    drawRect(d, 20, 1, 2, 4, "#DC143C"); // feather
-    // Lute
-    drawRect(d, 5, 18, 3, 4, "#8B4513");
-    drawRect(d, 6, 16, 1, 2, "#8B4513");
-    drawRect(d, 8, 19, 2, 1, "#8B4513");
-    // Music notes
-    d.set("4,15", "#FFD700"); d.set("3,14", "#FFD700");
-  });
-}
-
-// ── Characters based on reference pixel art images ──
-
-function generateSuperman(): Map<string, string> {
-  const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#1A1A2E";
-  const BLUE = "#2C6ECB", YELLOW = "#F5C518", RED = "#DC143C", CAPE_DARK = "#8B4513", CAPE_MID = "#C46A3A";
-  // Hair (tall rounded)
-  drawRect(d, 12, 3, 8, 2, HAIR);
-  drawRect(d, 11, 5, 10, 2, HAIR);
-  // Head
-  drawRect(d, 11, 7, 10, 6, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("17,9", BLK); d.set("18,9", BLK);
-  // Mouth
-  drawRect(d, 14, 11, 4, 1, BLK);
-  // Outline around head
-  [10,11,12,13,14,15,16,17,18,19].forEach(x => d.set(`${x},6`, BLK));
-  d.set("10,7", BLK); d.set("21,7", BLK);
-  d.set("10,8", BLK); d.set("21,8", BLK);
-  d.set("10,13", BLK); d.set("21,13", BLK);
-  // Body - blue suit
-  drawRect(d, 10, 14, 12, 7, BLUE);
-  // Yellow belt
-  drawRect(d, 10, 20, 12, 1, YELLOW);
-  // Emblem on chest
-  drawRect(d, 14, 16, 4, 3, YELLOW);
-  d.set("15,17", RED); d.set("16,17", RED);
-  // Cape (left side flowing)
-  drawRect(d, 5, 15, 4, 2, RED);
-  drawRect(d, 4, 17, 4, 2, CAPE_MID);
-  drawRect(d, 3, 19, 4, 2, CAPE_DARK);
-  drawRect(d, 4, 21, 3, 1, CAPE_DARK);
-  // Cape right side
-  drawRect(d, 22, 14, 2, 5, RED);
-  // Arms
-  drawRect(d, 8, 14, 2, 5, SKIN);
-  drawRect(d, 22, 19, 2, 2, SKIN);
-  // Red shorts over blue
-  drawRect(d, 10, 21, 12, 1, RED);
+// Body outline (same across all characters) — arms, torso sides, legs
+function drawBodyOutline(d: Map<string, string>) {
+  // Torso top outline
+  for (let x = 13; x <= 20; x++) d.set(`${x},19`, BLK);
+  d.set("12,18", BLK); d.set("21,18", BLK);
+  d.set("10,19", BLK); d.set("11,19", BLK);
+  // Left arm outline going down
+  d.set("9,20", BLK); d.set("12,20", BLK); d.set("13,20", BLK);
+  d.set("8,21", BLK); d.set("11,21", BLK);
+  d.set("7,22", BLK); d.set("8,22", BLK); d.set("11,22", BLK);
+  d.set("7,23", BLK); d.set("11,23", BLK);
+  d.set("6,24", BLK); d.set("11,24", BLK);
+  d.set("6,25", BLK); d.set("11,25", BLK); d.set("12,25", BLK); d.set("13,25", BLK);
+  d.set("5,26", BLK); d.set("12,26", BLK); d.set("13,26", BLK);
+  for (let x = 5; x <= 11; x++) d.set(`${x},27`, BLK);
+  d.set("13,27", BLK);
+  // Right arm outline
+  d.set("20,20", BLK); d.set("21,20", BLK);
+  d.set("22,21", BLK);
+  d.set("20,22", BLK); d.set("22,22", BLK);
+  d.set("20,23", BLK); d.set("22,23", BLK);
+  d.set("20,24", BLK); d.set("22,24", BLK);
+  d.set("16,25", BLK); d.set("17,25", BLK); d.set("20,25", BLK); d.set("21,25", BLK); d.set("22,25", BLK);
+  d.set("20,26", BLK);
+  d.set("20,27", BLK);
   // Legs
-  drawRect(d, 11, 22, 4, 4, BLUE);
-  drawRect(d, 17, 22, 4, 4, BLUE);
-  // Boots
-  drawRect(d, 10, 26, 5, 2, RED);
-  drawRect(d, 17, 26, 5, 2, RED);
-  return d;
+  d.set("13,28", BLK); d.set("16,28", BLK); d.set("17,28", BLK); d.set("20,28", BLK);
+  d.set("13,29", BLK); d.set("14,29", BLK); d.set("15,29", BLK);
+  d.set("18,29", BLK); d.set("19,29", BLK); d.set("20,29", BLK);
 }
 
-function generateCasualGuy(): Map<string, string> {
-  const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513", HAIR_DARK = "#5C2E00";
-  const BLUE = "#5B9BD5", BROWN = "#8B6914";
-  // Hair
-  drawRect(d, 12, 4, 7, 2, HAIR);
-  drawRect(d, 11, 5, 9, 2, HAIR);
-  drawRect(d, 13, 3, 5, 1, HAIR);
-  // Side hair
-  d.set("11,6", HAIR_DARK); d.set("19,6", HAIR_DARK);
-  d.set("11,7", HAIR_DARK); d.set("19,7", HAIR_DARK);
-  // Head
-  drawRect(d, 12, 7, 7, 6, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("16,9", BLK); d.set("17,9", BLK);
-  // Mouth
-  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // Body - blue shirt
-  drawRect(d, 10, 14, 11, 6, BLUE);
-  // Arms
-  drawRect(d, 8, 14, 2, 5, BLUE);
-  drawRect(d, 21, 14, 2, 5, BLUE);
-  // Hands
-  drawRect(d, 8, 19, 2, 2, SKIN);
-  drawRect(d, 21, 19, 2, 2, SKIN);
-  // Pants
-  drawRect(d, 11, 20, 4, 5, BROWN);
-  drawRect(d, 16, 20, 4, 5, BROWN);
-  // Shoes
-  drawRect(d, 10, 25, 5, 2, BLK);
-  drawRect(d, 16, 25, 5, 2, BLK);
-  return d;
-}
+type CharOpts = {
+  skin: string;
+  hair: string;
+  hairStyle: "short" | "messy" | "long" | "bald";
+  top: string;   // shirt/main color
+  bottom: string; // pants/secondary color
+  accent: string; // highlight (boots, emblem, etc.)
+};
 
-function generateBusinessMan(): Map<string, string> {
+// Generate a character matching the outlined style
+function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR_SIDE = "#4A3728";
-  const NAVY = "#1E3A5F", WHITE = "#FFFFFF";
-  // Hair (short sides, headphone-like appearance)
-  drawRect(d, 11, 5, 9, 2, BLK);
-  drawRect(d, 10, 6, 1, 4, HAIR_SIDE);
-  drawRect(d, 20, 6, 1, 4, HAIR_SIDE);
-  // Head
-  drawRect(d, 11, 7, 9, 6, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("17,9", BLK); d.set("18,9", BLK);
-  // Mouth
-  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // White shirt collar/tie
-  drawRect(d, 14, 14, 3, 7, WHITE);
-  // Navy suit jacket
-  drawRect(d, 10, 14, 4, 7, NAVY);
-  drawRect(d, 17, 14, 4, 7, NAVY);
-  // Arms
-  drawRect(d, 8, 14, 2, 6, NAVY);
-  drawRect(d, 21, 14, 2, 6, NAVY);
-  // Hands
-  drawRect(d, 8, 20, 2, 2, SKIN);
-  drawRect(d, 21, 20, 2, 2, SKIN);
-  // Pants
-  drawRect(d, 11, 21, 4, 5, BLK);
-  drawRect(d, 16, 21, 4, 5, BLK);
-  // Shoes
-  drawRect(d, 10, 26, 5, 2, BLK);
-  drawRect(d, 16, 26, 5, 2, BLK);
-  return d;
-}
+  const { skin, hair, hairStyle, top, bottom, accent } = opts;
 
-function generateCasualDude(): Map<string, string> {
-  const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#FFDBB4", HAIR = "#5C2E00";
-  const ORANGE = "#E8963A", BLUE_SHORT = "#5B6BC0";
-  // Messy hair
-  drawRect(d, 12, 3, 7, 1, HAIR);
-  drawRect(d, 11, 4, 9, 3, HAIR);
-  drawRect(d, 18, 3, 3, 2, HAIR); // sticking up right
-  d.set("11,5", HAIR); d.set("20,5", HAIR);
-  // Head
-  drawRect(d, 12, 7, 7, 6, SKIN);
-  // Ears
-  d.set("11,9", SKIN); d.set("19,9", SKIN);
-  // Eyes (lighter, slightly sleepy)
-  d.set("13,9", "#94A3B8"); d.set("14,9", "#94A3B8");
-  d.set("16,9", "#94A3B8"); d.set("17,9", "#94A3B8");
-  // Mouth
-  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // Orange t-shirt
-  drawRect(d, 10, 14, 11, 6, ORANGE);
-  // Arms
-  drawRect(d, 8, 14, 2, 5, ORANGE);
-  drawRect(d, 21, 14, 2, 5, ORANGE);
-  // Hands
-  drawRect(d, 8, 19, 2, 2, SKIN);
-  drawRect(d, 21, 19, 2, 2, SKIN);
-  // Blue shorts
-  drawRect(d, 11, 20, 4, 4, BLUE_SHORT);
-  drawRect(d, 16, 20, 4, 4, BLUE_SHORT);
-  // Legs
-  drawRect(d, 11, 24, 4, 2, SKIN);
-  drawRect(d, 16, 24, 4, 2, SKIN);
-  // Shoes
-  drawRect(d, 10, 26, 5, 2, BLK);
-  drawRect(d, 16, 26, 5, 2, BLK);
-  return d;
-}
+  // ── HEAD OUTLINE (matches newhero shape) ──
+  // Top curve
+  d.set("14,5", BLK); d.set("15,5", BLK); d.set("16,5", BLK); d.set("17,5", BLK);
+  d.set("12,6", BLK); d.set("13,6", BLK); d.set("18,6", BLK); d.set("19,6", BLK);
+  d.set("11,7", BLK); d.set("20,7", BLK);
+  d.set("11,8", BLK); d.set("20,8", BLK);
+  d.set("11,9", BLK); d.set("21,9", BLK);
+  d.set("11,10", BLK); d.set("21,10", BLK);
+  d.set("11,11", BLK); d.set("21,11", BLK);
+  d.set("11,12", BLK); d.set("21,12", BLK);
+  d.set("11,13", BLK); d.set("21,13", BLK);
+  d.set("11,14", BLK); d.set("21,14", BLK);
+  d.set("11,15", BLK); d.set("21,15", BLK);
+  d.set("12,16", BLK); d.set("20,16", BLK);
+  d.set("12,17", BLK); d.set("20,17", BLK);
+  d.set("13,18", BLK); d.set("14,18", BLK); d.set("17,18", BLK); d.set("18,18", BLK); d.set("19,18", BLK);
+  // Neck outline
+  d.set("15,18", BLK); d.set("16,18", BLK);
 
-function generateMedicHero(): Map<string, string> {
-  const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513";
-  const BLUE = "#2C6ECB", YELLOW = "#F5C518", RED = "#DC143C", CAPE = "#2C6ECB";
-  // Hair
-  drawRect(d, 12, 4, 7, 2, HAIR);
-  drawRect(d, 11, 5, 9, 2, HAIR);
-  d.set("13,3", HAIR); d.set("14,3", HAIR); d.set("15,3", HAIR);
-  // Head
-  drawRect(d, 12, 7, 7, 6, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("16,9", BLK); d.set("17,9", BLK);
-  // Mouth
+  // ── FACE FILL (skin) ──
+  for (let y = 7; y <= 17; y++) {
+    for (let x = 12; x <= 20; x++) {
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, skin);
+    }
+  }
+  // Fill corner areas missed
+  d.set("12,7", skin); d.set("19,7", skin); d.set("20,7", skin);
+  d.set("12,8", skin); d.set("19,8", skin);
+
+  // ── HAIR ──
+  if (hairStyle !== "bald") {
+    // Top of head hair
+    for (let x = 14; x <= 17; x++) {
+      d.set(`${x},6`, hair);
+      d.set(`${x},7`, hair);
+    }
+    d.set("13,7", hair); d.set("18,7", hair);
+    // Forehead
+    for (let x = 12; x <= 19; x++) d.set(`${x},8`, hair);
+    d.set("11,8", BLK); // keep left outline
+    d.set("20,8", BLK); // keep right outline
+
+    if (hairStyle === "messy") {
+      // Side fringe
+      d.set("12,9", hair); d.set("19,9", hair);
+    }
+    if (hairStyle === "long") {
+      // Side hair down to cheeks
+      d.set("12,9", hair); d.set("19,9", hair);
+      d.set("12,10", hair); d.set("20,10", hair);
+      d.set("12,11", hair); d.set("20,11", hair);
+      d.set("12,12", hair); d.set("20,12", hair);
+    }
+  }
+
+  // ── EYES (2x2 blocks) ──
   d.set("14,11", BLK); d.set("15,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // Cape (left side)
-  drawRect(d, 6, 14, 3, 7, CAPE);
-  drawRect(d, 5, 16, 1, 5, CAPE);
-  // Cape right
-  drawRect(d, 22, 14, 2, 5, CAPE);
-  // Body - yellow top
-  drawRect(d, 10, 14, 11, 4, YELLOW);
-  // Blue lower body
-  drawRect(d, 10, 18, 11, 3, BLUE);
-  // Red cross emblem
-  drawRect(d, 14, 15, 3, 1, RED);
-  drawRect(d, 15, 14, 1, 3, RED);
-  // Arms
-  drawRect(d, 8, 14, 2, 5, YELLOW);
-  drawRect(d, 21, 14, 1, 5, YELLOW);
-  // Hands
-  drawRect(d, 8, 19, 2, 2, SKIN);
-  // Legs
-  drawRect(d, 11, 21, 4, 4, BLUE);
-  drawRect(d, 16, 21, 4, 4, BLUE);
-  // Boots
-  drawRect(d, 10, 25, 5, 2, RED);
-  drawRect(d, 16, 25, 5, 2, RED);
-  // Hammer/tool above right hand
-  drawRect(d, 22, 11, 2, 3, "#94A3B8");
-  drawRect(d, 21, 10, 4, 1, "#94A3B8");
+  d.set("14,12", BLK); d.set("15,12", BLK);
+  d.set("17,11", BLK); d.set("18,11", BLK);
+  d.set("17,12", BLK); d.set("18,12", BLK);
+
+  // ── MOUTH ──
+  d.set("15,15", BLK); d.set("16,15", BLK);
+
+  // ── BODY OUTLINE ──
+  drawBodyOutline(d);
+
+  // ── TORSO FILL (top color) ──
+  for (let y = 20; y <= 21; y++) {
+    for (let x = 12; x <= 19; x++) {
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
+    }
+  }
+  for (let y = 22; y <= 24; y++) {
+    for (let x = 12; x <= 19; x++) {
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
+    }
+  }
+  // Arms fill
+  for (let y = 20; y <= 26; y++) {
+    for (let x = 6; x <= 10; x++) {
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, top);
+    }
+  }
+  // Hands (skin peek at bottom of arms)
+  d.set("12,24", skin); d.set("21,24", skin);
+
+  // ── BOTTOM / LEGS FILL (bottom color) ──
+  for (let y = 25; y <= 26; y++) {
+    for (let x = 14; x <= 19; x++) {
+      if (!d.has(`${x},${y}`)) d.set(`${x},${y}`, bottom);
+    }
+  }
+  // Leg fills
+  d.set("14,27", bottom); d.set("15,27", bottom);
+  d.set("18,27", bottom); d.set("19,27", bottom);
+  d.set("14,28", bottom); d.set("15,28", bottom);
+  d.set("18,28", bottom); d.set("19,28", bottom);
+
+  // ── BOOTS (accent) ──
+  d.set("14,29", accent); d.set("15,29", accent);
+  d.set("18,29", accent); d.set("19,29", accent);
+  // Accent on belt
+  d.set("13,24", accent); d.set("20,24", accent);
+
   return d;
 }
 
-function generateBlueShirtGuy(): Map<string, string> {
+// ── Exact pre-mades from .pixil files ──
+function generateNewHero(): Map<string, string> {
   const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", HAIR = "#8B4513", HAIR_SIDE = "#5C2E00";
-  const BLUE = "#5B9BD5", GREY = "#B0BEC5";
-  // Hair
-  drawRect(d, 12, 4, 7, 2, HAIR);
-  drawRect(d, 11, 5, 9, 2, HAIR);
-  // Side hair / ears area
-  d.set("11,7", HAIR_SIDE); d.set("19,7", HAIR_SIDE);
-  d.set("11,8", HAIR_SIDE); d.set("19,8", HAIR_SIDE);
-  // Head
-  drawRect(d, 12, 7, 7, 6, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("16,9", BLK); d.set("17,9", BLK);
-  // Mouth
-  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // Blue shirt
-  drawRect(d, 10, 14, 11, 6, BLUE);
-  // Arms
-  drawRect(d, 8, 14, 2, 5, BLK);
-  drawRect(d, 21, 14, 2, 5, BLK);
-  // Hands
-  drawRect(d, 8, 19, 2, 2, SKIN);
-  drawRect(d, 21, 19, 2, 2, SKIN);
-  // Grey pants
-  drawRect(d, 11, 20, 4, 5, GREY);
-  drawRect(d, 16, 20, 4, 5, GREY);
-  // Shoes
-  drawRect(d, 10, 25, 5, 2, BLK);
-  drawRect(d, 16, 25, 5, 2, BLK);
+  d.set("17,5", "#000000");
+  d.set("18,5", "#000000");
+  d.set("19,5", "#000000");
+  d.set("15,6", "#000000");
+  d.set("16,6", "#000000");
+  d.set("17,6", "#000000");
+  d.set("18,6", "#000000");
+  d.set("19,6", "#000000");
+  d.set("20,6", "#000000");
+  d.set("13,7", "#000000");
+  d.set("14,7", "#000000");
+  d.set("15,7", "#000000");
+  d.set("16,7", "#000000");
+  d.set("17,7", "#000000");
+  d.set("18,7", "#000000");
+  d.set("19,7", "#000000");
+  d.set("20,7", "#000000");
+  d.set("21,7", "#000000");
+  d.set("12,8", "#000000");
+  d.set("13,8", "#000000");
+  d.set("14,8", "#000000");
+  d.set("15,8", "#000000");
+  d.set("16,8", "#000000");
+  d.set("17,8", "#000000");
+  d.set("18,8", "#000000");
+  d.set("19,8", "#000000");
+  d.set("20,8", "#000000");
+  d.set("21,8", "#000000");
+  d.set("11,9", "#000000");
+  d.set("12,9", "#000000");
+  d.set("13,9", "#000000");
+  d.set("14,9", "#000000");
+  d.set("15,9", "#000000");
+  d.set("16,9", "#000000");
+  d.set("17,9", "#000000");
+  d.set("18,9", "#000000");
+  d.set("19,9", "#000000");
+  d.set("20,9", "#000000");
+  d.set("21,9", "#000000");
+  d.set("22,9", "#000000");
+  d.set("11,10", "#000000");
+  d.set("12,10", "#000000");
+  d.set("13,10", "#000000");
+  d.set("14,10", "#FFCD94");
+  d.set("15,10", "#000000");
+  d.set("16,10", "#000000");
+  d.set("17,10", "#000000");
+  d.set("18,10", "#000000");
+  d.set("19,10", "#000000");
+  d.set("20,10", "#000000");
+  d.set("21,10", "#000000");
+  d.set("22,10", "#000000");
+  d.set("11,11", "#000000");
+  d.set("12,11", "#FFCD94");
+  d.set("13,11", "#FFCD94");
+  d.set("14,11", "#FFCD94");
+  d.set("15,11", "#FFCD94");
+  d.set("16,11", "#FFCD94");
+  d.set("17,11", "#FFCD94");
+  d.set("18,11", "#000000");
+  d.set("19,11", "#FFCD94");
+  d.set("20,11", "#FFCD94");
+  d.set("21,11", "#FFCD94");
+  d.set("22,11", "#000000");
+  d.set("11,12", "#000000");
+  d.set("12,12", "#FFCD94");
+  d.set("13,12", "#FFCD94");
+  d.set("14,12", "#FFCD94");
+  d.set("15,12", "#FFCD94");
+  d.set("16,12", "#FFCD94");
+  d.set("17,12", "#FFCD94");
+  d.set("18,12", "#FFCD94");
+  d.set("19,12", "#FFCD94");
+  d.set("20,12", "#FFCD94");
+  d.set("21,12", "#FFCD94");
+  d.set("22,12", "#000000");
+  d.set("11,13", "#000000");
+  d.set("12,13", "#FFCD94");
+  d.set("13,13", "#FFCD94");
+  d.set("14,13", "#FFCD94");
+  d.set("15,13", "#FFCD94");
+  d.set("16,13", "#FFCD94");
+  d.set("17,13", "#FFCD94");
+  d.set("18,13", "#FFCD94");
+  d.set("19,13", "#FFCD94");
+  d.set("20,13", "#FFCD94");
+  d.set("21,13", "#FFCD94");
+  d.set("22,13", "#000000");
+  d.set("10,14", "#000000");
+  d.set("11,14", "#FFCD94");
+  d.set("12,14", "#FFCD94");
+  d.set("13,14", "#FFCD94");
+  d.set("14,14", "#FFCD94");
+  d.set("15,14", "#000000");
+  d.set("16,14", "#FFCD94");
+  d.set("17,14", "#FFCD94");
+  d.set("18,14", "#FFCD94");
+  d.set("19,14", "#000000");
+  d.set("20,14", "#FFCD94");
+  d.set("21,14", "#FFCD94");
+  d.set("22,14", "#000000");
+  d.set("10,15", "#000000");
+  d.set("11,15", "#FFCD94");
+  d.set("12,15", "#FFCD94");
+  d.set("13,15", "#FFCD94");
+  d.set("14,15", "#FFCD94");
+  d.set("15,15", "#FFCD94");
+  d.set("16,15", "#FFCD94");
+  d.set("17,15", "#FFCD94");
+  d.set("18,15", "#FFCD94");
+  d.set("19,15", "#FFCD94");
+  d.set("20,15", "#FFCD94");
+  d.set("21,15", "#FFCD94");
+  d.set("22,15", "#000000");
+  d.set("11,16", "#000000");
+  d.set("12,16", "#FFCD94");
+  d.set("13,16", "#FFCD94");
+  d.set("14,16", "#FFCD94");
+  d.set("15,16", "#FFCD94");
+  d.set("16,16", "#000000");
+  d.set("17,16", "#000000");
+  d.set("18,16", "#000000");
+  d.set("19,16", "#FFCD94");
+  d.set("20,16", "#FFCD94");
+  d.set("21,16", "#FFCD94");
+  d.set("22,16", "#000000");
+  d.set("11,17", "#000000");
+  d.set("12,17", "#FFCD94");
+  d.set("13,17", "#FFCD94");
+  d.set("14,17", "#FFCD94");
+  d.set("15,17", "#FFCD94");
+  d.set("16,17", "#FFCD94");
+  d.set("17,17", "#FFCD94");
+  d.set("18,17", "#FFCD94");
+  d.set("19,17", "#FFCD94");
+  d.set("20,17", "#FFCD94");
+  d.set("21,17", "#FFCD94");
+  d.set("22,17", "#000000");
+  d.set("12,18", "#000000");
+  d.set("13,18", "#FFCD94");
+  d.set("14,18", "#FFCD94");
+  d.set("15,18", "#FFCD94");
+  d.set("16,18", "#FFCD94");
+  d.set("17,18", "#FFCD94");
+  d.set("18,18", "#FFCD94");
+  d.set("19,18", "#FFCD94");
+  d.set("20,18", "#F1C27D");
+  d.set("21,18", "#000000");
+  d.set("10,19", "#000000");
+  d.set("11,19", "#000000");
+  d.set("12,19", "#D50000");
+  d.set("13,19", "#000000");
+  d.set("14,19", "#000000");
+  d.set("15,19", "#000000");
+  d.set("16,19", "#000000");
+  d.set("17,19", "#000000");
+  d.set("18,19", "#000000");
+  d.set("19,19", "#000000");
+  d.set("20,19", "#000000");
+  d.set("9,20", "#000000");
+  d.set("10,20", "#850000");
+  d.set("11,20", "#D50000");
+  d.set("12,20", "#000000");
+  d.set("13,20", "#000000");
+  d.set("14,20", "#D50000");
+  d.set("15,20", "#D50000");
+  d.set("16,20", "#2979FF");
+  d.set("17,20", "#2979FF");
+  d.set("18,20", "#D50000");
+  d.set("19,20", "#D50000");
+  d.set("20,20", "#000000");
+  d.set("21,20", "#000000");
+  d.set("8,21", "#000000");
+  d.set("9,21", "#850000");
+  d.set("10,21", "#D50000");
+  d.set("11,21", "#000000");
+  d.set("12,21", "#D50000");
+  d.set("13,21", "#D50000");
+  d.set("14,21", "#2979FF");
+  d.set("15,21", "#2979FF");
+  d.set("16,21", "#2979FF");
+  d.set("17,21", "#2979FF");
+  d.set("18,21", "#2979FF");
+  d.set("19,21", "#2979FF");
+  d.set("20,21", "#D50000");
+  d.set("21,21", "#D50000");
+  d.set("22,21", "#000000");
+  d.set("7,22", "#000000");
+  d.set("8,22", "#000000");
+  d.set("9,22", "#D50000");
+  d.set("10,22", "#D50000");
+  d.set("11,22", "#000000");
+  d.set("12,22", "#2979FF");
+  d.set("13,22", "#2979FF");
+  d.set("14,22", "#2979FF");
+  d.set("15,22", "#2979FF");
+  d.set("16,22", "#2979FF");
+  d.set("17,22", "#FFC42A");
+  d.set("18,22", "#2979FF");
+  d.set("19,22", "#2979FF");
+  d.set("20,22", "#000000");
+  d.set("21,22", "#2979FF");
+  d.set("22,22", "#000000");
+  d.set("7,23", "#000000");
+  d.set("8,23", "#D50000");
+  d.set("9,23", "#D50000");
+  d.set("10,23", "#D50000");
+  d.set("11,23", "#000000");
+  d.set("12,23", "#2979FF");
+  d.set("13,23", "#000000");
+  d.set("14,23", "#2979FF");
+  d.set("15,23", "#2979FF");
+  d.set("16,23", "#FFC42A");
+  d.set("17,23", "#2979FF");
+  d.set("18,23", "#2979FF");
+  d.set("19,23", "#2979FF");
+  d.set("20,23", "#000000");
+  d.set("21,23", "#2979FF");
+  d.set("22,23", "#000000");
+  d.set("6,24", "#000000");
+  d.set("7,24", "#D50000");
+  d.set("8,24", "#D50000");
+  d.set("9,24", "#D50000");
+  d.set("10,24", "#850000");
+  d.set("11,24", "#000000");
+  d.set("12,24", "#FFCD94");
+  d.set("13,24", "#000000");
+  d.set("14,24", "#2979FF");
+  d.set("15,24", "#2979FF");
+  d.set("16,24", "#2979FF");
+  d.set("17,24", "#2979FF");
+  d.set("18,24", "#2979FF");
+  d.set("19,24", "#2979FF");
+  d.set("20,24", "#000000");
+  d.set("21,24", "#FFCD94");
+  d.set("22,24", "#000000");
+  d.set("6,25", "#000000");
+  d.set("7,25", "#D50000");
+  d.set("8,25", "#D50000");
+  d.set("9,25", "#850000");
+  d.set("10,25", "#850000");
+  d.set("11,25", "#000000");
+  d.set("12,25", "#000000");
+  d.set("13,25", "#000000");
+  d.set("14,25", "#FFC42A");
+  d.set("15,25", "#FFC42A");
+  d.set("16,25", "#000000");
+  d.set("17,25", "#000000");
+  d.set("18,25", "#FFC42A");
+  d.set("19,25", "#FFC42A");
+  d.set("20,25", "#000000");
+  d.set("21,25", "#000000");
+  d.set("22,25", "#000000");
+  d.set("5,26", "#000000");
+  d.set("6,26", "#D50000");
+  d.set("7,26", "#D50000");
+  d.set("8,26", "#850000");
+  d.set("9,26", "#850000");
+  d.set("10,26", "#850000");
+  d.set("11,26", "#850000");
+  d.set("12,26", "#000000");
+  d.set("13,26", "#000000");
+  d.set("14,26", "#2979FF");
+  d.set("15,26", "#2979FF");
+  d.set("16,26", "#2979FF");
+  d.set("17,26", "#2979FF");
+  d.set("18,26", "#2979FF");
+  d.set("19,26", "#2979FF");
+  d.set("20,26", "#000000");
+  d.set("5,27", "#000000");
+  d.set("6,27", "#000000");
+  d.set("7,27", "#000000");
+  d.set("8,27", "#000000");
+  d.set("9,27", "#000000");
+  d.set("10,27", "#000000");
+  d.set("11,27", "#000000");
+  d.set("13,27", "#000000");
+  d.set("14,27", "#2979FF");
+  d.set("15,27", "#2979FF");
+  d.set("16,27", "#D50000");
+  d.set("17,27", "#D50000");
+  d.set("18,27", "#2979FF");
+  d.set("19,27", "#2979FF");
+  d.set("20,27", "#000000");
+  d.set("13,28", "#000000");
+  d.set("14,28", "#D50000");
+  d.set("15,28", "#D50000");
+  d.set("16,28", "#000000");
+  d.set("17,28", "#000000");
+  d.set("18,28", "#D50000");
+  d.set("19,28", "#D50000");
+  d.set("20,28", "#000000");
+  d.set("13,29", "#000000");
+  d.set("14,29", "#000000");
+  d.set("15,29", "#000000");
+  d.set("18,29", "#000000");
+  d.set("19,29", "#000000");
+  d.set("20,29", "#000000");
   return d;
 }
 
-function generateElderMonk(): Map<string, string> {
+function generateNewCrofly(): Map<string, string> {
   const d = new Map<string, string>();
-  const BLK = "#1A1A2E", SKIN = "#E8B887", GREY_HAIR = "#94A3B8";
-  const WHITE = "#F5F5F5", BROWN_BELT = "#8B4513";
-  // Grey hair (receding)
-  drawRect(d, 12, 5, 7, 1, GREY_HAIR);
-  drawRect(d, 10, 6, 2, 4, GREY_HAIR);
-  drawRect(d, 19, 6, 2, 4, GREY_HAIR);
-  drawRect(d, 11, 5, 9, 1, GREY_HAIR);
-  // Grey eyebrows
-  d.set("13,8", GREY_HAIR); d.set("14,8", GREY_HAIR);
-  d.set("16,8", GREY_HAIR); d.set("17,8", GREY_HAIR);
-  // Head
-  drawRect(d, 12, 6, 7, 7, SKIN);
-  // Eyes
-  d.set("13,9", BLK); d.set("14,9", BLK);
-  d.set("16,9", BLK); d.set("17,9", BLK);
-  // Mouth
-  d.set("14,11", BLK); d.set("15,11", BLK); d.set("16,11", BLK);
-  // Neck
-  drawRect(d, 14, 13, 3, 1, SKIN);
-  // White robe
-  drawRect(d, 9, 14, 13, 8, WHITE);
-  // Brown belt
-  drawRect(d, 9, 19, 13, 1, BROWN_BELT);
-  // Arms (robe sleeves)
-  drawRect(d, 7, 14, 2, 5, WHITE);
-  drawRect(d, 22, 14, 2, 5, WHITE);
-  // Hands
-  drawRect(d, 7, 19, 2, 2, SKIN);
-  drawRect(d, 22, 19, 2, 2, SKIN);
-  // Lower robe / legs
-  drawRect(d, 11, 22, 4, 4, WHITE);
-  drawRect(d, 16, 22, 4, 4, WHITE);
-  // Sandals
-  drawRect(d, 10, 26, 5, 2, BROWN_BELT);
-  drawRect(d, 16, 26, 5, 2, BROWN_BELT);
-  return d;
-}
-
-function generateHeroOutline(): Map<string, string> {
-  const d = new Map<string, string>();
-  // Head outline
-  [[10,5],[11,5],[12,5],[13,5],[14,5],[15,5],[16,5],[17,5],
-   [9,6],[18,6],[8,7],[19,7],[8,8],[19,8],[8,9],[19,9],
-   [7,10],[20,10],[7,11],[20,11],[8,12],[19,12],[8,13],[19,13],
-   [9,14],[18,14]].forEach(([x,y]) => d.set(`${x},${y}`, "#000000"));
-  // Body outline
-  [[10,15],[11,15],[12,15],[13,15],[14,15],[15,15],[16,15],[17,15],
-   [9,16],[18,16],[8,17],[19,17],
-   [8,18],[10,18],[17,18],[19,18],
-   [8,19],[10,19],[17,19],[19,19],
-   [8,20],[10,20],[17,20],[19,20],
-   [8,21],[9,21],[10,21],[17,21],[18,21],[19,21],
-   [10,22],[17,22],[10,23],[17,23],
-   [10,24],[13,24],[14,24],[17,24],
-   [10,25],[11,25],[12,25],[15,25],[16,25],[17,25]].forEach(([x,y]) => d.set(`${x},${y}`, "#000000"));
-  // Fill head with skin
-  drawRect(d, 11, 6, 7, 1, "#FFDBB4");
-  drawRect(d, 9, 7, 10, 6, "#FFDBB4");
-  drawRect(d, 8, 10, 1, 2, "#FFDBB4");
-  drawRect(d, 10, 14, 8, 1, "#FFDBB4");
-  // Eyes
-  d.set("11,9", "#1A1A2E"); d.set("12,9", "#1A1A2E");
-  d.set("15,9", "#1A1A2E"); d.set("16,9", "#1A1A2E");
-  // Mouth
-  d.set("13,12", "#C8956C"); d.set("14,12", "#C8956C");
-  // Hair
-  drawRect(d, 10, 5, 8, 2, "#4A3728");
-  // Body fill - shirt
-  drawRect(d, 10, 16, 8, 1, "#DC143C");
-  drawRect(d, 9, 17, 10, 1, "#DC143C");
-  // Arms
-  drawRect(d, 9, 18, 1, 4, "#DC143C");
-  drawRect(d, 18, 18, 1, 4, "#DC143C");
-  // Torso
-  drawRect(d, 11, 18, 6, 4, "#DC143C");
-  // Pants
-  drawRect(d, 11, 22, 6, 2, "#2C6ECB");
-  // Legs
-  drawRect(d, 11, 24, 2, 2, "#2C6ECB");
-  drawRect(d, 15, 24, 2, 2, "#2C6ECB");
+  d.set("7,5", "#000000");
+  d.set("8,5", "#000000");
+  d.set("9,5", "#000000");
+  d.set("10,5", "#000000");
+  d.set("6,6", "#000000");
+  d.set("7,6", "#8D5524");
+  d.set("8,6", "#8D5524");
+  d.set("9,6", "#8D5524");
+  d.set("10,6", "#8D5524");
+  d.set("11,6", "#000000");
+  d.set("13,6", "#000000");
+  d.set("14,6", "#000000");
+  d.set("15,6", "#000000");
+  d.set("16,6", "#000000");
+  d.set("17,6", "#000000");
+  d.set("18,6", "#000000");
+  d.set("6,7", "#000000");
+  d.set("7,7", "#8D5524");
+  d.set("8,7", "#000000");
+  d.set("9,7", "#000000");
+  d.set("10,7", "#8D5524");
+  d.set("11,7", "#8D5524");
+  d.set("12,7", "#000000");
+  d.set("13,7", "#8D5524");
+  d.set("14,7", "#8D5524");
+  d.set("15,7", "#8D5524");
+  d.set("16,7", "#8D5524");
+  d.set("17,7", "#8D5524");
+  d.set("18,7", "#8D5524");
+  d.set("19,7", "#000000");
+  d.set("20,7", "#000000");
+  d.set("6,8", "#000000");
+  d.set("7,8", "#000000");
+  d.set("9,8", "#000000");
+  d.set("10,8", "#000000");
+  d.set("11,8", "#000000");
+  d.set("12,8", "#8D5524");
+  d.set("13,8", "#8D5524");
+  d.set("14,8", "#8D5524");
+  d.set("15,8", "#8D5524");
+  d.set("16,8", "#8D5524");
+  d.set("17,8", "#8D5524");
+  d.set("18,8", "#8D5524");
+  d.set("19,8", "#8D5524");
+  d.set("20,8", "#8D5524");
+  d.set("21,8", "#000000");
+  d.set("11,9", "#000000");
+  d.set("12,9", "#8D5524");
+  d.set("13,9", "#8D5524");
+  d.set("14,9", "#8D5524");
+  d.set("15,9", "#8D5524");
+  d.set("16,9", "#8D5524");
+  d.set("17,9", "#8D5524");
+  d.set("18,9", "#8D5524");
+  d.set("19,9", "#8D5524");
+  d.set("20,9", "#8D5524");
+  d.set("21,9", "#8D5524");
+  d.set("22,9", "#000000");
+  d.set("10,10", "#000000");
+  d.set("11,10", "#8D5524");
+  d.set("12,10", "#8D5524");
+  d.set("13,10", "#8D5524");
+  d.set("14,10", "#8D5524");
+  d.set("15,10", "#FFCD94");
+  d.set("16,10", "#8D5524");
+  d.set("17,10", "#8D5524");
+  d.set("18,10", "#8D5524");
+  d.set("19,10", "#FFCD94");
+  d.set("20,10", "#FFCD94");
+  d.set("21,10", "#8D5524");
+  d.set("22,10", "#000000");
+  d.set("10,11", "#000000");
+  d.set("11,11", "#8D5524");
+  d.set("12,11", "#FFCD94");
+  d.set("13,11", "#FFCD94");
+  d.set("14,11", "#FFCD94");
+  d.set("15,11", "#FFCD94");
+  d.set("16,11", "#FFCD94");
+  d.set("17,11", "#FFCD94");
+  d.set("18,11", "#FFCD94");
+  d.set("19,11", "#FFCD94");
+  d.set("20,11", "#FFCD94");
+  d.set("21,11", "#FFCD94");
+  d.set("22,11", "#000000");
+  d.set("10,12", "#000000");
+  d.set("11,12", "#8D5524");
+  d.set("12,12", "#FFCD94");
+  d.set("13,12", "#FFCD94");
+  d.set("14,12", "#FFCD94");
+  d.set("15,12", "#FFCD94");
+  d.set("16,12", "#FFCD94");
+  d.set("17,12", "#FFCD94");
+  d.set("18,12", "#FFCD94");
+  d.set("19,12", "#FFCD94");
+  d.set("20,12", "#FFCD94");
+  d.set("21,12", "#FFCD94");
+  d.set("22,12", "#000000");
+  d.set("10,13", "#000000");
+  d.set("11,13", "#8D5524");
+  d.set("12,13", "#FFCD94");
+  d.set("13,13", "#FFCD94");
+  d.set("14,13", "#FFCD94");
+  d.set("15,13", "#FFCD94");
+  d.set("16,13", "#000000");
+  d.set("17,13", "#FFCD94");
+  d.set("18,13", "#FFCD94");
+  d.set("19,13", "#000000");
+  d.set("20,13", "#FFCD94");
+  d.set("21,13", "#FFCD94");
+  d.set("22,13", "#000000");
+  d.set("10,14", "#000000");
+  d.set("11,14", "#8D5524");
+  d.set("12,14", "#FFCD94");
+  d.set("13,14", "#FFCD94");
+  d.set("14,14", "#FFCD94");
+  d.set("15,14", "#FFCD94");
+  d.set("16,14", "#000000");
+  d.set("17,14", "#FFCD94");
+  d.set("18,14", "#FFCD94");
+  d.set("19,14", "#000000");
+  d.set("20,14", "#FFCD94");
+  d.set("21,14", "#FFCD94");
+  d.set("22,14", "#000000");
+  d.set("10,15", "#000000");
+  d.set("11,15", "#8D5524");
+  d.set("12,15", "#FFCD94");
+  d.set("13,15", "#FFCD94");
+  d.set("14,15", "#FFCD94");
+  d.set("15,15", "#FFCD94");
+  d.set("16,15", "#FFCD94");
+  d.set("17,15", "#FFCD94");
+  d.set("18,15", "#FFCD94");
+  d.set("19,15", "#FFCD94");
+  d.set("20,15", "#FFCD94");
+  d.set("21,15", "#FFCD94");
+  d.set("22,15", "#000000");
+  d.set("11,16", "#000000");
+  d.set("12,16", "#FFCD94");
+  d.set("13,16", "#FFCD94");
+  d.set("14,16", "#FFCD94");
+  d.set("15,16", "#FFCD94");
+  d.set("16,16", "#FFCD94");
+  d.set("17,16", "#FFCD94");
+  d.set("18,16", "#FFCD94");
+  d.set("19,16", "#FFCD94");
+  d.set("20,16", "#FFCD94");
+  d.set("21,16", "#FFCD94");
+  d.set("22,16", "#000000");
+  d.set("11,17", "#000000");
+  d.set("12,17", "#FFCD94");
+  d.set("13,17", "#FFCD94");
+  d.set("14,17", "#FFCD94");
+  d.set("15,17", "#FFCD94");
+  d.set("16,17", "#000000");
+  d.set("17,17", "#000000");
+  d.set("18,17", "#FFCD94");
+  d.set("19,17", "#FFCD94");
+  d.set("20,17", "#FFCD94");
+  d.set("21,17", "#FFCD94");
+  d.set("22,17", "#000000");
+  d.set("12,18", "#000000");
+  d.set("13,18", "#FFCD94");
+  d.set("14,18", "#FFCD94");
+  d.set("15,18", "#FFCD94");
+  d.set("16,18", "#FFCD94");
+  d.set("17,18", "#FFCD94");
+  d.set("18,18", "#FFCD94");
+  d.set("19,18", "#FFCD94");
+  d.set("20,18", "#FFCD94");
+  d.set("21,18", "#000000");
+  d.set("10,19", "#000000");
+  d.set("11,19", "#000000");
+  d.set("12,19", "#2196F3");
+  d.set("13,19", "#000000");
+  d.set("14,19", "#000000");
+  d.set("15,19", "#000000");
+  d.set("16,19", "#000000");
+  d.set("17,19", "#000000");
+  d.set("18,19", "#000000");
+  d.set("19,19", "#000000");
+  d.set("20,19", "#000000");
+  d.set("9,20", "#000000");
+  d.set("10,20", "#2962FF");
+  d.set("11,20", "#2196F3");
+  d.set("12,20", "#000000");
+  d.set("13,20", "#000000");
+  d.set("14,20", "#448AFF");
+  d.set("15,20", "#448AFF");
+  d.set("16,20", "#FFC42A");
+  d.set("17,20", "#FFC42A");
+  d.set("18,20", "#448AFF");
+  d.set("19,20", "#448AFF");
+  d.set("20,20", "#000000");
+  d.set("21,20", "#000000");
+  d.set("8,21", "#000000");
+  d.set("9,21", "#2962FF");
+  d.set("10,21", "#448AFF");
+  d.set("11,21", "#000000");
+  d.set("12,21", "#448AFF");
+  d.set("13,21", "#448AFF");
+  d.set("14,21", "#FFC42A");
+  d.set("15,21", "#FFC42A");
+  d.set("16,21", "#FFC42A");
+  d.set("17,21", "#FFC42A");
+  d.set("18,21", "#FFC42A");
+  d.set("19,21", "#FFC42A");
+  d.set("20,21", "#448AFF");
+  d.set("21,21", "#448AFF");
+  d.set("22,21", "#000000");
+  d.set("7,22", "#000000");
+  d.set("8,22", "#000000");
+  d.set("9,22", "#448AFF");
+  d.set("10,22", "#448AFF");
+  d.set("11,22", "#000000");
+  d.set("12,22", "#FFC42A");
+  d.set("13,22", "#FFC42A");
+  d.set("14,22", "#FFC42A");
+  d.set("15,22", "#FFC42A");
+  d.set("16,22", "#D50000");
+  d.set("17,22", "#FFC42A");
+  d.set("18,22", "#FFC42A");
+  d.set("19,22", "#FFC42A");
+  d.set("20,22", "#000000");
+  d.set("21,22", "#FFC42A");
+  d.set("22,22", "#000000");
+  d.set("7,23", "#000000");
+  d.set("8,23", "#448AFF");
+  d.set("9,23", "#448AFF");
+  d.set("10,23", "#448AFF");
+  d.set("11,23", "#000000");
+  d.set("12,23", "#FFC42A");
+  d.set("13,23", "#000000");
+  d.set("14,23", "#FFC42A");
+  d.set("15,23", "#FFC42A");
+  d.set("16,23", "#FFC42A");
+  d.set("17,23", "#D50000");
+  d.set("18,23", "#FFC42A");
+  d.set("19,23", "#FFC42A");
+  d.set("20,23", "#000000");
+  d.set("21,23", "#FFC42A");
+  d.set("22,23", "#000000");
+  d.set("6,24", "#000000");
+  d.set("7,24", "#448AFF");
+  d.set("8,24", "#448AFF");
+  d.set("9,24", "#448AFF");
+  d.set("10,24", "#2962FF");
+  d.set("11,24", "#000000");
+  d.set("12,24", "#FFCD94");
+  d.set("13,24", "#000000");
+  d.set("14,24", "#FFC42A");
+  d.set("15,24", "#FFC42A");
+  d.set("16,24", "#FFC42A");
+  d.set("17,24", "#FFC42A");
+  d.set("18,24", "#FFC42A");
+  d.set("19,24", "#FFC42A");
+  d.set("20,24", "#000000");
+  d.set("21,24", "#FFCD94");
+  d.set("22,24", "#000000");
+  d.set("6,25", "#000000");
+  d.set("7,25", "#448AFF");
+  d.set("8,25", "#448AFF");
+  d.set("9,25", "#2962FF");
+  d.set("10,25", "#2962FF");
+  d.set("11,25", "#000000");
+  d.set("12,25", "#000000");
+  d.set("13,25", "#000000");
+  d.set("14,25", "#D50000");
+  d.set("15,25", "#D50000");
+  d.set("16,25", "#000000");
+  d.set("17,25", "#000000");
+  d.set("18,25", "#D50000");
+  d.set("19,25", "#D50000");
+  d.set("20,25", "#000000");
+  d.set("21,25", "#000000");
+  d.set("22,25", "#000000");
+  d.set("5,26", "#000000");
+  d.set("6,26", "#448AFF");
+  d.set("7,26", "#448AFF");
+  d.set("8,26", "#2962FF");
+  d.set("9,26", "#2962FF");
+  d.set("10,26", "#2962FF");
+  d.set("11,26", "#2962FF");
+  d.set("12,26", "#000000");
+  d.set("13,26", "#000000");
+  d.set("14,26", "#FFC42A");
+  d.set("15,26", "#FFC42A");
+  d.set("16,26", "#FFC42A");
+  d.set("17,26", "#FFC42A");
+  d.set("18,26", "#FFC42A");
+  d.set("19,26", "#FFC42A");
+  d.set("20,26", "#000000");
+  d.set("5,27", "#000000");
+  d.set("6,27", "#000000");
+  d.set("7,27", "#000000");
+  d.set("8,27", "#000000");
+  d.set("9,27", "#000000");
+  d.set("10,27", "#000000");
+  d.set("11,27", "#000000");
+  d.set("13,27", "#000000");
+  d.set("14,27", "#FFC42A");
+  d.set("15,27", "#FFC42A");
+  d.set("16,27", "#448AFF");
+  d.set("17,27", "#448AFF");
+  d.set("18,27", "#FFC42A");
+  d.set("19,27", "#FFC42A");
+  d.set("20,27", "#000000");
+  d.set("13,28", "#000000");
+  d.set("14,28", "#448AFF");
+  d.set("15,28", "#448AFF");
+  d.set("16,28", "#000000");
+  d.set("17,28", "#000000");
+  d.set("18,28", "#448AFF");
+  d.set("19,28", "#448AFF");
+  d.set("20,28", "#000000");
+  d.set("13,29", "#000000");
+  d.set("14,29", "#000000");
+  d.set("15,29", "#000000");
+  d.set("18,29", "#000000");
+  d.set("19,29", "#000000");
+  d.set("20,29", "#000000");
   return d;
 }
 
