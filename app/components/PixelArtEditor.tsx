@@ -187,30 +187,34 @@ function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   return d;
 }
 
+// Import compositeCharacter to build some pre-mades with the new system
+const _cc = (s: Partial<import("./AvatarParts").BuilderState>) => compositeCharacter({ ...DEFAULT_BUILDER_STATE, ...s });
+
 const PREMADE_AVATARS = [
   // Exact from .pixil files
   { name: "Hero", data: generateNewHero() },
   { name: "Crofly", data: generateNewCrofly() },
-  // Caped characters (left region is a cape)
-  { name: "Super", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#1A1A2E", top: "#2979FF", left: "#D50000", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Mage", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#C4A35A", top: "#8B5CF6", left: "#6D28D9", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Wizard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#E8E8E8", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFC42A", noHairPuff: true }) },
-  { name: "Healer", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#F0F0F0", left: "#D50000", accent: "#D50000", noHairPuff: true }) },
-  { name: "Champion", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#FFC42A", left: "#29845A", accent: "#D50000", noHairPuff: true }) },
-  // Characters with Crofly-style left sleeve (top puff hair)
-  { name: "Knight", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#2C1810", top: "#94A3B8", left: "#94A3B8", accent: "#FFC42A" }) },
-  { name: "Ranger", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B6914", top: "#29845A", left: "#29845A", accent: "#C4A35A" }) },
-  { name: "Rogue", data: generateOutlinedCharacter({ skin: "#C8956C", hair: "#1A1A2E", top: "#1A1A2E", left: "#1A1A2E", accent: "#4A3728" }) },
-  { name: "Viking", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#B8860B", top: "#8B4513", left: "#8B4513", accent: "#94A3B8" }) },
-  { name: "Pirate", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#FFC42A" }) },
-  { name: "Warrior", data: generateOutlinedCharacter({ skin: "#8D5524", hair: "#2C1810", top: "#D50000", left: "#D50000", accent: "#94A3B8" }) },
-  { name: "Bard", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#D94000", top: "#29845A", left: "#29845A", accent: "#FFC42A" }) },
-  { name: "Executive", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#3D2314", top: "#1E3A5F", left: "#1E3A5F", accent: "#FFFFFF" }) },
-  { name: "Casual", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
-  { name: "Medic", data: generateOutlinedCharacter({ skin: "#FFCD94", hair: "#8B4513", top: "#FFC42A", left: "#FFC42A", accent: "#D50000" }) },
-  { name: "Student", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#8B4513", top: "#5B9BD5", left: "#5B9BD5", accent: "#FFFFFF" }) },
-  { name: "Elder", data: generateOutlinedCharacter({ skin: "#E8B887", hair: "#94A3B8", top: "#F5F5F5", left: "#F5F5F5", accent: "#8B4513" }) },
-  { name: "Chill", data: generateOutlinedCharacter({ skin: "#FFDBB4", hair: "#5C2E00", top: "#E8963A", left: "#E8963A", accent: "#FFC42A" }) },
+  // Hero-style with cape
+  { name: "Super", data: _cc({ templateIdx: 0, skinIdx: 1, topIdx: 8, accentIdx: 3, hasCape: true, capeColorIdx: 0 }) },
+  { name: "Champion", data: _cc({ templateIdx: 0, skinIdx: 3, topIdx: 3, accentIdx: 0, hasCape: true, capeColorIdx: 5 }) },
+  // Hero-style WITHOUT cape
+  { name: "Agent", data: _cc({ templateIdx: 0, skinIdx: 1, topIdx: 19, accentIdx: 17, hasCape: false }) },
+  { name: "Soldier", data: _cc({ templateIdx: 0, skinIdx: 6, topIdx: 5, accentIdx: 18, hasCape: false }) },
+  // Crofly-style with cape
+  { name: "Mage", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 5, topIdx: 11, accentIdx: 3, hasCape: true, capeColorIdx: 11 }) },
+  { name: "Healer", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 7, topIdx: 16, accentIdx: 0, hasCape: true, capeColorIdx: 0 }) },
+  { name: "Wizard", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 10, topIdx: 9, accentIdx: 3, hasCape: true, capeColorIdx: 9 }) },
+  // Crofly-style WITHOUT cape
+  { name: "Knight", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 0, topIdx: 17, accentIdx: 3, hasCape: false }) },
+  { name: "Ranger", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 4, topIdx: 5, accentIdx: 15, hasCape: false }) },
+  { name: "Rogue", data: _cc({ templateIdx: 1, skinIdx: 4, hairIdx: 0, topIdx: 19, accentIdx: 18, hasCape: false }) },
+  { name: "Viking", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 4, topIdx: 14, accentIdx: 17, hasCape: false }) },
+  { name: "Pirate", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 0, topIdx: 0, accentIdx: 3, hasCape: false }) },
+  { name: "Executive", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 1, topIdx: 9, accentIdx: 16, hasCape: false }) },
+  { name: "Casual", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 2, topIdx: 8, accentIdx: 16, hasCape: false }) },
+  { name: "Student", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 2, topIdx: 8, accentIdx: 17, hasCape: false }) },
+  { name: "Elder", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 9, topIdx: 16, accentIdx: 14, hasCape: false }) },
+  { name: "Warrior", data: _cc({ templateIdx: 0, skinIdx: 6, topIdx: 0, accentIdx: 17, hasCape: true, capeColorIdx: 0 }) },
 ];
 
 // Simple character generator helpers

@@ -10,13 +10,23 @@ const BLK = "#000000";
 // SHARED BODY REGIONS (identical between Hero and Crofly)
 // ══════════════════════════════════════════════════════
 
-const BODY_OUTLINE: Coord[] = [[10,19],[11,19],[13,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[9,20],[12,20],[13,20],[20,20],[21,20],[8,21],[11,21],[22,21],[7,22],[8,22],[11,22],[20,22],[22,22],[7,23],[11,23],[13,23],[20,23],[22,23],[6,24],[11,24],[13,24],[20,24],[22,24],[6,25],[11,25],[12,25],[13,25],[16,25],[17,25],[20,25],[21,25],[22,25],[5,26],[12,26],[13,26],[20,26],[5,27],[6,27],[7,27],[8,27],[9,27],[10,27],[11,27],[13,27],[20,27],[13,28],[16,28],[17,28],[20,28],[13,29],[14,29],[15,29],[18,29],[19,29],[20,29]];
+// Body outline shared (right side + center + legs)
+const BODY_OUTLINE_SHARED: Coord[] = [[13,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[12,20],[13,20],[20,20],[21,20],[22,21],[20,22],[22,22],[13,23],[20,23],[22,23],[13,24],[20,24],[22,24],[12,25],[13,25],[16,25],[17,25],[20,25],[21,25],[22,25],[12,26],[13,26],[20,26],[13,27],[20,27],[13,28],[16,28],[17,28],[20,28],[13,29],[14,29],[15,29],[18,29],[19,29],[20,29]];
+// Cape-shape outline (left side sweep)
+const BODY_OUTLINE_CAPE: Coord[] = [[10,19],[11,19],[9,20],[8,21],[11,21],[7,22],[8,22],[11,22],[7,23],[11,23],[6,24],[11,24],[6,25],[11,25],[5,26],[5,27],[6,27],[7,27],[8,27],[9,27],[10,27],[11,27]];
+// No-cape arm outline (symmetric straight arm on left)
+const BODY_OUTLINE_ARM: Coord[] = [[10,19],[11,19],[10,20],[11,20],[9,21],[11,21],[9,22],[11,22],[9,23],[11,23],[9,24],[11,24],[9,25],[10,25],[11,25],[11,26],[11,27]];
+
+// Cape fill regions
+const BODY_LEFT_CAPE: Coord[] = [[14,20],[15,20],[18,20],[19,20],[10,21],[12,21],[13,21],[20,21],[21,21],[9,22],[10,22],[8,23],[9,23],[10,23],[7,24],[8,24],[9,24],[7,25],[8,25],[6,26],[7,26],[16,27],[17,27],[14,28],[15,28],[18,28],[19,28]];
+const BODY_LEFT_CAPE_SHADOW: Coord[] = [[10,20],[9,21],[10,24],[9,25],[10,25],[8,26],[9,26],[10,26],[11,26]];
+const BODY_LEFT_CAPE_HIGHLIGHT: Coord[] = [[12,19],[11,20]];
+// No-cape arm fill (inside the straight arm outline)
+const BODY_LEFT_ARM_FILL: Coord[] = [[10,21],[10,22],[10,23],[10,24]];
+
 const BODY_TOP: Coord[] = [[16,20],[17,20],[14,21],[15,21],[16,21],[17,21],[18,21],[19,21],[12,22],[13,22],[14,22],[15,22],[17,22],[18,22],[19,22],[21,22],[12,23],[14,23],[15,23],[16,23],[18,23],[19,23],[21,23],[14,24],[15,24],[16,24],[17,24],[18,24],[19,24],[14,26],[15,26],[16,26],[17,26],[18,26],[19,26],[14,27],[15,27],[18,27],[19,27]];
-const BODY_LEFT: Coord[] = [[14,20],[15,20],[18,20],[19,20],[10,21],[12,21],[13,21],[20,21],[21,21],[9,22],[10,22],[8,23],[9,23],[10,23],[7,24],[8,24],[9,24],[7,25],[8,25],[6,26],[7,26],[16,27],[17,27],[14,28],[15,28],[18,28],[19,28]];
-const BODY_LEFT_SHADOW: Coord[] = [[10,20],[9,21],[10,24],[9,25],[10,25],[8,26],[9,26],[10,26],[11,26]];
-const BODY_LEFT_HIGHLIGHT: Coord[] = [[12,19],[11,20]];
 const BODY_ACCENT: Coord[] = [[16,22],[17,23],[14,25],[15,25],[18,25],[19,25]];
-const BODY_SKIN: Coord[] = [[12,24],[21,24]]; // hands peeking out
+const BODY_SKIN: Coord[] = [[12,24],[21,24]];
 
 // ══════════════════════════════════════════════════════
 // HERO HEAD TEMPLATE (rows 5-18)
@@ -236,23 +246,27 @@ export function compositeCharacter(state: BuilderState): PixelMap {
     d.set(`16,${mouthY + 1}`, BLK); d.set(`17,${mouthY + 1}`, BLK);
   }
 
-  // 4. Body — shared between templates
-  BODY_OUTLINE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+  // 4. Body — shared outline + top
+  BODY_OUTLINE_SHARED.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
   BODY_TOP.forEach(([x, y]) => d.set(`${x},${y}`, top));
   BODY_ACCENT.forEach(([x, y]) => d.set(`${x},${y}`, accent));
   BODY_SKIN.forEach(([x, y]) => d.set(`${x},${y}`, skin));
 
-  // 5. Left side — cape or sleeve
+  // 5. Left side — cape or straight arm
   if (state.hasCape) {
     const capeColor = OUTFIT_COLORS[state.capeColorIdx]?.color || "#D50000";
-    BODY_LEFT.forEach(([x, y]) => d.set(`${x},${y}`, capeColor));
-    BODY_LEFT_SHADOW.forEach(([x, y]) => d.set(`${x},${y}`, darken(capeColor, 40)));
-    BODY_LEFT_HIGHLIGHT.forEach(([x, y]) => d.set(`${x},${y}`, lighten(capeColor, 10)));
+    BODY_OUTLINE_CAPE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+    BODY_LEFT_CAPE.forEach(([x, y]) => d.set(`${x},${y}`, capeColor));
+    BODY_LEFT_CAPE_SHADOW.forEach(([x, y]) => d.set(`${x},${y}`, darken(capeColor, 40)));
+    BODY_LEFT_CAPE_HIGHLIGHT.forEach(([x, y]) => d.set(`${x},${y}`, lighten(capeColor, 10)));
   } else {
-    // No cape — fill left with shirt color (like a sleeve)
-    BODY_LEFT.forEach(([x, y]) => d.set(`${x},${y}`, top));
-    BODY_LEFT_SHADOW.forEach(([x, y]) => d.set(`${x},${y}`, darken(top, 40)));
-    BODY_LEFT_HIGHLIGHT.forEach(([x, y]) => d.set(`${x},${y}`, lighten(top, 10)));
+    // No cape — draw symmetric arm outline + fill with shirt color
+    BODY_OUTLINE_ARM.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+    BODY_LEFT_ARM_FILL.forEach(([x, y]) => d.set(`${x},${y}`, top));
+    // Legs fill (no cape bottom)
+    d.set("16,27", top); d.set("17,27", top);
+    d.set("14,28", top); d.set("15,28", top);
+    d.set("18,28", top); d.set("19,28", top);
   }
 
   // 6. Accessories
