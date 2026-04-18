@@ -678,18 +678,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
-  // Fetch product/collection featured image from Shopify
+  // Fetch product/collection featured image from Shopify (skip for pages/blogs)
   let productImageUrl: string | null = null;
-  try {
-    const imgQuery = project.resourceType === "COLLECTION"
-      ? `{ collectionByHandle(handle: "${project.productHandle}") { image { url } } }`
-      : `{ productByHandle(handle: "${project.productHandle}") { featuredImage { url } } }`;
-    const imgResponse = await admin.graphql(imgQuery);
-    const imgData = await imgResponse.json();
-    productImageUrl = project.resourceType === "COLLECTION"
-      ? imgData.data?.collectionByHandle?.image?.url || null
-      : imgData.data?.productByHandle?.featuredImage?.url || null;
-  } catch {}
+  if (project.resourceType === "PRODUCT" || project.resourceType === "COLLECTION") {
+    try {
+      const imgQuery = project.resourceType === "COLLECTION"
+        ? `{ collectionByHandle(handle: "${project.productHandle}") { image { url } } }`
+        : `{ productByHandle(handle: "${project.productHandle}") { featuredImage { url } } }`;
+      const imgResponse = await admin.graphql(imgQuery);
+      const imgData = await imgResponse.json();
+      productImageUrl = project.resourceType === "COLLECTION"
+        ? imgData.data?.collectionByHandle?.image?.url || null
+        : imgData.data?.productByHandle?.featuredImage?.url || null;
+    } catch {}
+  }
 
   return json({
     project: {
@@ -1281,8 +1283,9 @@ export default function ProjectDetails() {
   const isLoading = navigation.state !== "idle";
 
   const isCollection = project.resourceType === "COLLECTION";
-  const atcLabel = isCollection ? "Quick Add" : "Add to Cart";
-  const convLabel = isCollection ? "Product" : "Conversions";
+  const isPageOrBlog = project.resourceType === "PAGE" || project.resourceType === "BLOG";
+  const atcLabel = isCollection ? "Quick Add" : isPageOrBlog ? "CTR" : "Add to Cart";
+  const convLabel = isCollection ? "Product" : isPageOrBlog ? "Engagement" : "Conversions";
 
   // Date filter state
   const [datePreset, setDatePreset] = useState(() => {

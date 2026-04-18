@@ -61,6 +61,8 @@ export default function App() {
         </Link>
         <Link to="/app/audits/products">Products</Link>
         <Link to="/app/audits/collections">Collections</Link>
+        <Link to="/app/audits/pages">Pages</Link>
+        <Link to="/app/audits/blogs">Blogs</Link>
         <Link to="/app/challenges">Challenges</Link>
       </NavMenu>
       <Outlet />

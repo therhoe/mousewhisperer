@@ -17,6 +17,8 @@ import prisma from "../db.server";
 const CATEGORY_CONFIG: Record<string, { label: string; resourceType: string; rateLabel: string }> = {
   products: { label: "Products", resourceType: "PRODUCT", rateLabel: "ATC" },
   collections: { label: "Collections", resourceType: "COLLECTION", rateLabel: "CTR" },
+  pages: { label: "Pages", resourceType: "PAGE", rateLabel: "CTR" },
+  blogs: { label: "Blogs", resourceType: "BLOG", rateLabel: "CTR" },
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {

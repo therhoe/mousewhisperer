@@ -33,6 +33,8 @@ model Session {
 enum ResourceType {
   PRODUCT
   COLLECTION
+  PAGE
+  BLOG
 }
 
 // A tracking project/audit for a specific product or collection

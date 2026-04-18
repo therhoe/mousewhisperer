@@ -148,7 +148,7 @@ async function handleEngagementTrack(data: any, headers: Record<string, string>,
   const decodedProductHandle = decodeURIComponent(productHandle);
 
   // Normalize resource type (default to PRODUCT for backwards compatibility)
-  const normalizedResourceType = (resourceType || 'product').toUpperCase() as "PRODUCT" | "COLLECTION";
+  const normalizedResourceType = (resourceType || 'product').toUpperCase() as "PRODUCT" | "COLLECTION" | "PAGE" | "BLOG";
 
   // Get client IP and geo-location data
   const clientIP = getClientIP(request);

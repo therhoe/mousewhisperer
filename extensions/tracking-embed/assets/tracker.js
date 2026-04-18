@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  // Detect page type (product or collection)
+  // Detect page type (product, collection, page, or blog)
   function getPageInfo() {
     var productMatch = window.location.pathname.match(/\/products\/([^/?#]+)/);
     if (productMatch) {
@@ -13,10 +13,26 @@
       return { handle: collectionMatch[1], type: 'collection' };
     }
 
+    // Blog post: /blogs/{blog-handle}/{post-handle} or blog index: /blogs/{blog-handle}
+    var blogPostMatch = window.location.pathname.match(/\/blogs\/([^/?#]+)\/([^/?#]+)/);
+    if (blogPostMatch) {
+      return { handle: blogPostMatch[1] + '/' + blogPostMatch[2], type: 'blog' };
+    }
+    var blogMatch = window.location.pathname.match(/\/blogs\/([^/?#]+)/);
+    if (blogMatch) {
+      return { handle: blogMatch[1], type: 'blog' };
+    }
+
+    // Pages: /pages/{handle}
+    var pageMatch = window.location.pathname.match(/\/pages\/([^/?#]+)/);
+    if (pageMatch) {
+      return { handle: pageMatch[1], type: 'page' };
+    }
+
     return null;
   }
 
-  // Only run on product or collection pages
+  // Only run on tracked page types
   var pageInfo = getPageInfo();
   if (!pageInfo) {
     return;

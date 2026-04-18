@@ -165,7 +165,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = formData.get("productId") as string;
     const productTitle = formData.get("productTitle") as string;
     const productHandle = formData.get("productHandle") as string;
-    const resourceType = (formData.get("resourceType") as "PRODUCT" | "COLLECTION") || "PRODUCT";
+    const resourceType = (formData.get("resourceType") as "PRODUCT" | "COLLECTION" | "PAGE" | "BLOG") || "PRODUCT";
     const snapshotName = formData.get("snapshotName") as string | null;
     const targetVisitors = parseInt(formData.get("targetVisitors") as string) || 1000;
 
@@ -313,7 +313,7 @@ export default function Index() {
       setHasMoreNotifs(more.length === 10);
     }
   }, [notifFetcher.data]);
-  const [resourceType, setResourceType] = useState<"product" | "collection">("product");
+  const [resourceType, setResourceType] = useState<"product" | "collection" | "page" | "blog">("product");
   const [selectedProduct, setSelectedProduct] = useState<{
     id: string;
     title: string;
@@ -321,6 +321,8 @@ export default function Index() {
   } | null>(null);
   const [snapshotName, setSnapshotName] = useState("");
   const [targetVisitors, setTargetVisitors] = useState("1000");
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualHandle, setManualHandle] = useState("");
 
   const isLoading = navigation.state !== "idle";
 
@@ -343,9 +345,18 @@ export default function Index() {
     setIsTypeModalOpen(true);
   }, []);
 
-  // After selecting type, open the actual resource picker
+  // After selecting type, open the actual resource picker or manual input
   const handleSelectType = useCallback(async () => {
     setIsTypeModalOpen(false);
+
+    if (resourceType === "page" || resourceType === "blog") {
+      // No Shopify resource picker for pages/blogs — go straight to create modal
+      setSelectedProduct(null);
+      setSnapshotName("");
+      setTargetVisitors("1000");
+      setIsModalOpen(true);
+      return;
+    }
 
     try {
       const pickerType = resourceType === "collection" ? "collection" : "product";
@@ -372,20 +383,27 @@ export default function Index() {
   }, [resourceType]);
 
   const handleCreateProject = useCallback(() => {
-    if (!selectedProduct) return;
+    const isManual = resourceType === "page" || resourceType === "blog";
+    const title = isManual ? manualTitle : selectedProduct?.title;
+    const handle = isManual ? manualHandle : selectedProduct?.handle;
+    const id = isManual ? `gid://shopify/${resourceType === "page" ? "Page" : "Blog"}/${manualHandle}` : selectedProduct?.id;
+
+    if (!title || !handle) return;
 
     const formData = new FormData();
     formData.append("action", "create");
-    formData.append("productId", selectedProduct.id);
-    formData.append("productTitle", selectedProduct.title);
-    formData.append("productHandle", selectedProduct.handle);
+    formData.append("productId", id || "");
+    formData.append("productTitle", title);
+    formData.append("productHandle", handle);
     formData.append("resourceType", resourceType.toUpperCase());
     formData.append("snapshotName", snapshotName);
     formData.append("targetVisitors", targetVisitors);
     submit(formData, { method: "POST" });
     setIsModalOpen(false);
     setSelectedProduct(null);
-  }, [selectedProduct, resourceType, snapshotName, targetVisitors, submit]);
+    setManualTitle("");
+    setManualHandle("");
+  }, [selectedProduct, resourceType, snapshotName, targetVisitors, submit, manualTitle, manualHandle]);
 
   const handleCloseModal = useCallback(() => {
     setIsModalOpen(false);
@@ -884,9 +902,19 @@ export default function Index() {
                 value: "collection",
                 helpText: "Track visitor engagement on a collection page (/collections/...)",
               },
+              {
+                label: "Page",
+                value: "page",
+                helpText: "Track visitor engagement on a custom page (/pages/...)",
+              },
+              {
+                label: "Blog",
+                value: "blog",
+                helpText: "Track visitor engagement on a blog or blog post (/blogs/...)",
+              },
             ]}
             selected={[resourceType]}
-            onChange={(value) => setResourceType(value[0] as "product" | "collection")}
+            onChange={(value) => setResourceType(value[0] as "product" | "collection" | "page" | "blog")}
           />
         </Modal.Section>
       </Modal>
@@ -895,11 +923,12 @@ export default function Index() {
       <Modal
         open={isModalOpen}
         onClose={handleCloseModal}
-        title={`Create Audit: ${selectedProduct?.title || ""}`}
+        title={`Create Audit: ${selectedProduct?.title || manualTitle || (resourceType === "page" ? "Page" : resourceType === "blog" ? "Blog" : "")}`}
         primaryAction={{
           content: "Create Audit",
           onAction: handleCreateProject,
           loading: isLoading,
+          disabled: (resourceType === "page" || resourceType === "blog") && (!manualTitle || !manualHandle),
         }}
         secondaryActions={[
           {
@@ -910,6 +939,26 @@ export default function Index() {
       >
         <Modal.Section>
           <FormLayout>
+            {(resourceType === "page" || resourceType === "blog") && (
+              <>
+                <TextField
+                  label="Title"
+                  value={manualTitle}
+                  onChange={setManualTitle}
+                  placeholder={resourceType === "blog" ? "e.g., News Blog" : "e.g., About Us"}
+                  helpText="Name for this audit"
+                  autoComplete="off"
+                />
+                <TextField
+                  label="URL Handle"
+                  value={manualHandle}
+                  onChange={setManualHandle}
+                  placeholder={resourceType === "blog" ? "e.g., news or news/my-first-post" : "e.g., about-us"}
+                  helpText={resourceType === "blog" ? "The blog handle from the URL: /blogs/{handle} or /blogs/{blog}/{post}" : "The page handle from the URL: /pages/{handle}"}
+                  autoComplete="off"
+                />
+              </>
+            )}
             <TextField
               label="Snapshot Name"
               value={snapshotName}

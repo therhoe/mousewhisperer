@@ -110,7 +110,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   // Fetch challenges + counts
-  const [insights, leaders, activeCount, completedCount, productCount, collectionCount] = await Promise.all([
+  const [insights, leaders, activeCount, completedCount, productCount, collectionCount, pageCount, blogCount] = await Promise.all([
     prisma.insight.findMany({
       where,
       orderBy,
@@ -151,6 +151,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
     prisma.project.count({ where: { shop, resourceType: "PRODUCT" } }),
     prisma.project.count({ where: { shop, resourceType: "COLLECTION" } }),
+    prisma.project.count({ where: { shop, resourceType: "PAGE" } }),
+    prisma.project.count({ where: { shop, resourceType: "BLOG" } }),
   ]);
 
   const hasNext = insights.length > PAGE_SIZE;
@@ -208,11 +210,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     completedCount,
     productCount,
     collectionCount,
+    pageCount,
+    blogCount,
   });
 };
 
 export default function ChallengesFeed() {
-  const { hasProfile, profileData, insights, nextCursor, leaderboard, filters, activeCount, completedCount, productCount, collectionCount } =
+  const { hasProfile, profileData, insights, nextCursor, leaderboard, filters, activeCount, completedCount, productCount, collectionCount, pageCount, blogCount } =
     useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -321,10 +325,12 @@ export default function ChallengesFeed() {
                       <BlockStack gap="200">
                         <Text as="h3" variant="headingSm">Your audits</Text>
                         {[
-                          { label: "Products", count: productCount },
-                          { label: "Collections", count: collectionCount },
-                        ].map(({ label, count }) => (
-                          <Link key={label} to="/app" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 4px", borderBottom: "1px solid #ebebeb", textDecoration: "none", color: "inherit", fontSize: 13, fontWeight: 500 }}>
+                          { label: "Products", count: productCount, url: "/app/audits/products" },
+                          { label: "Collections", count: collectionCount, url: "/app/audits/collections" },
+                          { label: "Pages", count: pageCount, url: "/app/audits/pages" },
+                          { label: "Blogs", count: blogCount, url: "/app/audits/blogs" },
+                        ].map(({ label, count, url }) => (
+                          <Link key={label} to={url} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 4px", borderBottom: "1px solid #ebebeb", textDecoration: "none", color: "inherit", fontSize: 13, fontWeight: 500 }}>
                             <span>{label}</span>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#6d7175" }}>
                               <span>{count}</span>
