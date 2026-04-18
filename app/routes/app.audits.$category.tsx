@@ -13,7 +13,6 @@ import {
   Modal,
   TextField,
   FormLayout,
-  Select,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -200,13 +199,12 @@ export default function AuditsCategory() {
   const navigation = useNavigation();
   const isLoading = navigation.state !== "idle";
 
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [snapshotName, setSnapshotName] = useState("");
   const [targetVisitors, setTargetVisitors] = useState("1000");
-  // For products/collections — set by Shopify resource picker
   const [selectedResource, setSelectedResource] = useState<{ id: string; title: string; handle: string } | null>(null);
-  // For pages/blogs — selected from dropdown
-  const [selectedResourceId, setSelectedResourceId] = useState("");
+  const [pickerSearch, setPickerSearch] = useState("");
 
   const handleOpenCreate = useCallback(async () => {
     if (category === "products" || category === "collections") {
@@ -227,48 +225,37 @@ export default function AuditsCategory() {
         console.error("Resource picker error:", e);
       }
     } else {
-      // Pages/blogs — show modal with dropdown
+      // Pages/blogs — show custom picker modal
       setSelectedResource(null);
-      setSelectedResourceId("");
-      setSnapshotName("");
-      setTargetVisitors("1000");
-      setIsCreateModalOpen(true);
+      setPickerSearch("");
+      setIsPickerOpen(true);
     }
   }, [category]);
 
-  const handleCreate = useCallback(() => {
-    let id = "", title = "", handle = "";
-    if (category === "products" || category === "collections") {
-      if (!selectedResource) return;
-      id = selectedResource.id;
-      title = selectedResource.title;
-      handle = selectedResource.handle;
-    } else {
-      const res = availableResources.find((r: any) => r.id === selectedResourceId);
-      if (!res) return;
-      id = res.id;
-      title = res.title;
-      handle = res.handle;
-    }
+  const handlePickResource = useCallback((res: { id: string; title: string; handle: string }) => {
+    setSelectedResource(res);
+    setIsPickerOpen(false);
+    setSnapshotName("");
+    setTargetVisitors("1000");
+    setIsCreateModalOpen(true);
+  }, []);
 
+  const handleCreate = useCallback(() => {
+    if (!selectedResource) return;
     const fd = new FormData();
     fd.append("action", "create");
-    fd.append("productId", id);
-    fd.append("productTitle", title);
-    fd.append("productHandle", handle);
+    fd.append("productId", selectedResource.id);
+    fd.append("productTitle", selectedResource.title);
+    fd.append("productHandle", selectedResource.handle);
     fd.append("snapshotName", snapshotName);
     fd.append("targetVisitors", targetVisitors);
     submit(fd, { method: "POST" });
     setIsCreateModalOpen(false);
-  }, [category, selectedResource, selectedResourceId, availableResources, snapshotName, targetVisitors, submit]);
+  }, [selectedResource, snapshotName, targetVisitors, submit]);
 
-  const modalTitle = (category === "products" || category === "collections")
-    ? `Create Audit: ${selectedResource?.title || ""}`
-    : `Create ${config.singular} Audit`;
-
-  const canSubmit = (category === "products" || category === "collections")
-    ? !!selectedResource
-    : !!selectedResourceId;
+  const filteredResources = (availableResources as any[]).filter((r: any) =>
+    !pickerSearch || r.title.toLowerCase().includes(pickerSearch.toLowerCase())
+  );
 
   return (
     <Page
@@ -379,27 +366,77 @@ export default function AuditsCategory() {
         )}
       </Layout>
 
-      {/* Create Audit Modal */}
+      {/* Custom Resource Picker for Pages/Blogs */}
+      <Modal
+        open={isPickerOpen}
+        onClose={() => setIsPickerOpen(false)}
+        title={`Add ${config.singular}`}
+      >
+        <Modal.Section>
+          <TextField
+            label=""
+            labelHidden
+            value={pickerSearch}
+            onChange={setPickerSearch}
+            placeholder={`Search ${category}...`}
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => setPickerSearch("")}
+            prefix={<span style={{ color: "#6d7175" }}>{"\uD83D\uDD0D"}</span>}
+          />
+        </Modal.Section>
+        <div style={{ maxHeight: 400, overflowY: "auto" }}>
+          {filteredResources.length === 0 ? (
+            <div style={{ padding: "24px 20px", textAlign: "center" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {pickerSearch ? `No ${category} matching "${pickerSearch}"` : `No ${category} found in your store`}
+              </Text>
+            </div>
+          ) : (
+            filteredResources.map((r: any) => (
+              <div
+                key={r.id}
+                onClick={() => handlePickResource(r)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "12px 20px", cursor: "pointer",
+                  borderBottom: "1px solid #f1f1f1",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#f6f6f7"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <div style={{
+                  width: 36, height: 36, borderRadius: 6, background: "#e4e5e7",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 16, color: "#6d7175", flexShrink: 0,
+                }}>
+                  {category === "blogs" ? "\uD83D\uDCDD" : "\uD83D\uDCC4"}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Text as="p" variant="bodyMd">{r.title}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">/{category === "blogs" ? "blogs" : "pages"}/{r.handle}</Text>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        <div style={{ padding: "12px 20px", borderTop: "1px solid #e4e5e7", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <Text as="span" variant="bodySm" tone="subdued">{filteredResources.length} {category} available</Text>
+          <Button onClick={() => setIsPickerOpen(false)}>Cancel</Button>
+        </div>
+      </Modal>
+
+      {/* Create Audit Modal (after resource is selected) */}
       <Modal
         open={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
-        title={modalTitle}
-        primaryAction={{ content: "Create Audit", onAction: handleCreate, loading: isLoading, disabled: !canSubmit }}
+        title={`Create Audit: ${selectedResource?.title || ""}`}
+        primaryAction={{ content: "Create Audit", onAction: handleCreate, loading: isLoading, disabled: !selectedResource }}
         secondaryActions={[{ content: "Cancel", onAction: () => setIsCreateModalOpen(false) }]}
       >
         <Modal.Section>
           <FormLayout>
-            {(category === "pages" || category === "blogs") && (
-              <Select
-                label={`Select ${config.singular}`}
-                options={[
-                  { label: `Choose a ${config.singular}...`, value: "" },
-                  ...(availableResources as any[]).map((r: any) => ({ label: r.title, value: r.id })),
-                ]}
-                value={selectedResourceId}
-                onChange={setSelectedResourceId}
-              />
-            )}
             <TextField
               label="Snapshot Name"
               value={snapshotName}
