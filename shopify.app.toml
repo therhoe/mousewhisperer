@@ -6,7 +6,7 @@ application_url = "https://mousewhisperer.vercel.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,write_pixels,read_customer_events,read_orders"
+scopes = "read_products,write_pixels,read_customer_events,read_orders,read_content"
 
 [auth]
 redirect_urls = ["https://mousewhisperer.vercel.app/auth/callback"]
