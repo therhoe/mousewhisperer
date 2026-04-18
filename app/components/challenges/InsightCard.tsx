@@ -111,13 +111,13 @@ export function InsightCard({
       </div>
 
       {/* Image + 2x2 Metrics row */}
-      <div style={{ display: "flex", gap: 0, alignItems: "stretch", minHeight: hasImage ? 180 : 80 }}>
+      <div style={{ display: "flex", gap: 0, alignItems: "stretch", height: 180 }}>
         <div style={{
           flex: 1, position: "relative", background: "#f6f6f7", overflow: "hidden",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           {hasImage ? (
-            <img src={imageUrl!} alt={title} style={{ width: "auto", height: "100%", objectFit: "contain", display: "block" }} />
+            <img src={imageUrl!} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
           ) : (
             <Text as="span" variant="bodyMd" tone="subdued">{category === "SOURCE_QUALITY" || category === "HIGH_BOT_TRAFFIC" ? "Collection" : "Product"}</Text>
           )}

@@ -50,13 +50,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: { id: params.id },
     include: {
       profile: {
-        select: { id: true, displayName: true, avatarEmoji: true, storeCategory: true, shop: true },
+        select: { id: true, displayName: true, avatarEmoji: true, avatarUrl: true, storeCategory: true, shop: true },
       },
       answers: {
         orderBy: [{ isAccepted: "desc" }, { upvoteCount: "desc" }],
         include: {
           profile: {
-            select: { id: true, displayName: true, avatarEmoji: true, shop: true, reputation: true },
+            select: { id: true, displayName: true, avatarEmoji: true, avatarUrl: true, shop: true, reputation: true },
           },
         },
       },
@@ -562,9 +562,11 @@ export default function InsightDetail() {
                 {/* Top bar: author info + actions */}
                 <InlineStack align="space-between" blockAlign="center" wrap>
                   <InlineStack gap="200" blockAlign="center">
-                    <span style={{ fontSize: "1.5rem" }}>
-                      {insight.profile.avatarEmoji || "🐭"}
-                    </span>
+                    {insight.profile.avatarUrl ? (
+                      <img src={insight.profile.avatarUrl} alt={insight.profile.displayName} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", imageRendering: "pixelated" }} />
+                    ) : (
+                      <span style={{ fontSize: "1.5rem" }}>{insight.profile.avatarEmoji || "\uD83D\uDC2D"}</span>
+                    )}
                     <BlockStack gap="0">
                       <Text as="span" variant="bodySm" fontWeight="semibold">
                         {insight.profile.displayName}
