@@ -2,8 +2,9 @@ import { useState, useCallback } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
 import {
   SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS,
-  HAIR_STYLES, EYE_STYLES, MOUTH_STYLES, ACCESSORIES, CAPE_OPTIONS,
-  compositeCharacter,
+  TEMPLATE_STYLES, CAPE_OPTIONS, EYE_STYLES, MOUTH_STYLES, ACCESSORIES,
+  compositeCharacter, analyzePixelData,
+  type BuilderState, DEFAULT_BUILDER_STATE,
 } from "./AvatarParts";
 
 const GRID_SIZE = 32;
@@ -896,28 +897,13 @@ interface PixelArtEditorProps {
 
 export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps) {
   const [activeTab, setActiveTab] = useState<"premade" | "builder" | "custom">("premade");
-  // Builder state — matches Crofly template
-  const [builderSkin, setBuilderSkin] = useState(1);
-  const [builderHairColor, setBuilderHairColor] = useState(2);
-  const [builderTop, setBuilderTop] = useState(3); // yellow like crofly
-  const [builderAccent, setBuilderAccent] = useState(0); // red
-  const [builderCape, setBuilderCape] = useState(0); // none
-  const [builderHairStyle, setBuilderHairStyle] = useState(0);
-  const [builderEyes, setBuilderEyes] = useState(0);
-  const [builderMouth, setBuilderMouth] = useState(0);
-  const [builderAccessory, setBuilderAccessory] = useState(0);
+  // Builder state — single object
+  const [builder, setBuilder] = useState<BuilderState>(DEFAULT_BUILDER_STATE);
+  const updateBuilder = useCallback((patch: Partial<BuilderState>) => {
+    setBuilder((prev) => ({ ...prev, ...patch }));
+  }, []);
 
-  const builderPixels = compositeCharacter({
-    skin: SKIN_TONES[builderSkin].color,
-    hair: HAIR_COLORS[builderHairColor].color,
-    top: OUTFIT_COLORS[builderTop].color,
-    accent: OUTFIT_COLORS[builderAccent].color,
-    capeColor: CAPE_OPTIONS[builderCape].color,
-    hairStyleIdx: builderHairStyle,
-    eyeStyleIdx: builderEyes,
-    mouthStyleIdx: builderMouth,
-    accessoryIdx: builderAccessory,
-  });
+  const builderPixels = compositeCharacter(builder);
 
   const handleSaveBuilder = useCallback(() => {
     const dataUrl = pixelDataToDataUrl(builderPixels);
@@ -930,15 +916,25 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
   }, [builderPixels]);
 
   const handleRandomize = useCallback(() => {
-    setBuilderSkin(Math.floor(Math.random() * SKIN_TONES.length));
-    setBuilderHairColor(Math.floor(Math.random() * HAIR_COLORS.length));
-    setBuilderTop(Math.floor(Math.random() * OUTFIT_COLORS.length));
-    setBuilderAccent(Math.floor(Math.random() * OUTFIT_COLORS.length));
-    setBuilderCape(Math.floor(Math.random() * CAPE_OPTIONS.length));
-    setBuilderHairStyle(Math.floor(Math.random() * HAIR_STYLES.length));
-    setBuilderEyes(Math.floor(Math.random() * EYE_STYLES.length));
-    setBuilderMouth(Math.floor(Math.random() * MOUTH_STYLES.length));
-    setBuilderAccessory(Math.floor(Math.random() * ACCESSORIES.length));
+    setBuilder({
+      templateIdx: Math.floor(Math.random() * TEMPLATE_STYLES.length),
+      skinIdx: Math.floor(Math.random() * SKIN_TONES.length),
+      hairIdx: Math.floor(Math.random() * HAIR_COLORS.length),
+      topIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      accentIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      hasCape: Math.random() > 0.4,
+      capeColorIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      eyeIdx: Math.floor(Math.random() * EYE_STYLES.length),
+      mouthIdx: Math.floor(Math.random() * MOUTH_STYLES.length),
+      accessoryIdx: Math.floor(Math.random() * ACCESSORIES.length),
+    });
+  }, []);
+
+  // Load pre-made or free-draw into builder
+  const handleLoadToBuilder = useCallback((data: Map<string, string>) => {
+    const state = analyzePixelData(data);
+    setBuilder(state);
+    setActiveTab("builder");
   }, []);
   const [selectedColor, setSelectedColor] = useState("#2C6ECB");
   const [tool, setTool] = useState<"pencil" | "eraser">("pencil");
@@ -1035,26 +1031,48 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
               Use this avatar
             </Button>
             {selectedPremade !== null && (
-              <Button onClick={() => handleLoadPremadeToEditor(selectedPremade)}>
-                Edit this character
-              </Button>
+              <>
+                <Button onClick={() => handleLoadToBuilder(PREMADE_AVATARS[selectedPremade].data)}>
+                  Edit in Builder
+                </Button>
+                <Button onClick={() => handleLoadPremadeToEditor(selectedPremade)}>
+                  Edit in Free Draw
+                </Button>
+              </>
             )}
           </InlineStack>
         </BlockStack>
       )}
 
       {activeTab === "builder" && (() => {
-        const categories = [
-          { label: "Skin", options: SKIN_TONES, value: builderSkin, set: setBuilderSkin, type: "color" as const },
-          { label: "Hair Color", options: HAIR_COLORS, value: builderHairColor, set: setBuilderHairColor, type: "color" as const },
-          { label: "Shirt Color", options: OUTFIT_COLORS, value: builderTop, set: setBuilderTop, type: "color" as const },
-          { label: "Accent Color", options: OUTFIT_COLORS, value: builderAccent, set: setBuilderAccent, type: "color" as const },
-          { label: "Cape", options: CAPE_OPTIONS.map(c => ({ name: c.name, color: c.color || "#F6F6F7" })), value: builderCape, set: setBuilderCape, type: "color" as const },
-          { label: "Hair Style", options: HAIR_STYLES, value: builderHairStyle, set: setBuilderHairStyle, type: "part" as const },
-          { label: "Eyes", options: EYE_STYLES, value: builderEyes, set: setBuilderEyes, type: "part" as const },
-          { label: "Mouth", options: MOUTH_STYLES, value: builderMouth, set: setBuilderMouth, type: "part" as const },
-          { label: "Accessory", options: ACCESSORIES, value: builderAccessory, set: setBuilderAccessory, type: "part" as const },
-        ];
+        const colorRow = (label: string, palette: Array<{ name: string; color: string }>, value: number, set: (i: number) => void) => (
+          <div key={label}>
+            <Text as="p" variant="bodySm" fontWeight="semibold">{label}</Text>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {palette.map((opt, i) => (
+                <button key={`${label}-${i}`} onClick={() => set(i)} title={opt.name} style={{
+                  width: 28, height: 28, borderRadius: 6, cursor: "pointer",
+                  backgroundColor: opt.color, border: value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
+                }} />
+              ))}
+            </div>
+          </div>
+        );
+        const partRow = (label: string, options: Array<{ name: string; icon: string }>, value: number, set: (i: number) => void) => (
+          <div key={label}>
+            <Text as="p" variant="bodySm" fontWeight="semibold">{label}</Text>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {options.map((opt, i) => (
+                <button key={`${label}-${i}`} onClick={() => set(i)} title={opt.name} style={{
+                  padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13,
+                  border: value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
+                  background: value === i ? "#f0f5ff" : "white", fontWeight: value === i ? 600 : 400,
+                }}>{opt.icon} {opt.name}</button>
+              ))}
+            </div>
+          </div>
+        );
+
         return (
           <div style={{ display: "flex", gap: 24 }}>
             {/* Preview */}
@@ -1068,44 +1086,18 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
             </div>
 
             {/* Parts panel */}
-            <div style={{ flex: 1, maxHeight: 420, overflowY: "auto" }}>
+            <div style={{ flex: 1, maxHeight: 500, overflowY: "auto" }}>
               <BlockStack gap="300">
-                {categories.map((cat) => (
-                  <div key={cat.label}>
-                    <Text as="p" variant="bodySm" fontWeight="semibold">{cat.label}</Text>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                      {cat.type === "color"
-                        ? (cat.options as Array<{ name: string; color: string }>).map((opt, i) => (
-                            <button
-                              key={opt.name}
-                              onClick={() => cat.set(i)}
-                              title={opt.name}
-                              style={{
-                                width: 28, height: 28, borderRadius: 6, cursor: "pointer",
-                                backgroundColor: opt.color,
-                                border: cat.value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
-                              }}
-                            />
-                          ))
-                        : (cat.options as Array<{ name: string; icon: string }>).map((opt, i) => (
-                            <button
-                              key={opt.name}
-                              onClick={() => cat.set(i)}
-                              title={opt.name}
-                              style={{
-                                padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13,
-                                border: cat.value === i ? "2px solid #2c6ecb" : "1px solid #d0d0d0",
-                                background: cat.value === i ? "#f0f5ff" : "white",
-                                fontWeight: cat.value === i ? 600 : 400,
-                              }}
-                            >
-                              {opt.icon} {opt.name}
-                            </button>
-                          ))
-                      }
-                    </div>
-                  </div>
-                ))}
+                {partRow("Character Style", TEMPLATE_STYLES, builder.templateIdx, (i) => updateBuilder({ templateIdx: i }))}
+                {colorRow("Skin", SKIN_TONES, builder.skinIdx, (i) => updateBuilder({ skinIdx: i }))}
+                {builder.templateIdx === 1 && colorRow("Hair Color", HAIR_COLORS, builder.hairIdx, (i) => updateBuilder({ hairIdx: i }))}
+                {colorRow("Shirt Color", OUTFIT_COLORS, builder.topIdx, (i) => updateBuilder({ topIdx: i }))}
+                {colorRow("Accent Color", OUTFIT_COLORS, builder.accentIdx, (i) => updateBuilder({ accentIdx: i }))}
+                {partRow("Cape", CAPE_OPTIONS, builder.hasCape ? 0 : 1, (i) => updateBuilder({ hasCape: i === 0 }))}
+                {builder.hasCape && colorRow("Cape Color", OUTFIT_COLORS, builder.capeColorIdx, (i) => updateBuilder({ capeColorIdx: i }))}
+                {partRow("Eyes", EYE_STYLES, builder.eyeIdx, (i) => updateBuilder({ eyeIdx: i }))}
+                {partRow("Mouth", MOUTH_STYLES, builder.mouthIdx, (i) => updateBuilder({ mouthIdx: i }))}
+                {partRow("Accessory", ACCESSORIES, builder.accessoryIdx, (i) => updateBuilder({ accessoryIdx: i }))}
               </BlockStack>
             </div>
           </div>
@@ -1151,6 +1143,9 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
             <div style={{ marginTop: 8 }}>
               <InlineStack gap="200">
                 <Button size="slim" onClick={handleClear}>Clear</Button>
+                <Button size="slim" onClick={() => handleLoadToBuilder(pixelData)} disabled={pixelData.size === 0}>
+                  Edit in Builder
+                </Button>
                 <Button size="slim" variant="primary" onClick={handleSaveCustom} disabled={pixelData.size === 0}>
                   Save avatar
                 </Button>
