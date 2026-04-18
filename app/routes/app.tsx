@@ -59,7 +59,7 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
-        <Link to="/app/insights">Insights Board</Link>
+        <Link to="/app/challenges">Challenges</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>

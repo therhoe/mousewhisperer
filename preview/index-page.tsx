@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { createRoot } from "react-dom/client";
 import {
   AppProvider,
   Page,
@@ -18,153 +17,26 @@ import {
   ChoiceList,
   FormLayout,
   TextField,
+  Select,
 } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 
 // ══════════════════════════════════════════════════════
-// MOCK DATA (from real store screenshot + enriched)
+// MOCK DATA (imported from shared data.ts)
 // ══════════════════════════════════════════════════════
 
-type Project = {
-  id: string;
-  productTitle: string;
-  resourceType: "PRODUCT" | "COLLECTION";
-  status: string;
-  snapshotName: string;
-  snapshotCount: number;
-  targetVisitors: number;
-  realCount: number;
-  zombieCount: number;
-  botCount: number;
-  progress: number;
-  // Metrics — Products use ATC, others use CTR
-  atcRate?: number;   // Add to Cart % (products)
-  ctrRate?: number;   // Click-through % (collections/pages/blogs)
-  cvrRate: number;    // Conversion %
-  revenue: number;    // Total revenue $
-};
+import { PROJECTS, type Project } from "./data";
+import { PostCard, POSTS, type MetricsLayout } from "./post-card";
 
-const PROJECTS: Project[] = [
-  {
-    id: "p1",
-    productTitle: "Footwear",
-    resourceType: "COLLECTION",
-    status: "COMPLETED",
-    snapshotName: "Baseline",
-    snapshotCount: 1,
-    targetVisitors: 500,
-    realCount: 500,
-    zombieCount: 129,
-    botCount: 13,
-    progress: 100,
-    ctrRate: 12.4,
-    cvrRate: 3.2,
-    revenue: 4850,
-  },
-  {
-    id: "p2",
-    productTitle: "Correct Toes\u00AE The Original Toe Spacer",
-    resourceType: "PRODUCT",
-    status: "COMPLETED",
-    snapshotName: "Numero tres",
-    snapshotCount: 3,
-    targetVisitors: 250,
-    realCount: 250,
-    zombieCount: 80,
-    botCount: 3,
-    progress: 100,
-    atcRate: 18.5,
-    cvrRate: 6.8,
-    revenue: 12340,
-  },
-  {
-    id: "p3",
-    productTitle: "Correct Toes\u00AE The Original",
-    resourceType: "COLLECTION",
-    status: "COMPLETED",
-    snapshotName: "Testing",
-    snapshotCount: 2,
-    targetVisitors: 100,
-    realCount: 100,
-    zombieCount: 51,
-    botCount: 2,
-    progress: 100,
-    ctrRate: 8.1,
-    cvrRate: 2.1,
-    revenue: 1520,
-  },
-  {
-    id: "p4",
-    productTitle: "Accessories",
-    resourceType: "COLLECTION",
-    status: "COMPLETED",
-    snapshotName: "Test",
-    snapshotCount: 1,
-    targetVisitors: 100,
-    realCount: 100,
-    zombieCount: 43,
-    botCount: 5,
-    progress: 100,
-    ctrRate: 15.3,
-    cvrRate: 4.5,
-    revenue: 2100,
-  },
-  {
-    id: "p5",
-    productTitle: "Closeout Sale | The Original Toe Spacer",
-    resourceType: "PRODUCT",
-    status: "COMPLETED",
-    snapshotName: "Test",
-    snapshotCount: 1,
-    targetVisitors: 100,
-    realCount: 100,
-    zombieCount: 25,
-    botCount: 7,
-    progress: 100,
-    atcRate: 9.2,
-    cvrRate: 2.8,
-    revenue: 890,
-  },
-  {
-    id: "p6",
-    productTitle: "Correct Toes StableToe\u00AE",
-    resourceType: "PRODUCT",
-    status: "COMPLETED",
-    snapshotName: "Testing Conversion",
-    snapshotCount: 3,
-    targetVisitors: 250,
-    realCount: 250,
-    zombieCount: 76,
-    botCount: 9,
-    progress: 100,
-    atcRate: 14.2,
-    cvrRate: 5.1,
-    revenue: 8750,
-  },
-  {
-    id: "p7",
-    productTitle: "Correct Toes SPORT\u00AE",
-    resourceType: "PRODUCT",
-    status: "COMPLETED",
-    snapshotName: "+VidLibrary",
-    snapshotCount: 4,
-    targetVisitors: 500,
-    realCount: 500,
-    zombieCount: 10,
-    botCount: 13,
-    progress: 100,
-    atcRate: 22.1,
-    cvrRate: 8.4,
-    revenue: 28900,
-  },
-];
 
 const MOCK_DATA = {
   activeCount: 0,
   completedCount: 15,
   profile: {
     avatarEmoji: "\uD83D\uDD25",
-    displayName: "Correct Toes",
+    displayName: "Shepherd",
+    companyName: "The Real Heroes",
+    title: "Operator",
     reputation: 40,
     answersCount: 5,
     insightsCount: 5,
@@ -461,28 +333,146 @@ function getLevel(rep: number) {
   return { level: 1, title: "Newcomer", next: 5, prev: 0 };
 }
 
-function RetroProfileCard() {
-  const { profile, trendingInsights, activeCount, completedCount } = MOCK_DATA;
-  const lvl = getLevel(profile.reputation);
-  const xpProgress = Math.round(((profile.reputation - lvl.prev) / (lvl.next - lvl.prev)) * 100);
+// ══════════════════════════════════════════════════════
+// AUDITS COUNT CARD — top banner on Dashboard
+// ══════════════════════════════════════════════════════
+
+function AuditsCTACard() {
+  const items: {
+    label: string;
+    cat: "products" | "collections" | "pages" | "blogs";
+    resource: "PRODUCT" | "COLLECTION" | "PAGE" | "BLOG";
+  }[] = [
+    { label: "Products", cat: "products", resource: "PRODUCT" },
+    { label: "Collections", cat: "collections", resource: "COLLECTION" },
+    { label: "Pages", cat: "pages", resource: "PAGE" },
+    { label: "Blogs", cat: "blogs", resource: "BLOG" },
+  ];
+  return (
+    <Card>
+      <BlockStack gap="200">
+        <Text as="h3" variant="headingSm">
+          Your audits
+        </Text>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {items.map(({ label, cat, resource }) => {
+            const count = PROJECTS.filter((p) => p.resourceType === resource).length;
+            return (
+              <a
+                key={cat}
+                href={`#/audits/${cat}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 4px",
+                  borderBottom: "1px solid #ebebeb",
+                  textDecoration: "none",
+                  color: "inherit",
+                  fontSize: 13,
+                  fontWeight: 500,
+                }}
+              >
+                <span>{label}</span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    color: "#6d7175",
+                  }}
+                >
+                  <span>{count}</span>
+                  <span>{"\u2192"}</span>
+                </span>
+              </a>
+            );
+          })}
+        </div>
+      </BlockStack>
+    </Card>
+  );
+}
+
+function FilterCard() {
+  const [category, setCategory] = useState("all");
+  const [sortBy, setSortBy] = useState("newest");
+  const [search, setSearch] = useState("");
+
+  const categoryOptions = [
+    { label: "All categories", value: "all" },
+    { label: "High Bot Traffic", value: "high-bot" },
+    { label: "Low Engagement", value: "low-engagement" },
+    { label: "Source Quality", value: "source-quality" },
+    { label: "Conversion Drop", value: "conversion-drop" },
+    { label: "General", value: "general" },
+  ];
+  const sortOptions = [
+    { label: "Newest", value: "newest" },
+    { label: "Trending", value: "trending" },
+    { label: "Most answers", value: "most-answers" },
+    { label: "Unsolved", value: "unsolved" },
+  ];
 
   return (
     <Card>
-      <div style={{ display: "flex", gap: 0 }}>
-        {/* ─── Left half: Avatar + Profile info ─── */}
-        <div style={{ display: "flex", flex: 1, gap: 16 }}>
-          {/* Avatar — full height */}
+      <InlineStack gap="300" blockAlign="end" wrap>
+        <div style={{ minWidth: 180 }}>
+          <Select
+            label="Category"
+            labelInline
+            options={categoryOptions}
+            value={category}
+            onChange={setCategory}
+          />
+        </div>
+        <div style={{ minWidth: 160 }}>
+          <Select
+            label="Sort"
+            labelInline
+            options={sortOptions}
+            value={sortBy}
+            onChange={setSortBy}
+          />
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <TextField
+            label=""
+            labelHidden
+            value={search}
+            onChange={setSearch}
+            placeholder="Search challenges..."
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => setSearch("")}
+          />
+        </div>
+      </InlineStack>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════
+// COMPACT PROFILE CARD — sidebar on Dashboard
+// ══════════════════════════════════════════════════════
+
+function CompactProfileCard() {
+  const { profile, activeCount, completedCount } = MOCK_DATA;
+  const lvl = getLevel(profile.reputation);
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        {/* Avatar + name */}
+        <InlineStack gap="300" blockAlign="center">
           <div
             style={{
-              flexShrink: 0,
-              width: 120,
-              minHeight: 180,
+              width: 72,
+              height: 72,
               borderRadius: 10,
               background: "#f6f6f7",
               overflow: "hidden",
-              display: "flex",
-              alignItems: "flex-end",
-              justifyContent: "center",
+              flexShrink: 0,
             }}
           >
             <img
@@ -493,101 +483,102 @@ function RetroProfileCard() {
                 height: "100%",
                 objectFit: "cover",
                 objectPosition: "center top",
-                borderRadius: 10,
               }}
             />
           </div>
-
-          {/* Profile details */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
-            {/* Name */}
-            <Text as="span" variant="headingLg" fontWeight="bold">
+          <div style={{ minWidth: 0 }}>
+            <Text as="p" variant="headingMd" fontWeight="bold">
               {profile.displayName}
             </Text>
-
-            {/* Subtitle */}
             <Text as="p" variant="bodySm" tone="subdued">
-              {lvl.title}
+              {profile.title} {"\u00B7"} {profile.companyName}
             </Text>
-
-            {/* Description */}
-            <Text as="p" variant="bodySm">
-              CRO specialist helping Shopify merchants optimize product pages for higher conversions.
-            </Text>
-
-            {/* Badges */}
-            <InlineStack gap="200" wrap>
-              <Badge tone="success">{"🌟"} Top Contributor</Badge>
-              <Badge tone="info">{"💡"} Insight Pioneer</Badge>
-              <Badge tone="warning">{"🔥"} 15 Audits</Badge>
-            </InlineStack>
-
-            {/* Points + Level + Progress */}
-            <div style={{ marginTop: 4 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                <Text as="span" variant="bodyMd" fontWeight="semibold">
-                  {profile.reputation} pts
-                </Text>
-                <Badge tone="info">LVL {lvl.level}</Badge>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {lvl.next - profile.reputation} pts to LVL {lvl.level + 1}
-                </Text>
-              </div>
-              <div
-                style={{
-                  height: 8,
-                  background: "#e4e5e7",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${xpProgress}%`,
-                    background: "#2c6ecb",
-                    borderRadius: 3,
-                    transition: "width 0.5s ease",
-                  }}
-                />
-              </div>
-            </div>
           </div>
-        </div>
+        </InlineStack>
 
-        {/* ─── Divider ─── */}
-        <div style={{ width: 1, background: "#e4e5e7", margin: "0 20px", flexShrink: 0 }} />
+        {/* Short description */}
+        <Text as="p" variant="bodySm">
+          CRO specialist helping Shopify merchants optimize product pages for
+          higher conversions.
+        </Text>
 
-        {/* ─── Right half: 2x2 Metrics grid ─── */}
+        {/* Badges */}
+        <InlineStack gap="100" wrap>
+          <Badge tone="success">{"\uD83C\uDF1F"} Top Contributor</Badge>
+          <Badge tone="info">{"\uD83D\uDCA1"} Insight Pioneer</Badge>
+          <Badge tone="warning">{"\uD83D\uDD25"} 15 Audits</Badge>
+        </InlineStack>
+
+        {/* Points + Level */}
         <div
           style={{
-            flex: "0 0 220px",
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 16,
-            alignContent: "center",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
           }}
         >
-          <div style={{ textAlign: "center", padding: "12px 0" }}>
-            <Text as="p" variant="bodySm" tone="subdued">Answers</Text>
-            <Text as="p" variant="headingXl">{profile.answersCount}</Text>
-          </div>
-          <div style={{ textAlign: "center", padding: "12px 0" }}>
-            <Text as="p" variant="bodySm" tone="subdued">Insights</Text>
-            <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
-          </div>
-          <div style={{ textAlign: "center", padding: "12px 0" }}>
-            <Text as="p" variant="bodySm" tone="subdued">Audits</Text>
-            <Text as="p" variant="headingXl">{completedCount}</Text>
-          </div>
-          <div style={{ textAlign: "center", padding: "12px 0" }}>
-            <Text as="p" variant="bodySm" tone="subdued">Streak</Text>
-            <Text as="p" variant="headingXl">
-              {activeCount > 0 ? activeCount : completedCount > 0 ? "✓" : "—"}
-            </Text>
-          </div>
+          <Text as="span" variant="bodyMd" fontWeight="semibold">
+            {profile.reputation} pts
+          </Text>
+          <Badge tone="info">LVL {lvl.level}</Badge>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {lvl.next - profile.reputation} pts to LVL {lvl.level + 1}
+          </Text>
         </div>
-      </div>
+
+        {/* Divider above Audits */}
+        <div style={{ height: 1, background: "#e4e5e7" }} />
+
+        {/* Audits stats */}
+        <BlockStack gap="200">
+          <Text as="h3" variant="headingSm">
+            Audits
+          </Text>
+          <InlineStack gap="400" align="space-between">
+            <Text as="span" variant="bodySm" tone="subdued">
+              Completed
+            </Text>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {completedCount}
+            </Text>
+          </InlineStack>
+          <InlineStack gap="400" align="space-between">
+            <Text as="span" variant="bodySm" tone="subdued">
+              Active
+            </Text>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {activeCount}
+            </Text>
+          </InlineStack>
+        </BlockStack>
+
+        {/* Divider below Audits */}
+        <div style={{ height: 1, background: "#e4e5e7" }} />
+
+        {/* Challenges stats */}
+        <BlockStack gap="200">
+          <Text as="h3" variant="headingSm">
+            Challenges
+          </Text>
+          <InlineStack gap="400" align="space-between">
+            <Text as="span" variant="bodySm" tone="subdued">
+              Created
+            </Text>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {profile.insightsCount}
+            </Text>
+          </InlineStack>
+          <InlineStack gap="400" align="space-between">
+            <Text as="span" variant="bodySm" tone="subdued">
+              Answered
+            </Text>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {profile.answersCount}
+            </Text>
+          </InlineStack>
+        </BlockStack>
+      </BlockStack>
     </Card>
   );
 }
@@ -706,8 +697,6 @@ function NotificationBell() {
 // ══════════════════════════════════════════════════════
 
 function IndexPage() {
-  const { activeCount, completedCount } = MOCK_DATA;
-  const [activeTab, setActiveTab] = useState<"products" | "collections" | "pages" | "blogs">("products");
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [resourceType, setResourceType] = useState<string>("product");
@@ -716,7 +705,7 @@ function IndexPage() {
 
   return (
     <Page
-      title="Mouse Whisperer"
+      title="Challenges"
       primaryAction={{
         content: "Create New Audit",
         onAction: () => setIsTypeModalOpen(true),
@@ -732,181 +721,41 @@ function IndexPage() {
         <NotificationBell />
       </div>
 
-      <Layout>
-        {/* ── Retro RPG Profile Card ── */}
-        <Layout.Section>
-          <RetroProfileCard />
-        </Layout.Section>
+      {/* ── Two-column layout: 25% sticky profile + 75% scrollable main ── */}
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          alignItems: "flex-start",
+        }}
+      >
+        {/* Left: sticky profile + audits CTA, 25% */}
+        <div
+          style={{
+            flex: "0 0 25%",
+            position: "sticky",
+            top: 16,
+            alignSelf: "flex-start",
+          }}
+        >
+          <BlockStack gap="400">
+            <CompactProfileCard />
+            <AuditsCTACard />
+          </BlockStack>
+        </div>
 
-        {/* ── Tabbed Audit Table ── */}
-        <Layout.Section>
-          <Card padding="0">
-            {/* Tabs */}
-            <div
-              style={{
-                display: "flex",
-                borderBottom: "1px solid var(--p-color-border-subdued)",
-              }}
-            >
-              {(["products", "collections", "pages", "blogs"] as const).map((tab) => {
-                const isActive = activeTab === tab;
-                const label = tab.charAt(0).toUpperCase() + tab.slice(1);
-                const count = tab === "products"
-                  ? PROJECTS.filter((p) => p.resourceType === "PRODUCT").length
-                  : tab === "collections"
-                  ? PROJECTS.filter((p) => p.resourceType === "COLLECTION").length
-                  : 0;
-                return (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    style={{
-                      flex: 1,
-                      padding: "12px 16px",
-                      background: "none",
-                      border: "none",
-                      borderBottom: isActive ? "2px solid #2c6ecb" : "2px solid transparent",
-                      cursor: "pointer",
-                      fontSize: 14,
-                      fontWeight: isActive ? 600 : 400,
-                      color: isActive ? "#202223" : "#6d7175",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    {label} {count > 0 && <span style={{ color: "#8c9196", fontWeight: 400 }}>({count})</span>}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Table content */}
-            {(() => {
-              const filtered =
-                activeTab === "products"
-                  ? PROJECTS.filter((p) => p.resourceType === "PRODUCT")
-                  : activeTab === "collections"
-                  ? PROJECTS.filter((p) => p.resourceType === "COLLECTION")
-                  : [];
-
-              if (filtered.length === 0) {
-                return (
-                  <div style={{ padding: "40px 16px", textAlign: "center" }}>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      No {activeTab} audits yet.
-                    </Text>
-                    <div style={{ marginTop: 12 }}>
-                      <Button onClick={() => setIsTypeModalOpen(true)}>
-                        Create {activeTab.slice(0, -1)} audit
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-
-              const isProduct = activeTab === "products";
-              const metricLabel1 = isProduct ? "ATC" : "CTR";
-
-              return (
-                <>
-                  {/* Rows */}
-                  {filtered.map((p, idx) => {
-                    const progressPct = Math.min(100, Math.round((p.realCount / p.targetVisitors) * 100));
-                    const metric1 = isProduct ? p.atcRate : p.ctrRate;
-                    const isDone = progressPct >= 100;
-
-                    return (
-                      <div
-                        key={p.id}
-                        style={{
-                          padding: "14px 20px",
-                          borderBottom: idx < filtered.length - 1 ? "1px solid #ebebeb" : "none",
-                          cursor: "pointer",
-                          transition: "background 0.15s",
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--p-color-bg-surface-hover)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                      >
-                          {/* Single row: Name | Progress | Metrics */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-                          {/* Left: Name + snapshot */}
-                          <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-                            <div>
-                              <Text variant="bodyMd" fontWeight="bold" as="span">
-                                {p.productTitle}
-                              </Text>
-                            </div>
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {p.snapshotName}{p.snapshotCount > 1 ? ` · ${p.snapshotCount} snapshots` : ""}
-                            </Text>
-                          </div>
-
-                          {/* Center: Progress bar */}
-                          <div style={{ flex: "1 1 180px", maxWidth: 220 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {p.realCount}/{p.targetVisitors}
-                              </Text>
-                            </div>
-                            <div
-                              style={{
-                                height: 6,
-                                background: "#e4e5e7",
-                                borderRadius: 3,
-                                overflow: "hidden",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  height: "100%",
-                                  width: `${progressPct}%`,
-                                  background: isDone ? "#29845a" : "#2c6ecb",
-                                  borderRadius: 3,
-                                  transition: "width 0.3s",
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Right: Metrics */}
-                          <div style={{ display: "flex", gap: 28, flexShrink: 0 }}>
-                            <div style={{ textAlign: "center", minWidth: 52 }}>
-                              <Text as="p" variant="bodySm" tone="subdued">{metricLabel1}</Text>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                {metric1 != null ? `${metric1}%` : "—"}
-                              </Text>
-                            </div>
-                            <div style={{ textAlign: "center", minWidth: 52 }}>
-                              <Text as="p" variant="bodySm" tone="subdued">CVR</Text>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                {p.cvrRate}%
-                              </Text>
-                            </div>
-                            <div style={{ textAlign: "center", minWidth: 64 }}>
-                              <Text as="p" variant="bodySm" tone="subdued">REV</Text>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                ${p.revenue.toLocaleString()}
-                              </Text>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              );
-            })()}
-          </Card>
-        </Layout.Section>
-
-        {/* ── Legend Row ── */}
-        <Layout.Section>
-          <InlineStack align="center" gap="400">
-            <span style={{ fontSize: 12, color: "#29845a" }}>{"●"} Real</span>
-            <span style={{ fontSize: 12, color: "#b98900" }}>{"●"} Zombie</span>
-            <span style={{ fontSize: 12, color: "#d72c0d" }}>{"●"} Bot</span>
-          </InlineStack>
-        </Layout.Section>
-      </Layout>
+        {/* Right: audits card + scrollable feed, capped at ~680px for readability */}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 680 }}>
+          <BlockStack gap="400">
+            <FilterCard />
+            {POSTS.map((p) => {
+              const variant: MetricsLayout =
+                p.id === "ins2" ? "right-2x2" : p.id === "ins3" ? "right-1x4" : "below";
+              return <PostCard key={p.id} post={p} metricsLayout={variant} />;
+            })}
+          </BlockStack>
+        </div>
+      </div>
 
       {/* ── Type Selection Modal ── */}
       <Modal
@@ -967,12 +816,7 @@ function IndexPage() {
 }
 
 // ══════════════════════════════════════════════════════
-// MOUNT
+// EXPORT
 // ══════════════════════════════════════════════════════
 
-const root = createRoot(document.getElementById("root")!);
-root.render(
-  <AppProvider i18n={{}}>
-    <IndexPage />
-  </AppProvider>
-);
+export default IndexPage;

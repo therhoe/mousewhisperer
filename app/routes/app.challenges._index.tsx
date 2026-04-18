@@ -18,9 +18,9 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { InsightCard } from "../components/insights/InsightCard";
-import { ProfileSetupBanner } from "../components/insights/ProfileSetupBanner";
-import { LeaderboardCard } from "../components/insights/LeaderboardCard";
+import { InsightCard } from "../components/challenges/InsightCard";
+import { ProfileSetupBanner } from "../components/challenges/ProfileSetupBanner";
+import { LeaderboardCard } from "../components/challenges/LeaderboardCard";
 
 const PAGE_SIZE = 20;
 
@@ -135,7 +135,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const items = hasNext ? insights.slice(0, PAGE_SIZE) : insights;
   const nextCursor = hasNext ? items[items.length - 1].id : null;
 
-  const enrichedInsights = items.map((insight: any) => ({
+  const enrichedChallenges = items.map((insight: any) => ({
     id: insight.id,
     title: insight.title,
     contentPreview: stripHtml(insight.content).slice(0, 160),
@@ -148,6 +148,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     createdAt: insight.createdAt,
     profile: insight.profile,
     snapshotStats: insight.snapshotStats || null,
+    imageUrl: insight.imageUrl || null,
     answers: (insight.answers || []).map((a: any) => ({
       id: a.id,
       content: stripHtml(a.content),
@@ -168,21 +169,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     hasProfile: !!profile,
-    insights: enrichedInsights,
+    insights: enrichedChallenges,
     nextCursor,
     leaderboard,
     filters: { category, sort, search, tab },
   });
 };
 
-export default function InsightsFeed() {
+export default function ChallengesFeed() {
   const { hasProfile, insights, nextCursor, leaderboard, filters } =
     useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const tabs = [
-    { id: "all", content: "All Insights" },
+    { id: "all", content: "All Challenges" },
     { id: "bookmarked", content: "Bookmarked" },
   ];
   const selectedTab = tabs.findIndex((t) => t.id === filters.tab);
@@ -196,7 +197,7 @@ export default function InsightsFeed() {
         params.delete(key);
       }
       params.delete("cursor");
-      navigate(`/app/insights?${params.toString()}`);
+      navigate(`/app/challenges?${params.toString()}`);
     },
     [searchParams, navigate],
   );
@@ -206,7 +207,7 @@ export default function InsightsFeed() {
       const params = new URLSearchParams(searchParams);
       params.set("tab", tabs[index].id);
       params.delete("cursor");
-      navigate(`/app/insights?${params.toString()}`);
+      navigate(`/app/challenges?${params.toString()}`);
     },
     [searchParams, navigate],
   );
@@ -215,12 +216,12 @@ export default function InsightsFeed() {
     if (!nextCursor) return;
     const params = new URLSearchParams(searchParams);
     params.set("cursor", nextCursor);
-    navigate(`/app/insights?${params.toString()}`);
+    navigate(`/app/challenges?${params.toString()}`);
   }, [searchParams, nextCursor, navigate]);
 
   return (
     <Page fullWidth>
-      <TitleBar title="Insights Board" />
+      <TitleBar title="Challenges" />
 
       <BlockStack gap="400">
         {!hasProfile && <ProfileSetupBanner />}

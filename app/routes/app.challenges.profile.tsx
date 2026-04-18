@@ -46,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const defaultName = session.firstName || shop.replace(".myshopify.com", "");
 
   const url = new URL(request.url);
-  const returnTo = url.searchParams.get("returnTo") || "/app/insights";
+  const returnTo = url.searchParams.get("returnTo") || "/app/challenges";
 
   return json({
     profile,
@@ -65,7 +65,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const avatarEmoji = (formData.get("avatarEmoji") as string) || "🐭";
   const bio = (formData.get("bio") as string)?.trim() || null;
   const avatarUrl = (formData.get("avatarUrl") as string)?.trim() || null;
-  const returnTo = (formData.get("returnTo") as string) || "/app/insights";
+  const returnTo = (formData.get("returnTo") as string) || "/app/challenges";
 
   if (!displayName || displayName.length < 2 || displayName.length > 50) {
     return json(
@@ -83,7 +83,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return redirect(returnTo);
 };
 
-export default function InsightsProfile() {
+export default function ChallengesProfile() {
   const { profile, defaultName, returnTo } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
@@ -105,7 +105,7 @@ export default function InsightsProfile() {
 
   return (
     <Page
-      backAction={{ content: "Insights", url: "/app/insights" }}
+      backAction={{ content: "Challenges", url: "/app/challenges" }}
       title="Community Profile"
     >
       <TitleBar title="Community Profile" />

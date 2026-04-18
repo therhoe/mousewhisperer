@@ -215,6 +215,7 @@ model Insight {
   content       String          // sanitized HTML
   category      InsightCategory
   snapshotStats Json?           // anonymized metrics
+  imageUrl      String?         // product/collection image or custom upload
   answerCount   Int             @default(0)
   meTooCount    Int             @default(0)
   viewCount     Int             @default(0)

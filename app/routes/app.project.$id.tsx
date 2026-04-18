@@ -678,6 +678,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
+  // Fetch product/collection featured image from Shopify
+  let productImageUrl: string | null = null;
+  try {
+    const imgQuery = project.resourceType === "COLLECTION"
+      ? `{ collectionByHandle(handle: "${project.productHandle}") { image { url } } }`
+      : `{ productByHandle(handle: "${project.productHandle}") { featuredImage { url } } }`;
+    const imgResponse = await admin.graphql(imgQuery);
+    const imgData = await imgResponse.json();
+    productImageUrl = project.resourceType === "COLLECTION"
+      ? imgData.data?.collectionByHandle?.image?.url || null
+      : imgData.data?.productByHandle?.featuredImage?.url || null;
+  } catch {}
+
   return json({
     project: {
       id: project.id,
@@ -685,6 +698,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       productHandle: project.productHandle,
       resourceType: project.resourceType,
       createdAt: project.createdAt,
+      imageUrl: productImageUrl,
     },
     snapshots: project.snapshots.map((s) => ({
       id: s.id,
@@ -943,6 +957,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const content = formData.get("insightContent") as string;
     const category = formData.get("insightCategory") as string;
     const snapshotId = formData.get("snapshotId") as string;
+    const imageUrl = (formData.get("insightImageUrl") as string)?.trim() || null;
 
     if (!title || title.length < 3) {
       return json({ error: "Title must be at least 3 characters." }, { status: 400 });
@@ -999,10 +1014,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         content: sanitizedContent,
         category: category as any,
         snapshotStats,
+        imageUrl,
       },
     });
 
-    return redirect(`/app/insights/${insight.id}`);
+    return redirect(`/app/challenges/${insight.id}`);
   }
 
   return json({ error: "Invalid action" }, { status: 400 });
@@ -1289,6 +1305,7 @@ export default function ProjectDetails() {
   const [insightTitle, setInsightTitle] = useState("");
   const [insightContent, setInsightContent] = useState("");
   const [insightCategory, setInsightCategory] = useState("");
+  const [insightImageUrl, setInsightImageUrl] = useState(project.imageUrl || "");
 
 
   // Real-time stats state
@@ -1969,8 +1986,8 @@ export default function ProjectDetails() {
                 <Text as="h2" variant="headingMd">Snapshots</Text>
                 <InlineStack gap="200">
                   {selectedSnapshot?.status === "COMPLETED" && (
-                    <Button onClick={() => { setInsightTitle(""); setInsightContent(""); setInsightCategory(""); setIsInsightModalOpen(true); }}>
-                      Create Insight
+                    <Button onClick={() => { setInsightTitle(""); setInsightContent(""); setInsightCategory(""); setInsightImageUrl(project.imageUrl || ""); setIsInsightModalOpen(true); }}>
+                      Create Challenge
                     </Button>
                   )}
                   {snapshots.length > 1 && (
@@ -2978,19 +2995,20 @@ export default function ProjectDetails() {
         </Modal.Section>
       </Modal>
 
-      {/* Create Insight Modal */}
+      {/* Create Challenge Modal */}
       <Modal
         open={isInsightModalOpen}
         onClose={() => setIsInsightModalOpen(false)}
-        title="Share Insight from Snapshot"
+        title="Create Challenge from Snapshot"
         primaryAction={{
-          content: "Post Insight",
+          content: "Post Challenge",
           onAction: () => {
             const fd = new FormData();
             fd.append("action", "create-insight");
             fd.append("insightTitle", insightTitle);
             fd.append("insightContent", insightContent);
             fd.append("insightCategory", insightCategory);
+            fd.append("insightImageUrl", insightImageUrl);
             fd.append("snapshotId", selectedSnapshot?.id || "");
             submit(fd, { method: "POST" });
             setIsInsightModalOpen(false);
@@ -3027,7 +3045,7 @@ export default function ProjectDetails() {
                   </div>
                 </div>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  These stats will be included with your insight post.
+                  These stats will be included with your challenge post.
                 </Text>
               </BlockStack>
             </Box>
@@ -3057,6 +3075,19 @@ export default function ProjectDetails() {
               placeholder="Describe what you observed and any questions for the community..."
               autoComplete="off"
             />
+            <TextField
+              label="Image URL (optional)"
+              value={insightImageUrl}
+              onChange={setInsightImageUrl}
+              autoComplete="off"
+              placeholder="https://..."
+              helpText={project.imageUrl ? "Auto-filled with product image. You can replace with a custom URL." : "Add a screenshot or product image URL."}
+            />
+            {insightImageUrl && (
+              <div style={{ borderRadius: 8, overflow: "hidden", background: "#f6f6f7", height: 120, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img src={insightImageUrl} alt="Preview" style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain" }} />
+              </div>
+            )}
           </FormLayout>
         </Modal.Section>
       </Modal>

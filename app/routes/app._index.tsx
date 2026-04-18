@@ -74,7 +74,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
-  const [projects, activeCount, completedCount, _topAnswers, _trendingInsights, notifications, unreadCount] =
+  const [projects, activeCount, completedCount, _topAnswers, _trendingChallenges, notifications, unreadCount] =
     await Promise.all([
       // Project query — snapshot metadata only (no visits)
       prisma.project.findMany({
@@ -718,7 +718,7 @@ export default function Index() {
 
       {/* Notification bell + Profile */}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 12 }}>
-        <Link to="/app/insights/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
+        <Link to="/app/challenges/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
           <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
             <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
           </svg>
@@ -872,7 +872,7 @@ export default function Index() {
                 <div style={{ display: "flex", gap: 0 }}>
                   {/* Left: Avatar + Info */}
                   <div style={{ display: "flex", flex: 1, gap: 16 }}>
-                    <Link to="/app/insights/profile?returnTo=/app" style={{ textDecoration: "none" }}>
+                    <Link to="/app/challenges/profile?returnTo=/app" style={{ textDecoration: "none" }}>
                       <div style={{ flexShrink: 0, width: 120, minHeight: 180, borderRadius: 10, background: "#f6f6f7", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         {profile.avatarUrl ? (
                           <img src={profile.avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, imageRendering: "pixelated" }} />
@@ -913,7 +913,7 @@ export default function Index() {
                       <Text as="p" variant="headingXl">{profile.answersCount}</Text>
                     </div>
                     <div style={{ textAlign: "center", padding: "12px 0" }}>
-                      <Text as="p" variant="bodySm" tone="subdued">Insights</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">Challenges</Text>
                       <Text as="p" variant="headingXl">{profile.insightsCount}</Text>
                     </div>
                     <div style={{ textAlign: "center", padding: "12px 0" }}>
@@ -934,7 +934,7 @@ export default function Index() {
               tone="info"
               action={{
                 content: "Create profile",
-                url: "/app/insights/profile?returnTo=/app",
+                url: "/app/challenges/profile?returnTo=/app",
               }}
             >
               <p>Create a display name and avatar to start posting insights and helping fellow merchants.</p>

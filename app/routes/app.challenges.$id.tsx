@@ -22,11 +22,11 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sanitizeHTML } from "../utils/sanitize.server";
 import { createNotification } from "../utils/notifications.server";
-import { RichTextDisplay } from "../components/insights/RichTextDisplay";
-import { RichTextEditor } from "../components/insights/RichTextEditor";
-import { CategoryBadge } from "../components/insights/CategoryBadge";
-import { AnswerCard } from "../components/insights/AnswerCard";
-import { SnapshotStatsDisplay } from "../components/insights/SnapshotStatsDisplay";
+import { RichTextDisplay } from "../components/challenges/RichTextDisplay";
+import { RichTextEditor } from "../components/challenges/RichTextEditor";
+import { CategoryBadge } from "../components/challenges/CategoryBadge";
+import { AnswerCard } from "../components/challenges/AnswerCard";
+import { SnapshotStatsDisplay } from "../components/challenges/SnapshotStatsDisplay";
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -173,7 +173,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           type: "INSIGHT_ANSWERED",
           title: "New answer on your insight",
           message: `${profile.displayName} answered "${insight.title}"`,
-          linkUrl: `/app/insights/${params.id}#answer-${newAnswer.id}`,
+          linkUrl: `/app/challenges/${params.id}#answer-${newAnswer.id}`,
         });
       }
 
@@ -241,7 +241,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             type: "ANSWER_UPVOTED",
             title: "Your answer was upvoted",
             message: `${profile.displayName} upvoted your answer`,
-            linkUrl: `/app/insights/${params.id}#answer-${answerId}`,
+            linkUrl: `/app/challenges/${params.id}#answer-${answerId}`,
           });
         }
       }
@@ -285,7 +285,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             type: "INSIGHT_METOOED",
             title: "Someone relates to your insight",
             message: `${profile.displayName} said "me too" on "${meTooInsight.title}"`,
-            linkUrl: `/app/insights/${params.id}`,
+            linkUrl: `/app/challenges/${params.id}`,
           });
         }
       }
@@ -388,7 +388,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             type: "ANSWER_ACCEPTED",
             title: "Your answer was accepted!",
             message: `Your answer on "${acceptInsight.title}" was marked as the solution`,
-            linkUrl: `/app/insights/${params.id}#answer-${answerId}`,
+            linkUrl: `/app/challenges/${params.id}#answer-${answerId}`,
           });
         }
       }
@@ -406,7 +406,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
 
       await prisma.insight.delete({ where: { id: params.id } });
-      return redirect("/app/insights");
+      return redirect("/app/challenges");
     }
 
     case "delete-answer": {
@@ -548,7 +548,7 @@ export default function InsightDetail() {
 
   return (
     <Page
-      backAction={{ content: "Insights", url: "/app/insights" }}
+      backAction={{ content: "Challenges", url: "/app/challenges" }}
       title=""
     >
       <TitleBar title={insight.title} />
@@ -760,7 +760,7 @@ export default function InsightDetail() {
                 tone="info"
                 action={{
                   content: "Create profile",
-                  url: `/app/insights/profile?returnTo=/app/insights/${insight.id}`,
+                  url: `/app/challenges/profile?returnTo=/app/challenges/${insight.id}`,
                 }}
               >
                 <p>Set up your community profile to post answers, vote, and more.</p>

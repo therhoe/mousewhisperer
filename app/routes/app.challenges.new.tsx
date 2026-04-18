@@ -19,8 +19,8 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sanitizeHTML } from "../utils/sanitize.server";
-import { RichTextEditor } from "../components/insights/RichTextEditor";
-import { SnapshotStatsPicker } from "../components/insights/SnapshotStatsPicker";
+import { RichTextEditor } from "../components/challenges/RichTextEditor";
+import { SnapshotStatsPicker } from "../components/challenges/SnapshotStatsPicker";
 
 const CATEGORY_OPTIONS = [
   { label: "Select a category", value: "" },
@@ -37,7 +37,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
   if (!profile) {
-    return redirect(`/app/insights/profile?returnTo=/app/insights/new`);
+    return redirect(`/app/challenges/profile?returnTo=/app/challenges/new`);
   }
 
   // Fetch snapshots for the picker
@@ -71,7 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
   if (!profile) {
-    return redirect(`/app/insights/profile?returnTo=/app/insights/new`);
+    return redirect(`/app/challenges/profile?returnTo=/app/challenges/new`);
   }
 
   const formData = await request.formData();
@@ -118,7 +118,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
   });
 
-  return redirect(`/app/insights/${insight.id}`);
+  return redirect(`/app/challenges/${insight.id}`);
 };
 
 async function buildAnonymizedStats(snapshotId: string) {
@@ -195,7 +195,7 @@ export default function NewInsight() {
 
   return (
     <Page
-      backAction={{ content: "Insights", url: "/app/insights" }}
+      backAction={{ content: "Challenges", url: "/app/challenges" }}
       title="New Insight"
     >
       <TitleBar title="New Insight" />

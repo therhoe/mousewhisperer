@@ -10,7 +10,7 @@ export function ProfileSetupBanner() {
       tone="info"
       action={{
         content: "Create profile",
-        onAction: () => navigate("/app/insights/profile?returnTo=/app/insights"),
+        onAction: () => navigate("/app/challenges/profile?returnTo=/app/challenges"),
       }}
     >
       <p>
