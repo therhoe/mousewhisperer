@@ -59,6 +59,8 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
+        <Link to="/app/audits/products">Products</Link>
+        <Link to="/app/audits/collections">Collections</Link>
         <Link to="/app/challenges">Challenges</Link>
       </NavMenu>
       <Outlet />
