@@ -995,6 +995,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
     const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
+    // Calculate revenue + fetch project type for rate label
+    const [revenueAgg, snapshotWithProject] = await Promise.all([
+      prisma.visit.aggregate({
+        where: { snapshotId, converted: true, orderValue: { not: null } },
+        _sum: { orderValue: true },
+      }),
+      prisma.snapshot.findUnique({
+        where: { id: snapshotId },
+        include: { project: { select: { resourceType: true } } },
+      }),
+    ]);
+    const totalRevenue = revenueAgg._sum.orderValue || 0;
+    const rType = snapshotWithProject?.project?.resourceType;
+    const rateLabel = rType === "PRODUCT" ? "ATC" : "CTR";
+
     const snapshotStats = {
       totalSessions: total,
       realPercent: pct(real),
@@ -1004,6 +1019,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       avgScrollDepth: Math.round(metrics._avg.scrollDepth || 0),
       addToCartRate: pct(atcCount),
       conversionRate: pct(convCount),
+      totalRevenue: Math.round(totalRevenue),
+      rateLabel,
       topSourceCategories: sourceCats.map((s) => ({ name: s.sourceCategory || "Direct", percent: pct(s._count) })),
       deviceBreakdown: deviceCounts.map((d) => ({ type: d.deviceType || "Unknown", percent: pct(d._count) })),
     };

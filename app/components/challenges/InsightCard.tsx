@@ -130,7 +130,7 @@ export function InsightCard({
           <div style={{ flex: "0 0 180px", padding: 12, display: "flex", alignItems: "stretch" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, rowGap: 10, background: "#f6f6f7", borderRadius: 8, padding: "8px 6px", width: "100%" }}>
               <div style={{ textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">CTR</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{(snapshotStats as any).rateLabel || "ATC"}</Text>
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.addToCartRate ?? 0}%</Text>
               </div>
               <div style={{ textAlign: "center" }}>
@@ -139,7 +139,7 @@ export function InsightCard({
               </div>
               <div style={{ textAlign: "center" }}>
                 <Text as="p" variant="bodySm" tone="subdued">REV</Text>
-                <Text as="p" variant="bodyMd" fontWeight="semibold">${snapshotStats.totalSessions ?? 0}</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">${(snapshotStats as any).totalRevenue ?? 0}</Text>
               </div>
               <div style={{ textAlign: "center" }}>
                 <Text as="p" variant="bodySm" tone="subdued">Real%</Text>
