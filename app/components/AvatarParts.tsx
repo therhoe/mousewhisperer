@@ -1,54 +1,68 @@
-// Avatar builder — dual template system (Hero + Crofly)
-// Both share the same body (rows 19-29) but different heads (rows 5-18)
+// Avatar builder — modular system using assets from public/pixels/
+// All parts are 32x32 with consistent positioning so they layer correctly
+
+import {
+  // Full character templates
+  DS_HERO_V1, DS_CROFLY_V1, DS_ZEBOS_V1, DS_GURU_V1, DS_IRON_V1,
+  DS_MALE_HIPSTER_V1, DS_MW_V1,
+  // Hair
+  DS_HAIR_BALD, DS_HAIR_HERO, DS_HAIR_CURLY, DS_HAIR_MALE_SHORT,
+  DS_HAIR_PONYTAIL, DS_HAIR_TOPKNOT,
+  // Eyes
+  DS_EYES_DOT_NARROW, DS_EYES_DOT_NARROW_UP,
+  DS_EYES_DOT_WIDE, DS_EYES_DOT_WIDE_UP,
+  DS_EYES_TALL_NARROW, DS_EYES_TALL_NARROW_UP,
+  DS_EYES_TALL_WIDE, DS_EYES_TALL_WIDE_UP,
+  DS_EYES_WHITE_NARROW, DS_EYES_WHITE_NARROW_UP,
+  DS_EYES_WHITE_WIDE, DS_EYES_WHITE_WIDE_UP,
+  // Mouths
+  DS_MOUTH_NARROW, DS_MOUTH_NARROW_DOWN,
+  DS_MOUTH_WIDE, DS_MOUTH_WIDE_DOWN,
+  DS_SMILE_NARROW_OPEN, DS_SMILE_NARROW_FILLED,
+  DS_SMILE_WIDE_OPEN, DS_SMILE_WIDE_FILL,
+  // Face features
+  DS_FACE_BEARD,
+  type Pixel,
+} from "./PixelAssets";
 
 type PixelMap = Map<string, string>;
-type Coord = [number, number];
-
 const BLK = "#000000";
 
 // ══════════════════════════════════════════════════════
-// SHARED BODY REGIONS (identical between Hero and Crofly)
+// HELPERS
 // ══════════════════════════════════════════════════════
 
-// Body outline shared (right side + center + legs)
-const BODY_OUTLINE_SHARED: Coord[] = [[13,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[12,20],[13,20],[20,20],[21,20],[22,21],[20,22],[22,22],[13,23],[20,23],[22,23],[13,24],[20,24],[22,24],[12,25],[13,25],[16,25],[17,25],[20,25],[21,25],[22,25],[12,26],[13,26],[20,26],[13,27],[20,27],[13,28],[16,28],[17,28],[20,28],[13,29],[14,29],[15,29],[18,29],[19,29],[20,29]];
-// Cape-shape outline (left side sweep)
-const BODY_OUTLINE_CAPE: Coord[] = [[10,19],[11,19],[9,20],[8,21],[11,21],[7,22],[8,22],[11,22],[7,23],[11,23],[6,24],[11,24],[6,25],[11,25],[5,26],[5,27],[6,27],[7,27],[8,27],[9,27],[10,27],[11,27]];
-// No-cape arm outline (symmetric straight arm on left)
-const BODY_OUTLINE_ARM: Coord[] = [[10,19],[11,19],[10,20],[11,20],[9,21],[11,21],[9,22],[11,22],[9,23],[11,23],[9,24],[11,24],[9,25],[10,25],[11,25],[11,26],[11,27]];
+export function darken(hex: string, amount = 40): string {
+  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
+  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
+  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
 
-// Cape fill regions
-const BODY_LEFT_CAPE: Coord[] = [[14,20],[15,20],[18,20],[19,20],[10,21],[12,21],[13,21],[20,21],[21,21],[9,22],[10,22],[8,23],[9,23],[10,23],[7,24],[8,24],[9,24],[7,25],[8,25],[6,26],[7,26],[16,27],[17,27],[14,28],[15,28],[18,28],[19,28]];
-const BODY_LEFT_CAPE_SHADOW: Coord[] = [[10,20],[9,21],[10,24],[9,25],[10,25],[8,26],[9,26],[10,26],[11,26]];
-const BODY_LEFT_CAPE_HIGHLIGHT: Coord[] = [[12,19],[11,20]];
-// No-cape arm fill (inside the straight arm outline)
-const BODY_LEFT_ARM_FILL: Coord[] = [[10,21],[10,22],[10,23],[10,24]];
+export function lighten(hex: string, amount = 30): string {
+  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
+  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
+  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
 
-const BODY_TOP: Coord[] = [[16,20],[17,20],[14,21],[15,21],[16,21],[17,21],[18,21],[19,21],[12,22],[13,22],[14,22],[15,22],[17,22],[18,22],[19,22],[21,22],[12,23],[14,23],[15,23],[16,23],[18,23],[19,23],[21,23],[14,24],[15,24],[16,24],[17,24],[18,24],[19,24],[14,26],[15,26],[16,26],[17,26],[18,26],[19,26],[14,27],[15,27],[18,27],[19,27]];
-const BODY_ACCENT: Coord[] = [[16,22],[17,23],[14,25],[15,25],[18,25],[19,25]];
-const BODY_SKIN: Coord[] = [[12,24],[21,24]];
+function pixelsToMap(pixels: Pixel[]): PixelMap {
+  const m: PixelMap = new Map();
+  pixels.forEach(([x, y, c]) => m.set(`${x},${y}`, c));
+  return m;
+}
 
-// ══════════════════════════════════════════════════════
-// HERO HEAD TEMPLATE (rows 5-18)
-// Hair is part of the outline (dark hair = black pixels)
-// ══════════════════════════════════════════════════════
+function applyOverlay(base: PixelMap, overlay: Pixel[], colorMap?: Record<string, string>) {
+  overlay.forEach(([x, y, c]) => {
+    const final = colorMap && colorMap[c] ? colorMap[c] : c;
+    base.set(`${x},${y}`, final);
+  });
+}
 
-const HERO_HEAD_OUTLINE: Coord[] = [[17,5],[18,5],[19,5],[15,6],[16,6],[17,6],[18,6],[19,6],[20,6],[13,7],[14,7],[15,7],[16,7],[17,7],[18,7],[19,7],[20,7],[21,7],[12,8],[13,8],[14,8],[15,8],[16,8],[17,8],[18,8],[19,8],[20,8],[21,8],[11,9],[12,9],[13,9],[14,9],[15,9],[16,9],[17,9],[18,9],[19,9],[20,9],[21,9],[22,9],[11,10],[12,10],[13,10],[15,10],[16,10],[17,10],[18,10],[19,10],[20,10],[21,10],[22,10],[11,11],[18,11],[22,11],[11,12],[22,12],[11,13],[22,13],[10,14],[15,14],[19,14],[22,14],[10,15],[22,15],[11,16],[16,16],[17,16],[18,16],[22,16],[11,17],[22,17],[12,18],[21,18]];
-const HERO_SKIN: Coord[] = [[14,10],[12,11],[13,11],[14,11],[15,11],[16,11],[17,11],[19,11],[20,11],[21,11],[12,12],[13,12],[14,12],[15,12],[16,12],[17,12],[18,12],[19,12],[20,12],[21,12],[12,13],[13,13],[14,13],[15,13],[16,13],[17,13],[18,13],[19,13],[20,13],[21,13],[11,14],[12,14],[13,14],[14,14],[16,14],[17,14],[18,14],[20,14],[21,14],[11,15],[12,15],[13,15],[14,15],[15,15],[16,15],[17,15],[18,15],[19,15],[20,15],[21,15],[12,16],[13,16],[14,16],[15,16],[19,16],[20,16],[21,16],[12,17],[13,17],[14,17],[15,17],[16,17],[17,17],[18,17],[19,17],[20,17],[21,17],[13,18],[14,18],[15,18],[16,18],[17,18],[18,18],[19,18]];
-// Hero's eyes are at different positions than Crofly's
-const HERO_EYES: Coord[] = [[15,14],[19,14]]; // single pixel eyes
-const HERO_MOUTH: Coord[] = [[16,16],[17,16],[18,16]]; // 3-pixel mouth
-
-// ══════════════════════════════════════════════════════
-// CROFLY HEAD TEMPLATE (rows 5-18)
-// Hair is colored separately (brown), with top-left puff
-// ══════════════════════════════════════════════════════
-
-const CROFLY_HEAD_OUTLINE: Coord[] = [[7,5],[8,5],[9,5],[10,5],[6,6],[11,6],[13,6],[14,6],[15,6],[16,6],[17,6],[18,6],[6,7],[8,7],[9,7],[12,7],[19,7],[20,7],[6,8],[7,8],[9,8],[10,8],[11,8],[21,8],[11,9],[22,9],[10,10],[22,10],[10,11],[22,11],[10,12],[22,12],[10,13],[16,13],[19,13],[22,13],[10,14],[16,14],[19,14],[22,14],[10,15],[22,15],[11,16],[22,16],[11,17],[16,17],[17,17],[22,17],[12,18],[21,18]];
-const CROFLY_HAIR: Coord[] = [[7,6],[8,6],[9,6],[10,6],[7,7],[10,7],[11,7],[13,7],[14,7],[15,7],[16,7],[17,7],[18,7],[12,8],[13,8],[14,8],[15,8],[16,8],[17,8],[18,8],[19,8],[20,8],[12,9],[13,9],[14,9],[15,9],[16,9],[17,9],[18,9],[19,9],[20,9],[21,9],[11,10],[12,10],[13,10],[14,10],[16,10],[17,10],[18,10],[21,10],[11,11],[11,12],[11,13],[11,14],[11,15]];
-const CROFLY_SKIN: Coord[] = [[15,10],[19,10],[20,10],[12,11],[13,11],[14,11],[15,11],[16,11],[17,11],[18,11],[19,11],[20,11],[21,11],[12,12],[13,12],[14,12],[15,12],[16,12],[17,12],[18,12],[19,12],[20,12],[21,12],[12,13],[13,13],[14,13],[15,13],[17,13],[18,13],[20,13],[21,13],[12,14],[13,14],[14,14],[15,14],[17,14],[18,14],[20,14],[21,14],[12,15],[13,15],[14,15],[15,15],[16,15],[17,15],[18,15],[19,15],[20,15],[21,15],[12,16],[13,16],[14,16],[15,16],[16,16],[17,16],[18,16],[19,16],[20,16],[21,16],[12,17],[13,17],[14,17],[15,17],[18,17],[19,17],[20,17],[21,17],[13,18],[14,18],[15,18],[16,18],[17,18],[18,18],[19,18],[20,18]];
-const CROFLY_EYES: Coord[] = [[16,13],[19,13],[16,14],[19,14]]; // 2x1 pixel eyes
-const CROFLY_MOUTH: Coord[] = [[16,17],[17,17]]; // 2-pixel mouth
+// Recolor a layer's pixels by mapping source colors to target colors
+function recolor(pixels: Pixel[], colorMap: Record<string, string>): Pixel[] {
+  return pixels.map(([x, y, c]) => [x, y, colorMap[c] || c] as Pixel);
+}
 
 // ══════════════════════════════════════════════════════
 // COLOR PALETTES
@@ -109,186 +123,305 @@ export const OUTFIT_COLORS = [
 ];
 
 // ══════════════════════════════════════════════════════
-// TEMPLATE STYLES
+// BASE TEMPLATES — full v1 character starting points
+// Each defines its own color palette that can be recolored
 // ══════════════════════════════════════════════════════
 
-export const TEMPLATE_STYLES = [
-  { name: "Hero", icon: "\uD83E\uDDB8" },
-  { name: "Crofly", icon: "\uD83D\uDC64" },
-];
+export interface BaseTemplate {
+  name: string;
+  pixels: Pixel[];
+  // Original colors mapped to semantic roles for recoloring
+  skinColor: string;
+  hairColor?: string;     // for templates where hair is colored (not part of outline)
+  topColor: string;       // main shirt
+  capeColor?: string;     // if has cape
+  accentColor: string;    // belt/details
+  hasCape: boolean;
+  hasIntegratedHair: boolean; // true if hair is part of the black outline (Hero, Iron, MW)
+}
 
-export const CAPE_OPTIONS = [
-  { name: "Cape", icon: "\uD83E\uDDB8" },
-  { name: "No Cape", icon: "\u274C" },
+export const BASE_TEMPLATES: BaseTemplate[] = [
+  {
+    name: "Hero",
+    pixels: DS_HERO_V1,
+    skinColor: "#FFCD94",
+    topColor: "#2979FF",
+    capeColor: "#D50000",
+    accentColor: "#FFC42A",
+    hasCape: true,
+    hasIntegratedHair: true, // Hero's hair is part of the black outline
+  },
+  {
+    name: "Crofly",
+    pixels: DS_CROFLY_V1,
+    skinColor: "#FFCD94",
+    hairColor: "#8D5524",
+    topColor: "#FFC42A",
+    capeColor: "#448AFF",
+    accentColor: "#D50000",
+    hasCape: true,
+    hasIntegratedHair: false,
+  },
+  {
+    name: "Zebos",
+    pixels: DS_ZEBOS_V1,
+    skinColor: "#FFE0BD",
+    hairColor: "#4C2D17",
+    topColor: "#FFFFFF",
+    accentColor: "#607D8B",
+    hasCape: false,
+    hasIntegratedHair: false,
+  },
+  {
+    name: "Guru",
+    pixels: DS_GURU_V1,
+    skinColor: "#FFC587",
+    hairColor: "#795548",
+    topColor: "#850000",
+    accentColor: "#546E7A",
+    hasCape: false,
+    hasIntegratedHair: false,
+  },
+  {
+    name: "Iron",
+    pixels: DS_IRON_V1,
+    skinColor: "#FFC42A", // gold mask
+    topColor: "#850000",
+    accentColor: "#FFC42A",
+    hasCape: false,
+    hasIntegratedHair: true,
+  },
+  {
+    name: "Hipster",
+    pixels: DS_MALE_HIPSTER_V1,
+    skinColor: "#FFCD94",
+    hairColor: "#8D5524",
+    topColor: "#03A9F4",
+    accentColor: "#263238",
+    hasCape: false,
+    hasIntegratedHair: false,
+  },
+  {
+    name: "MW",
+    pixels: DS_MW_V1,
+    skinColor: "#613D24",
+    topColor: "#212121",
+    accentColor: "#9E9E9E",
+    hasCape: false,
+    hasIntegratedHair: true,
+  },
 ];
 
 // ══════════════════════════════════════════════════════
-// EYE OVERRIDES (optional overlay on top of template eyes)
+// HAIR STYLES — overlay parts (rows 3-15)
+// Each replaces the head's hair region
 // ══════════════════════════════════════════════════════
 
-export const EYE_STYLES = [
-  { name: "Default", icon: "\uD83D\uDC40" },
-  { name: "Wide", icon: "\uD83D\uDE33" },
-  { name: "Shades", icon: "\uD83D\uDE0E" },
+export const HAIR_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
+  { name: "Default", icon: "👤", pixels: null }, // keep base template's hair
+  { name: "Bald", icon: "🥵", pixels: DS_HAIR_BALD },
+  { name: "Hero", icon: "🔥", pixels: DS_HAIR_HERO },
+  { name: "Curly", icon: "🌀", pixels: DS_HAIR_CURLY },
+  { name: "Short", icon: "👨", pixels: DS_HAIR_MALE_SHORT },
+  { name: "Ponytail", icon: "👧", pixels: DS_HAIR_PONYTAIL },
+  { name: "Topknot", icon: "👴", pixels: DS_HAIR_TOPKNOT },
 ];
 
-export const MOUTH_STYLES = [
-  { name: "Default", icon: "\uD83D\uDE10" },
-  { name: "Smile", icon: "\uD83D\uDE0A" },
-  { name: "Open", icon: "\uD83D\uDE2E" },
+// ══════════════════════════════════════════════════════
+// EYE STYLES — overlay parts (rows 12-14)
+// ══════════════════════════════════════════════════════
+
+export const EYE_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
+  { name: "Default", icon: "👀", pixels: null }, // keep base
+  { name: "Dot", icon: "•", pixels: DS_EYES_DOT_NARROW },
+  { name: "Dot Up", icon: "•", pixels: DS_EYES_DOT_NARROW_UP },
+  { name: "Dot Wide", icon: "••", pixels: DS_EYES_DOT_WIDE },
+  { name: "Dot Wide Up", icon: "••", pixels: DS_EYES_DOT_WIDE_UP },
+  { name: "Tall", icon: "▮", pixels: DS_EYES_TALL_NARROW },
+  { name: "Tall Up", icon: "▮", pixels: DS_EYES_TALL_NARROW_UP },
+  { name: "Tall Wide", icon: "▮▮", pixels: DS_EYES_TALL_WIDE },
+  { name: "Tall Wide Up", icon: "▮▮", pixels: DS_EYES_TALL_WIDE_UP },
+  { name: "White", icon: "👁", pixels: DS_EYES_WHITE_NARROW },
+  { name: "White Up", icon: "👁", pixels: DS_EYES_WHITE_NARROW_UP },
+  { name: "White Wide", icon: "👁👁", pixels: DS_EYES_WHITE_WIDE },
+  { name: "White Wide Up", icon: "👁👁", pixels: DS_EYES_WHITE_WIDE_UP },
 ];
+
+// ══════════════════════════════════════════════════════
+// MOUTH STYLES — overlay parts (rows 17-18)
+// ══════════════════════════════════════════════════════
+
+export const MOUTH_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
+  { name: "Default", icon: "😐", pixels: null }, // keep base
+  { name: "Narrow", icon: "—", pixels: DS_MOUTH_NARROW },
+  { name: "Narrow Down", icon: "—", pixels: DS_MOUTH_NARROW_DOWN },
+  { name: "Wide", icon: "——", pixels: DS_MOUTH_WIDE },
+  { name: "Wide Down", icon: "——", pixels: DS_MOUTH_WIDE_DOWN },
+  { name: "Smile Open", icon: "😊", pixels: DS_SMILE_NARROW_OPEN },
+  { name: "Smile Filled", icon: "😊", pixels: DS_SMILE_NARROW_FILLED },
+  { name: "Big Smile", icon: "😃", pixels: DS_SMILE_WIDE_OPEN },
+  { name: "Big Smile Filled", icon: "😃", pixels: DS_SMILE_WIDE_FILL },
+];
+
+// ══════════════════════════════════════════════════════
+// FACE EXTRAS
+// ══════════════════════════════════════════════════════
 
 export const ACCESSORIES = [
-  { name: "None", icon: "\u274C" },
-  { name: "Crown", icon: "\uD83D\uDC51" },
-  { name: "Halo", icon: "\uD83D\uDE07" },
+  { name: "None", icon: "❌" },
+  { name: "Crown", icon: "👑" },
+  { name: "Halo", icon: "😇" },
+  { name: "Beard", icon: "🧔" },
 ];
 
 // ══════════════════════════════════════════════════════
-// HELPERS
+// REGION DETECTION — rows for clearing when overlaying
 // ══════════════════════════════════════════════════════
 
-export function darken(hex: string, amount = 40): string {
-  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
-  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
-  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
-}
-
-export function lighten(hex: string, amount = 30): string {
-  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
-  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
-  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
-}
+// Rows occupied by hair/head outline that get cleared when applying new hair
+const HAIR_ROWS = [3, 4, 5, 6, 7, 8, 9, 10];
+// Rows occupied by eye region
+const EYE_ROWS = [12, 13, 14];
+// Rows occupied by mouth region
+const MOUTH_ROWS = [17, 18];
 
 // ══════════════════════════════════════════════════════
-// COMPOSITE — builds full character from builder options
+// BUILDER STATE & COMPOSITE
 // ══════════════════════════════════════════════════════
 
 export interface BuilderState {
-  templateIdx: number;  // 0=Hero, 1=Crofly
+  templateIdx: number;
   skinIdx: number;
-  hairIdx: number;
+  hairColorIdx: number;
   topIdx: number;
   accentIdx: number;
   hasCape: boolean;
   capeColorIdx: number;
+  hairStyleIdx: number;
   eyeIdx: number;
   mouthIdx: number;
   accessoryIdx: number;
 }
 
 export const DEFAULT_BUILDER_STATE: BuilderState = {
-  templateIdx: 1, // Crofly default
+  templateIdx: 1, // Crofly
   skinIdx: 1,
-  hairIdx: 2,
+  hairColorIdx: 2,
   topIdx: 3,
   accentIdx: 0,
   hasCape: true,
-  capeColorIdx: 0,
+  capeColorIdx: 8,
+  hairStyleIdx: 0,
   eyeIdx: 0,
   mouthIdx: 0,
   accessoryIdx: 0,
 };
 
 export function compositeCharacter(state: BuilderState): PixelMap {
-  const d: PixelMap = new Map();
+  const template = BASE_TEMPLATES[state.templateIdx] || BASE_TEMPLATES[0];
   const skin = SKIN_TONES[state.skinIdx]?.color || "#FFCD94";
-  const hair = HAIR_COLORS[state.hairIdx]?.color || "#8B4513";
+  const hair = HAIR_COLORS[state.hairColorIdx]?.color || "#8B4513";
   const top = OUTFIT_COLORS[state.topIdx]?.color || "#FFC42A";
   const accent = OUTFIT_COLORS[state.accentIdx]?.color || "#D50000";
-  const isHero = state.templateIdx === 0;
+  const cape = OUTFIT_COLORS[state.capeColorIdx]?.color || "#D50000";
 
-  // 1. Head — depends on template
-  if (isHero) {
-    // Hero head: outline includes hair
-    HERO_HEAD_OUTLINE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    HERO_SKIN.forEach(([x, y]) => d.set(`${x},${y}`, skin));
-    // Hero eyes
-    HERO_EYES.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    // Hero mouth
-    HERO_MOUTH.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-  } else {
-    // Crofly head: colored hair + outline
-    CROFLY_HEAD_OUTLINE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    CROFLY_HAIR.forEach(([x, y]) => d.set(`${x},${y}`, hair));
-    CROFLY_SKIN.forEach(([x, y]) => d.set(`${x},${y}`, skin));
-    // Crofly eyes
-    CROFLY_EYES.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    // Crofly mouth
-    CROFLY_MOUTH.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
+  // 1. Build base color map for recoloring the template
+  const colorMap: Record<string, string> = {
+    [template.skinColor]: skin,
+    [template.topColor]: top,
+    [template.accentColor]: accent,
+  };
+  if (template.hairColor && !template.hasIntegratedHair) {
+    colorMap[template.hairColor] = hair;
+  }
+  if (template.capeColor) {
+    colorMap[template.capeColor] = state.hasCape ? cape : top;
   }
 
-  // 2. Eye style override
-  if (state.eyeIdx === 1) {
-    // Wide — add extra eye pixels
-    const eyeBase = isHero ? HERO_EYES : CROFLY_EYES;
-    eyeBase.forEach(([x, y]) => { d.set(`${x},${y}`, BLK); d.set(`${x},${y - 1}`, BLK); });
-  } else if (state.eyeIdx === 2) {
-    // Shades
-    const baseY = isHero ? 13 : 12;
-    for (let x = 14; x <= 20; x++) { d.set(`${x},${baseY}`, BLK); d.set(`${x},${baseY + 1}`, BLK); }
+  // 2. Apply recolored template
+  const d: PixelMap = new Map();
+  template.pixels.forEach(([x, y, c]) => {
+    const final = colorMap[c] || c;
+    d.set(`${x},${y}`, final);
+  });
+
+  // 3. If template has cape but user wants no cape, also need to remove cape outline pixels
+  // For simplicity: when hasCape=false on a cape template, recolor cape pixels to top color (done above)
+  // The cape outline pixels (black) stay since they're shared with the body
+
+  // 4. Apply hair overlay (replaces hair region)
+  const hairStyle = HAIR_STYLES[state.hairStyleIdx];
+  if (hairStyle && hairStyle.pixels) {
+    // Clear existing hair area first (keep skin/face features below row 11)
+    HAIR_ROWS.forEach((y) => {
+      for (let x = 0; x < 32; x++) {
+        d.delete(`${x},${y}`);
+      }
+    });
+    // Re-apply skin pixels in hair region (forehead area) before drawing new hair
+    template.pixels.forEach(([x, y, c]) => {
+      if (HAIR_ROWS.includes(y) && c === template.skinColor) {
+        d.set(`${x},${y}`, skin);
+      }
+    });
+    // Apply new hair, recoloring black/dark to the hair color
+    hairStyle.pixels.forEach(([x, y, c]) => {
+      // Hair files use black for the hair color — recolor to user's chosen hair color
+      const final = c === BLK ? hair : c;
+      d.set(`${x},${y}`, final);
+    });
   }
 
-  // 3. Mouth style override
-  const mouthPixels = isHero ? HERO_MOUTH : CROFLY_MOUTH;
-  if (state.mouthIdx === 1) {
-    // Smile — wider
-    mouthPixels.forEach(([x, y]) => d.set(`${x},${y}`, skin)); // clear default
-    const mouthY = isHero ? 16 : 17;
-    d.set(`14,${mouthY}`, BLK); d.set(`18,${mouthY}`, BLK);
-    d.set(`15,${mouthY + 1}`, BLK); d.set(`16,${mouthY + 1}`, BLK); d.set(`17,${mouthY + 1}`, BLK);
-  } else if (state.mouthIdx === 2) {
-    // Open
-    const mouthY = isHero ? 16 : 17;
-    d.set(`16,${mouthY}`, BLK); d.set(`17,${mouthY}`, BLK);
-    d.set(`16,${mouthY + 1}`, BLK); d.set(`17,${mouthY + 1}`, BLK);
+  // 5. Apply eye overlay (replaces eye region)
+  const eyeStyle = EYE_STYLES[state.eyeIdx];
+  if (eyeStyle && eyeStyle.pixels) {
+    // Clear current eye pixels (keep skin)
+    EYE_ROWS.forEach((y) => {
+      for (let x = 12; x <= 21; x++) {
+        const key = `${x},${y}`;
+        const cur = d.get(key);
+        // Only clear non-skin pixels in face region
+        if (cur === BLK || cur === "#FFFFFF") d.set(key, skin);
+      }
+    });
+    eyeStyle.pixels.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
   }
 
-  // 4. Body — shared outline + top
-  BODY_OUTLINE_SHARED.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-  BODY_TOP.forEach(([x, y]) => d.set(`${x},${y}`, top));
-  BODY_ACCENT.forEach(([x, y]) => d.set(`${x},${y}`, accent));
-  BODY_SKIN.forEach(([x, y]) => d.set(`${x},${y}`, skin));
-
-  // 5. Left side — cape or straight arm
-  if (state.hasCape) {
-    const capeColor = OUTFIT_COLORS[state.capeColorIdx]?.color || "#D50000";
-    BODY_OUTLINE_CAPE.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    BODY_LEFT_CAPE.forEach(([x, y]) => d.set(`${x},${y}`, capeColor));
-    BODY_LEFT_CAPE_SHADOW.forEach(([x, y]) => d.set(`${x},${y}`, darken(capeColor, 40)));
-    BODY_LEFT_CAPE_HIGHLIGHT.forEach(([x, y]) => d.set(`${x},${y}`, lighten(capeColor, 10)));
-  } else {
-    // No cape — draw symmetric arm outline + fill with shirt color
-    BODY_OUTLINE_ARM.forEach(([x, y]) => d.set(`${x},${y}`, BLK));
-    BODY_LEFT_ARM_FILL.forEach(([x, y]) => d.set(`${x},${y}`, top));
-    // Legs fill (no cape bottom)
-    d.set("16,27", top); d.set("17,27", top);
-    d.set("14,28", top); d.set("15,28", top);
-    d.set("18,28", top); d.set("19,28", top);
+  // 6. Apply mouth overlay
+  const mouthStyle = MOUTH_STYLES[state.mouthIdx];
+  if (mouthStyle && mouthStyle.pixels) {
+    MOUTH_ROWS.forEach((y) => {
+      for (let x = 12; x <= 21; x++) {
+        const key = `${x},${y}`;
+        const cur = d.get(key);
+        if (cur === BLK) d.set(key, skin);
+      }
+    });
+    mouthStyle.pixels.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
   }
 
-  // 6. Accessories
+  // 7. Accessories
   if (state.accessoryIdx === 1) {
     // Crown
     const gold = "#FFC42A";
-    const crownY = isHero ? 4 : 4;
-    d.set(`13,${crownY}`, gold); d.set(`15,${crownY}`, gold); d.set(`17,${crownY}`, gold); d.set(`19,${crownY}`, gold);
-    for (let x = 13; x <= 19; x++) d.set(`${x},${crownY + 1}`, gold);
+    [[13,4],[15,4],[17,4],[19,4]].forEach(([x, y]) => d.set(`${x},${y}`, gold));
+    for (let x = 13; x <= 19; x++) d.set(`${x},5`, gold);
   } else if (state.accessoryIdx === 2) {
     // Halo
     const gold = "#FFC42A";
     for (let x = 13; x <= 19; x++) d.set(`${x},3`, gold);
     d.set("12,4", gold); d.set("20,4", gold);
+  } else if (state.accessoryIdx === 3) {
+    // Beard
+    DS_FACE_BEARD.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
   }
 
   return d;
 }
 
 // ══════════════════════════════════════════════════════
-// ANALYZE PIXEL DATA — extract builder state from existing character
-// Used to load pre-made or free-draw characters into the builder
+// ANALYZE — extract builder state from existing pixel data
+// (for "Edit in Builder" from pre-made or free-draw)
 // ══════════════════════════════════════════════════════
 
 function findClosestColorIdx(hex: string, palette: Array<{ color: string }>): number {
@@ -307,41 +440,41 @@ function findClosestColorIdx(hex: string, palette: Array<{ color: string }>): nu
 }
 
 export function analyzePixelData(data: PixelMap): BuilderState {
-  // Determine template by checking if Hero-specific hair outline pixels exist as black
-  const heroHairCheck = [[17,5],[18,5],[19,5],[15,6],[16,6]]; // Hero has these as black, Crofly doesn't
-  const isHero = heroHairCheck.every(([x, y]) => data.get(`${x},${y}`) === BLK);
-
-  // Extract colors by sampling known positions
+  // Try to determine which template by color sampling
   const skinSample = data.get("15,15") || data.get("14,14") || "#FFCD94";
-  const skinIdx = findClosestColorIdx(skinSample, SKIN_TONES);
-
-  // Hair color — only matters for Crofly (Hero's hair is in the outline)
-  const hairSample = data.get("13,7") || data.get("14,8") || "#8B4513";
-  const hairIdx = hairSample === BLK ? 0 : findClosestColorIdx(hairSample, HAIR_COLORS);
-
-  // Top/shirt color
   const topSample = data.get("16,20") || data.get("15,21") || "#FFC42A";
-  const topIdx = findClosestColorIdx(topSample, OUTFIT_COLORS);
-
-  // Accent
   const accentSample = data.get("16,22") || data.get("14,25") || "#D50000";
-  const accentIdx = findClosestColorIdx(accentSample, OUTFIT_COLORS);
-
-  // Cape — check if left region color differs from top
   const leftSample = data.get("9,22") || data.get("8,23") || "";
-  const hasCape = leftSample && leftSample !== BLK && findClosestColorIdx(leftSample, OUTFIT_COLORS) !== topIdx;
+  const hairSample = data.get("13,7") || data.get("14,8") || BLK;
+
+  const skinIdx = findClosestColorIdx(skinSample, SKIN_TONES);
+  const topIdx = findClosestColorIdx(topSample, OUTFIT_COLORS);
+  const accentIdx = findClosestColorIdx(accentSample, OUTFIT_COLORS);
+  const hairColorIdx = hairSample === BLK ? 0 : findClosestColorIdx(hairSample, HAIR_COLORS);
+  const hasCape = !!leftSample && leftSample !== BLK && findClosestColorIdx(leftSample, OUTFIT_COLORS) !== topIdx;
   const capeColorIdx = hasCape ? findClosestColorIdx(leftSample, OUTFIT_COLORS) : 0;
 
   return {
-    templateIdx: isHero ? 0 : 1,
+    templateIdx: 1, // default to Crofly
     skinIdx,
-    hairIdx,
+    hairColorIdx,
     topIdx,
     accentIdx,
-    hasCape: !!hasCape,
+    hasCape,
     capeColorIdx,
+    hairStyleIdx: 0,
     eyeIdx: 0,
     mouthIdx: 0,
     accessoryIdx: 0,
   };
 }
+
+// ══════════════════════════════════════════════════════
+// EXPORTS for legacy compatibility
+// ══════════════════════════════════════════════════════
+
+export const TEMPLATE_STYLES = BASE_TEMPLATES.map((t) => ({ name: t.name, icon: "👤" }));
+export const CAPE_OPTIONS = [
+  { name: "Cape", icon: "🦸" },
+  { name: "No Cape", icon: "❌" },
+];

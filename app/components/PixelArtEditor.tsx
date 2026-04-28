@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
 import {
   SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS,
-  TEMPLATE_STYLES, CAPE_OPTIONS, EYE_STYLES, MOUTH_STYLES, ACCESSORIES,
+  BASE_TEMPLATES, HAIR_STYLES, EYE_STYLES, MOUTH_STYLES, ACCESSORIES, CAPE_OPTIONS,
   compositeCharacter, analyzePixelData,
   type BuilderState, DEFAULT_BUILDER_STATE,
 } from "./AvatarParts";
@@ -187,34 +187,32 @@ function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   return d;
 }
 
-// Import compositeCharacter to build some pre-mades with the new system
-const _cc = (s: Partial<import("./AvatarParts").BuilderState>) => compositeCharacter({ ...DEFAULT_BUILDER_STATE, ...s });
+// Build pre-mades using the new modular system
+const _cc = (s: Partial<BuilderState>) => compositeCharacter({ ...DEFAULT_BUILDER_STATE, ...s });
 
 const PREMADE_AVATARS = [
-  // Exact from .pixil files
-  { name: "Hero", data: generateNewHero() },
-  { name: "Crofly", data: generateNewCrofly() },
-  // Hero-style with cape
-  { name: "Super", data: _cc({ templateIdx: 0, skinIdx: 1, topIdx: 8, accentIdx: 3, hasCape: true, capeColorIdx: 0 }) },
-  { name: "Champion", data: _cc({ templateIdx: 0, skinIdx: 3, topIdx: 3, accentIdx: 0, hasCape: true, capeColorIdx: 5 }) },
-  // Hero-style WITHOUT cape
-  { name: "Agent", data: _cc({ templateIdx: 0, skinIdx: 1, topIdx: 19, accentIdx: 17, hasCape: false }) },
-  { name: "Soldier", data: _cc({ templateIdx: 0, skinIdx: 6, topIdx: 5, accentIdx: 18, hasCape: false }) },
-  // Crofly-style with cape
-  { name: "Mage", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 5, topIdx: 11, accentIdx: 3, hasCape: true, capeColorIdx: 11 }) },
-  { name: "Healer", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 7, topIdx: 16, accentIdx: 0, hasCape: true, capeColorIdx: 0 }) },
-  { name: "Wizard", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 10, topIdx: 9, accentIdx: 3, hasCape: true, capeColorIdx: 9 }) },
-  // Crofly-style WITHOUT cape
-  { name: "Knight", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 0, topIdx: 17, accentIdx: 3, hasCape: false }) },
-  { name: "Ranger", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 4, topIdx: 5, accentIdx: 15, hasCape: false }) },
-  { name: "Rogue", data: _cc({ templateIdx: 1, skinIdx: 4, hairIdx: 0, topIdx: 19, accentIdx: 18, hasCape: false }) },
-  { name: "Viking", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 4, topIdx: 14, accentIdx: 17, hasCape: false }) },
-  { name: "Pirate", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 0, topIdx: 0, accentIdx: 3, hasCape: false }) },
-  { name: "Executive", data: _cc({ templateIdx: 1, skinIdx: 1, hairIdx: 1, topIdx: 9, accentIdx: 16, hasCape: false }) },
-  { name: "Casual", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 2, topIdx: 8, accentIdx: 16, hasCape: false }) },
-  { name: "Student", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 2, topIdx: 8, accentIdx: 17, hasCape: false }) },
-  { name: "Elder", data: _cc({ templateIdx: 1, skinIdx: 3, hairIdx: 9, topIdx: 16, accentIdx: 14, hasCape: false }) },
-  { name: "Warrior", data: _cc({ templateIdx: 0, skinIdx: 6, topIdx: 0, accentIdx: 17, hasCape: true, capeColorIdx: 0 }) },
+  // Exact base templates (from .pixil files, no modifications)
+  { name: "Hero", data: _cc({ templateIdx: 0 }) },
+  { name: "Crofly", data: _cc({ templateIdx: 1 }) },
+  { name: "Zebos", data: _cc({ templateIdx: 2 }) },
+  { name: "Guru", data: _cc({ templateIdx: 3 }) },
+  { name: "Iron", data: _cc({ templateIdx: 4 }) },
+  { name: "Hipster", data: _cc({ templateIdx: 5 }) },
+  { name: "MW", data: _cc({ templateIdx: 6 }) },
+
+  // Mix-and-match variations
+  { name: "Curly Bard", data: _cc({ templateIdx: 5, hairStyleIdx: 3, hairColorIdx: 7, topIdx: 5, eyeIdx: 9 }) },
+  { name: "Topknot Sage", data: _cc({ templateIdx: 3, hairStyleIdx: 6, accessoryIdx: 3 }) },
+  { name: "Ponytail Mage", data: _cc({ templateIdx: 1, hairStyleIdx: 5, hairColorIdx: 12, topIdx: 11, capeColorIdx: 11 }) },
+  { name: "Bald Monk", data: _cc({ templateIdx: 2, hairStyleIdx: 1, accessoryIdx: 3, mouthIdx: 1 }) },
+  { name: "Hipster Hero", data: _cc({ templateIdx: 5, hairStyleIdx: 2, hairColorIdx: 0, eyeIdx: 11 }) },
+  { name: "Royal Crofly", data: _cc({ templateIdx: 1, accessoryIdx: 1, capeColorIdx: 11 }) },
+  { name: "Halo Healer", data: _cc({ templateIdx: 0, accessoryIdx: 2, topIdx: 16, capeColorIdx: 0 }) },
+  { name: "Short Casual", data: _cc({ templateIdx: 1, hairStyleIdx: 4, hairColorIdx: 2, topIdx: 8, hasCape: false }) },
+  { name: "Iron Cape", data: _cc({ templateIdx: 4, hasCape: true, capeColorIdx: 0 }) },
+  { name: "Ginger Smile", data: _cc({ templateIdx: 1, hairColorIdx: 7, mouthIdx: 7, eyeIdx: 11 }) },
+  { name: "Wide Eyes Wizard", data: _cc({ templateIdx: 0, eyeIdx: 11, mouthIdx: 5, topIdx: 11, capeColorIdx: 9 }) },
+  { name: "Suspicious", data: _cc({ templateIdx: 5, hairStyleIdx: 6, eyeIdx: 1, mouthIdx: 2 }) },
 ];
 
 // Simple character generator helpers
@@ -921,13 +919,14 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
 
   const handleRandomize = useCallback(() => {
     setBuilder({
-      templateIdx: Math.floor(Math.random() * TEMPLATE_STYLES.length),
+      templateIdx: Math.floor(Math.random() * BASE_TEMPLATES.length),
       skinIdx: Math.floor(Math.random() * SKIN_TONES.length),
-      hairIdx: Math.floor(Math.random() * HAIR_COLORS.length),
+      hairColorIdx: Math.floor(Math.random() * HAIR_COLORS.length),
       topIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
       accentIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
       hasCape: Math.random() > 0.4,
       capeColorIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      hairStyleIdx: Math.floor(Math.random() * HAIR_STYLES.length),
       eyeIdx: Math.floor(Math.random() * EYE_STYLES.length),
       mouthIdx: Math.floor(Math.random() * MOUTH_STYLES.length),
       accessoryIdx: Math.floor(Math.random() * ACCESSORIES.length),
@@ -1090,11 +1089,12 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
             </div>
 
             {/* Parts panel */}
-            <div style={{ flex: 1, maxHeight: 500, overflowY: "auto" }}>
+            <div style={{ flex: 1, maxHeight: 600, overflowY: "auto" }}>
               <BlockStack gap="300">
-                {partRow("Character Style", TEMPLATE_STYLES, builder.templateIdx, (i) => updateBuilder({ templateIdx: i }))}
+                {partRow("Character Template", BASE_TEMPLATES.map(t => ({ name: t.name, icon: "👤" })), builder.templateIdx, (i) => updateBuilder({ templateIdx: i }))}
                 {colorRow("Skin", SKIN_TONES, builder.skinIdx, (i) => updateBuilder({ skinIdx: i }))}
-                {builder.templateIdx === 1 && colorRow("Hair Color", HAIR_COLORS, builder.hairIdx, (i) => updateBuilder({ hairIdx: i }))}
+                {colorRow("Hair Color", HAIR_COLORS, builder.hairColorIdx, (i) => updateBuilder({ hairColorIdx: i }))}
+                {partRow("Hair Style", HAIR_STYLES, builder.hairStyleIdx, (i) => updateBuilder({ hairStyleIdx: i }))}
                 {colorRow("Shirt Color", OUTFIT_COLORS, builder.topIdx, (i) => updateBuilder({ topIdx: i }))}
                 {colorRow("Accent Color", OUTFIT_COLORS, builder.accentIdx, (i) => updateBuilder({ accentIdx: i }))}
                 {partRow("Cape", CAPE_OPTIONS, builder.hasCape ? 0 : 1, (i) => updateBuilder({ hasCape: i === 0 }))}
