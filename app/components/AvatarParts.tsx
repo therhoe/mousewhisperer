@@ -46,24 +46,6 @@ export function lighten(hex: string, amount = 30): string {
   return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
-function pixelsToMap(pixels: Pixel[]): PixelMap {
-  const m: PixelMap = new Map();
-  pixels.forEach(([x, y, c]) => m.set(`${x},${y}`, c));
-  return m;
-}
-
-function applyOverlay(base: PixelMap, overlay: Pixel[], colorMap?: Record<string, string>) {
-  overlay.forEach(([x, y, c]) => {
-    const final = colorMap && colorMap[c] ? colorMap[c] : c;
-    base.set(`${x},${y}`, final);
-  });
-}
-
-// Recolor a layer's pixels by mapping source colors to target colors
-function recolor(pixels: Pixel[], colorMap: Record<string, string>): Pixel[] {
-  return pixels.map(([x, y, c]) => [x, y, colorMap[c] || c] as Pixel);
-}
-
 // ══════════════════════════════════════════════════════
 // COLOR PALETTES
 // ══════════════════════════════════════════════════════
@@ -122,121 +104,203 @@ export const OUTFIT_COLORS = [
   { name: "Black", color: "#1A1A2E" },
 ];
 
+export const EYE_COLORS = [
+  { name: "Black", color: "#1A1A2E" },
+  { name: "Brown", color: "#4C2D17" },
+  { name: "Hazel", color: "#8B6914" },
+  { name: "Green", color: "#2E7D32" },
+  { name: "Blue", color: "#1976D2" },
+  { name: "Grey", color: "#607D8B" },
+  { name: "Violet", color: "#7B1FA2" },
+];
+
 // ══════════════════════════════════════════════════════
-// BASE TEMPLATES — full v1 character starting points
-// Each defines its own color palette that can be recolored
+// COLOR ROLE SYSTEM
+// Each template maps its source colors to semantic roles.
+// At composite time, roles are filled from user choices + derived shadows.
 // ══════════════════════════════════════════════════════
+
+type ColorRole =
+  | "skin" | "skinShadow"
+  | "hair" | "hairShadow"
+  | "top" | "topShadow"
+  | "cape" | "capeShadow" | "capeHighlight"
+  | "accent" | "accent2"
+  | "bottom"
+  | "eye" | "eyeWhite"
+  | "outline"        // black outline — never recolor
+  | "literal";       // keep exact color (e.g. arc reactor white)
 
 export interface BaseTemplate {
   name: string;
   pixels: Pixel[];
-  // Original colors mapped to semantic roles for recoloring
-  skinColor: string;
-  hairColor?: string;     // for templates where hair is colored (not part of outline)
-  topColor: string;       // main shirt
-  capeColor?: string;     // if has cape
-  accentColor: string;    // belt/details
+  // Map each source color in the template to its semantic role
+  colorRoles: Record<string, ColorRole>;
+  // Whether the template has integrated hair (in the BLACK outline) — affects hair swap
+  hasIntegratedHair: boolean;
+  // Whether the template ships with a cape
   hasCape: boolean;
-  hasIntegratedHair: boolean; // true if hair is part of the black outline (Hero, Iron, MW)
 }
+
+// ══════════════════════════════════════════════════════
+// CAPE OVERLAY — extracted from Hero, applied to non-cape templates
+// ══════════════════════════════════════════════════════
+
+// Cape outline pixels (to add) and cape fill pixels with their role
+const CAPE_OVERLAY_PIXELS: Pixel[] = [
+  // Outline (left sweep)
+  [9,20,BLK],[8,21,BLK],[7,22,BLK],[8,22,BLK],[7,23,BLK],
+  [6,24,BLK],[6,25,BLK],[5,26,BLK],
+  [5,27,BLK],[6,27,BLK],[7,27,BLK],[8,27,BLK],[9,27,BLK],[10,27,BLK],[11,27,BLK],
+  // Cape fill (will be recolored to user's cape color)
+  [10,21,"#__CAPE__"],
+  [9,22,"#__CAPE__"],[10,22,"#__CAPE__"],
+  [8,23,"#__CAPE__"],[9,23,"#__CAPE__"],[10,23,"#__CAPE__"],
+  [7,24,"#__CAPE__"],[8,24,"#__CAPE__"],[9,24,"#__CAPE__"],
+  [7,25,"#__CAPE__"],[8,25,"#__CAPE__"],
+  [6,26,"#__CAPE__"],[7,26,"#__CAPE__"],
+  // Cape shadow (auto-derived darker)
+  [9,21,"#__CAPESHADOW__"],
+  [8,26,"#__CAPESHADOW__"],[9,26,"#__CAPESHADOW__"],[10,26,"#__CAPESHADOW__"],
+];
+
+// ══════════════════════════════════════════════════════
+// BASE TEMPLATES — full v1 character starting points
+// ══════════════════════════════════════════════════════
 
 export const BASE_TEMPLATES: BaseTemplate[] = [
   {
     name: "Hero",
     pixels: DS_HERO_V1,
-    skinColor: "#FFCD94",
-    topColor: "#2979FF",
-    capeColor: "#D50000",
-    accentColor: "#FFC42A",
+    hasIntegratedHair: true, // hair is part of the BLACK outline
     hasCape: true,
-    hasIntegratedHair: true, // Hero's hair is part of the black outline
+    colorRoles: {
+      "#000000": "outline",
+      "#FFCD94": "skin",
+      "#F1C27D": "skinShadow",
+      "#2979FF": "top",
+      "#D50000": "cape",
+      "#850000": "capeShadow",
+      "#FFC42A": "accent",
+    },
   },
   {
     name: "Crofly",
     pixels: DS_CROFLY_V1,
-    skinColor: "#FFCD94",
-    hairColor: "#8D5524",
-    topColor: "#FFC42A",
-    capeColor: "#448AFF",
-    accentColor: "#D50000",
-    hasCape: true,
     hasIntegratedHair: false,
+    hasCape: true,
+    colorRoles: {
+      "#000000": "outline",
+      "#FFCD94": "skin",
+      "#8D5524": "hair",
+      "#FFC42A": "top",
+      "#448AFF": "cape",
+      "#2962FF": "capeShadow",
+      "#2196F3": "capeHighlight",
+      "#D50000": "accent",
+    },
   },
   {
     name: "Zebos",
     pixels: DS_ZEBOS_V1,
-    skinColor: "#FFE0BD",
-    hairColor: "#4C2D17",
-    topColor: "#FFFFFF",
-    accentColor: "#607D8B",
-    hasCape: false,
     hasIntegratedHair: false,
+    hasCape: false,
+    colorRoles: {
+      "#000000": "outline",
+      "#FFE0BD": "skin",
+      "#4C2D17": "eye",
+      "#FFFFFF": "top",
+      "#8D5524": "accent", // belt
+      "#607D8B": "bottom", // pants
+    },
   },
   {
     name: "Guru",
     pixels: DS_GURU_V1,
-    skinColor: "#FFC587",
-    hairColor: "#795548",
-    topColor: "#850000",
-    accentColor: "#546E7A",
-    hasCape: false,
     hasIntegratedHair: false,
+    hasCape: false,
+    colorRoles: {
+      "#000000": "outline",
+      "#FFC587": "skin",
+      "#FFE0BD": "skinShadow",
+      "#850000": "top",
+      "#FFFFFF": "accent",  // white robe details
+      "#795548": "hair",    // beard/sideburns
+      "#546E7A": "bottom",  // shoes
+    },
   },
   {
     name: "Iron",
     pixels: DS_IRON_V1,
-    skinColor: "#FFC42A", // gold mask
-    topColor: "#850000",
-    accentColor: "#FFC42A",
+    hasIntegratedHair: true, // mask is integrated, treat as fixed shape
     hasCape: false,
-    hasIntegratedHair: true,
+    colorRoles: {
+      "#000000": "outline",
+      "#FFC42A": "skin",   // gold mask — treat as skin so user can recolor mask
+      "#850000": "top",    // red body
+      "#BDBDBD": "literal", // arc reactor metals
+      "#E0E0E0": "literal",
+      "#FFFFFF": "accent",  // arc reactor highlight
+    },
   },
   {
     name: "Hipster",
     pixels: DS_MALE_HIPSTER_V1,
-    skinColor: "#FFCD94",
-    hairColor: "#8D5524",
-    topColor: "#03A9F4",
-    accentColor: "#263238",
-    hasCape: false,
     hasIntegratedHair: false,
+    hasCape: false,
+    colorRoles: {
+      "#000000": "outline",
+      "#FFCD94": "skin",
+      "#EAC086": "skinShadow",
+      "#8D5524": "hair",       // beard + top-of-head hair
+      "#03A9F4": "top",         // primary blue
+      "#039BE5": "topShadow",
+      "#2196F3": "topShadow",
+      "#6B7EDB": "topShadow",
+      "#F44336": "accent",
+      "#FF3D00": "accent",
+      "#263238": "literal",     // belt
+      "#607D8B": "bottom",      // pants
+      "#391E0B": "literal",     // shoes
+    },
   },
   {
     name: "MW",
     pixels: DS_MW_V1,
-    skinColor: "#613D24",
-    topColor: "#212121",
-    accentColor: "#9E9E9E",
+    hasIntegratedHair: true, // mouse fur extends into outline area
     hasCape: false,
-    hasIntegratedHair: true,
+    colorRoles: {
+      "#000000": "outline",
+      "#613D24": "skin",   // mouse fur — recolor as skin
+      "#FFFFFF": "literal", // eye whites
+      "#212121": "top",
+      "#9E9E9E": "accent",
+      "#FFC42A": "eye",     // yellow eyes
+      "#544C0D": "bottom",
+    },
   },
 ];
 
 // ══════════════════════════════════════════════════════
-// HAIR STYLES — overlay parts (rows 3-15)
-// Each replaces the head's hair region
+// HAIR / EYE / MOUTH STYLES
 // ══════════════════════════════════════════════════════
 
 export const HAIR_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
-  { name: "Default", icon: "👤", pixels: null }, // keep base template's hair
-  { name: "Bald", icon: "🥵", pixels: DS_HAIR_BALD },
-  { name: "Hero", icon: "🔥", pixels: DS_HAIR_HERO },
+  { name: "Default", icon: "👤", pixels: null },
+  { name: "Bald", icon: "🥚", pixels: DS_HAIR_BALD },
+  { name: "Hero Hair", icon: "🔥", pixels: DS_HAIR_HERO },
   { name: "Curly", icon: "🌀", pixels: DS_HAIR_CURLY },
-  { name: "Short", icon: "👨", pixels: DS_HAIR_MALE_SHORT },
+  { name: "Short", icon: "✂️", pixels: DS_HAIR_MALE_SHORT },
   { name: "Ponytail", icon: "👧", pixels: DS_HAIR_PONYTAIL },
   { name: "Topknot", icon: "👴", pixels: DS_HAIR_TOPKNOT },
 ];
 
-// ══════════════════════════════════════════════════════
-// EYE STYLES — overlay parts (rows 12-14)
-// ══════════════════════════════════════════════════════
-
 export const EYE_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
-  { name: "Default", icon: "👀", pixels: null }, // keep base
-  { name: "Dot", icon: "•", pixels: DS_EYES_DOT_NARROW },
-  { name: "Dot Up", icon: "•", pixels: DS_EYES_DOT_NARROW_UP },
-  { name: "Dot Wide", icon: "••", pixels: DS_EYES_DOT_WIDE },
-  { name: "Dot Wide Up", icon: "••", pixels: DS_EYES_DOT_WIDE_UP },
+  { name: "Default", icon: "👀", pixels: null },
+  { name: "Dot", icon: "·", pixels: DS_EYES_DOT_NARROW },
+  { name: "Dot Up", icon: "·", pixels: DS_EYES_DOT_NARROW_UP },
+  { name: "Dot Wide", icon: "··", pixels: DS_EYES_DOT_WIDE },
+  { name: "Dot Wide Up", icon: "··", pixels: DS_EYES_DOT_WIDE_UP },
   { name: "Tall", icon: "▮", pixels: DS_EYES_TALL_NARROW },
   { name: "Tall Up", icon: "▮", pixels: DS_EYES_TALL_NARROW_UP },
   { name: "Tall Wide", icon: "▮▮", pixels: DS_EYES_TALL_WIDE },
@@ -247,25 +311,17 @@ export const EYE_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | n
   { name: "White Wide Up", icon: "👁👁", pixels: DS_EYES_WHITE_WIDE_UP },
 ];
 
-// ══════════════════════════════════════════════════════
-// MOUTH STYLES — overlay parts (rows 17-18)
-// ══════════════════════════════════════════════════════
-
 export const MOUTH_STYLES: Array<{ name: string; icon: string; pixels: Pixel[] | null }> = [
-  { name: "Default", icon: "😐", pixels: null }, // keep base
+  { name: "Default", icon: "😐", pixels: null },
   { name: "Narrow", icon: "—", pixels: DS_MOUTH_NARROW },
   { name: "Narrow Down", icon: "—", pixels: DS_MOUTH_NARROW_DOWN },
   { name: "Wide", icon: "——", pixels: DS_MOUTH_WIDE },
   { name: "Wide Down", icon: "——", pixels: DS_MOUTH_WIDE_DOWN },
-  { name: "Smile Open", icon: "😊", pixels: DS_SMILE_NARROW_OPEN },
+  { name: "Smile Open", icon: "🙂", pixels: DS_SMILE_NARROW_OPEN },
   { name: "Smile Filled", icon: "😊", pixels: DS_SMILE_NARROW_FILLED },
   { name: "Big Smile", icon: "😃", pixels: DS_SMILE_WIDE_OPEN },
-  { name: "Big Smile Filled", icon: "😃", pixels: DS_SMILE_WIDE_FILL },
+  { name: "Big Smile Filled", icon: "😄", pixels: DS_SMILE_WIDE_FILL },
 ];
-
-// ══════════════════════════════════════════════════════
-// FACE EXTRAS
-// ══════════════════════════════════════════════════════
 
 export const ACCESSORIES = [
   { name: "None", icon: "❌" },
@@ -274,19 +330,20 @@ export const ACCESSORIES = [
   { name: "Beard", icon: "🧔" },
 ];
 
-// ══════════════════════════════════════════════════════
-// REGION DETECTION — rows for clearing when overlaying
-// ══════════════════════════════════════════════════════
+export const CAPE_OPTIONS = [
+  { name: "Cape", icon: "🦸" },
+  { name: "No Cape", icon: "❌" },
+];
 
-// Rows occupied by hair/head outline that get cleared when applying new hair
+export const TEMPLATE_STYLES = BASE_TEMPLATES.map((t) => ({ name: t.name, icon: "👤" }));
+
+// Region rows used when overlaying hair/eyes/mouth
 const HAIR_ROWS = [3, 4, 5, 6, 7, 8, 9, 10];
-// Rows occupied by eye region
 const EYE_ROWS = [12, 13, 14];
-// Rows occupied by mouth region
 const MOUTH_ROWS = [17, 18];
 
 // ══════════════════════════════════════════════════════
-// BUILDER STATE & COMPOSITE
+// BUILDER STATE
 // ══════════════════════════════════════════════════════
 
 export interface BuilderState {
@@ -295,6 +352,8 @@ export interface BuilderState {
   hairColorIdx: number;
   topIdx: number;
   accentIdx: number;
+  bottomIdx: number;
+  eyeColorIdx: number;
   hasCape: boolean;
   capeColorIdx: number;
   hairStyleIdx: number;
@@ -309,6 +368,8 @@ export const DEFAULT_BUILDER_STATE: BuilderState = {
   hairColorIdx: 2,
   topIdx: 3,
   accentIdx: 0,
+  bottomIdx: 18,
+  eyeColorIdx: 0,
   hasCape: true,
   capeColorIdx: 8,
   hairStyleIdx: 0,
@@ -317,77 +378,127 @@ export const DEFAULT_BUILDER_STATE: BuilderState = {
   accessoryIdx: 0,
 };
 
+// ══════════════════════════════════════════════════════
+// COMPOSITE — build the full character pixel map
+// ══════════════════════════════════════════════════════
+
 export function compositeCharacter(state: BuilderState): PixelMap {
   const template = BASE_TEMPLATES[state.templateIdx] || BASE_TEMPLATES[0];
   const skin = SKIN_TONES[state.skinIdx]?.color || "#FFCD94";
   const hair = HAIR_COLORS[state.hairColorIdx]?.color || "#8B4513";
   const top = OUTFIT_COLORS[state.topIdx]?.color || "#FFC42A";
   const accent = OUTFIT_COLORS[state.accentIdx]?.color || "#D50000";
+  const bottom = OUTFIT_COLORS[state.bottomIdx]?.color || "#94A3B8";
   const cape = OUTFIT_COLORS[state.capeColorIdx]?.color || "#D50000";
+  const eye = EYE_COLORS[state.eyeColorIdx]?.color || "#1A1A2E";
 
-  // 1. Build base color map for recoloring the template
-  const colorMap: Record<string, string> = {
-    [template.skinColor]: skin,
-    [template.topColor]: top,
-    [template.accentColor]: accent,
+  // Build role → color resolver
+  const roleColor = (role: ColorRole, sourceColor: string): string => {
+    switch (role) {
+      case "outline": return BLK;
+      case "skin": return skin;
+      case "skinShadow": return darken(skin, 25);
+      case "hair": return hair;
+      case "hairShadow": return darken(hair, 25);
+      case "top":
+        // If template has cape but user disabled it, fill cape area with top
+        return top;
+      case "topShadow": return darken(top, 25);
+      case "cape": return state.hasCape ? cape : top;
+      case "capeShadow": return state.hasCape ? darken(cape, 40) : darken(top, 25);
+      case "capeHighlight": return state.hasCape ? lighten(cape, 15) : lighten(top, 10);
+      case "accent": return accent;
+      case "accent2": return accent;
+      case "bottom": return bottom;
+      case "eye": return eye;
+      case "eyeWhite": return "#FFFFFF";
+      case "literal": return sourceColor;
+      default: return sourceColor;
+    }
   };
-  if (template.hairColor && !template.hasIntegratedHair) {
-    colorMap[template.hairColor] = hair;
-  }
-  if (template.capeColor) {
-    colorMap[template.capeColor] = state.hasCape ? cape : top;
-  }
 
-  // 2. Apply recolored template
+  // 1. Apply recolored template
   const d: PixelMap = new Map();
   template.pixels.forEach(([x, y, c]) => {
-    const final = colorMap[c] || c;
-    d.set(`${x},${y}`, final);
+    const role = template.colorRoles[c];
+    if (role) {
+      d.set(`${x},${y}`, roleColor(role, c));
+    } else {
+      // Unmapped color — keep as literal
+      d.set(`${x},${y}`, c);
+    }
   });
 
-  // 3. If template has cape but user wants no cape, also need to remove cape outline pixels
-  // For simplicity: when hasCape=false on a cape template, recolor cape pixels to top color (done above)
-  // The cape outline pixels (black) stay since they're shared with the body
-
-  // 4. Apply hair overlay (replaces hair region)
-  const hairStyle = HAIR_STYLES[state.hairStyleIdx];
-  if (hairStyle && hairStyle.pixels) {
-    // Clear existing hair area first (keep skin/face features below row 11)
-    HAIR_ROWS.forEach((y) => {
-      for (let x = 0; x < 32; x++) {
-        d.delete(`${x},${y}`);
-      }
-    });
-    // Re-apply skin pixels in hair region (forehead area) before drawing new hair
-    template.pixels.forEach(([x, y, c]) => {
-      if (HAIR_ROWS.includes(y) && c === template.skinColor) {
-        d.set(`${x},${y}`, skin);
-      }
-    });
-    // Apply new hair, recoloring black/dark to the hair color
-    hairStyle.pixels.forEach(([x, y, c]) => {
-      // Hair files use black for the hair color — recolor to user's chosen hair color
-      const final = c === BLK ? hair : c;
+  // 2. Add cape overlay if user wants cape on a non-cape template
+  if (state.hasCape && !template.hasCape) {
+    CAPE_OVERLAY_PIXELS.forEach(([x, y, c]) => {
+      let final: string;
+      if (c === "#__CAPE__") final = cape;
+      else if (c === "#__CAPESHADOW__") final = darken(cape, 40);
+      else final = c;
       d.set(`${x},${y}`, final);
     });
   }
 
-  // 5. Apply eye overlay (replaces eye region)
+  // 3. Apply hair overlay
+  const hairStyle = HAIR_STYLES[state.hairStyleIdx];
+  if (hairStyle && hairStyle.pixels) {
+    if (template.hasIntegratedHair) {
+      // Don't fully clear — that would break the head. Just add hair on top.
+      // But first, if "Bald" was chosen, we should keep the head outline from the template.
+      // We can't really swap hair on integrated-hair templates cleanly, so just overlay hair pixels.
+      hairStyle.pixels.forEach(([x, y, c]) => {
+        d.set(`${x},${y}`, c === BLK ? hair : c);
+      });
+    } else {
+      // Clear hair area first (rows 3-10), preserve the head outline (BLACK that's not skin)
+      // Then re-add the head outline pixels from the original template
+      const originalHairRows: PixelMap = new Map();
+      template.pixels.forEach(([x, y, c]) => {
+        if (HAIR_ROWS.includes(y)) {
+          originalHairRows.set(`${x},${y}`, c);
+        }
+      });
+      // Clear those rows in result
+      HAIR_ROWS.forEach((y) => {
+        for (let x = 0; x < 32; x++) d.delete(`${x},${y}`);
+      });
+      // Re-add only outline + skin pixels (no original hair)
+      originalHairRows.forEach((c, key) => {
+        const role = template.colorRoles[c];
+        if (role === "outline" || role === "skin" || role === "skinShadow") {
+          d.set(key, roleColor(role, c));
+        }
+      });
+      // Apply new hair, recoloring black to user's hair color
+      hairStyle.pixels.forEach(([x, y, c]) => {
+        d.set(`${x},${y}`, c === BLK ? hair : c);
+      });
+    }
+  }
+
+  // 4. Apply eye overlay (replaces eye region)
   const eyeStyle = EYE_STYLES[state.eyeIdx];
   if (eyeStyle && eyeStyle.pixels) {
-    // Clear current eye pixels (keep skin)
+    // Clear current eye pixels (keep skin), revert to skin in eye area
     EYE_ROWS.forEach((y) => {
       for (let x = 12; x <= 21; x++) {
         const key = `${x},${y}`;
         const cur = d.get(key);
-        // Only clear non-skin pixels in face region
-        if (cur === BLK || cur === "#FFFFFF") d.set(key, skin);
+        // Only clear if it's a face feature color, not a structural element
+        const role = template.colorRoles[cur || ""];
+        if (role === "eye" || role === "eyeWhite" || cur === BLK || cur === "#FFFFFF") {
+          d.set(key, skin);
+        }
       }
     });
-    eyeStyle.pixels.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
+    // Apply new eye pixels — black recolors to chosen eye color, white stays white
+    eyeStyle.pixels.forEach(([x, y, c]) => {
+      d.set(`${x},${y}`, c === BLK ? eye : c);
+    });
   }
 
-  // 6. Apply mouth overlay
+  // 5. Apply mouth overlay
   const mouthStyle = MOUTH_STYLES[state.mouthIdx];
   if (mouthStyle && mouthStyle.pixels) {
     MOUTH_ROWS.forEach((y) => {
@@ -400,7 +511,7 @@ export function compositeCharacter(state: BuilderState): PixelMap {
     mouthStyle.pixels.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
   }
 
-  // 7. Accessories
+  // 6. Accessories
   if (state.accessoryIdx === 1) {
     // Crown
     const gold = "#FFC42A";
@@ -412,16 +523,15 @@ export function compositeCharacter(state: BuilderState): PixelMap {
     for (let x = 13; x <= 19; x++) d.set(`${x},3`, gold);
     d.set("12,4", gold); d.set("20,4", gold);
   } else if (state.accessoryIdx === 3) {
-    // Beard
-    DS_FACE_BEARD.forEach(([x, y, c]) => d.set(`${x},${y}`, c));
+    // Beard — recolor to user's hair color
+    DS_FACE_BEARD.forEach(([x, y]) => d.set(`${x},${y}`, hair));
   }
 
   return d;
 }
 
 // ══════════════════════════════════════════════════════
-// ANALYZE — extract builder state from existing pixel data
-// (for "Edit in Builder" from pre-made or free-draw)
+// ANALYZE PIXEL DATA — detect template + colors from existing character
 // ══════════════════════════════════════════════════════
 
 function findClosestColorIdx(hex: string, palette: Array<{ color: string }>): number {
@@ -439,27 +549,59 @@ function findClosestColorIdx(hex: string, palette: Array<{ color: string }>): nu
   return best;
 }
 
-export function analyzePixelData(data: PixelMap): BuilderState {
-  // Try to determine which template by color sampling
-  const skinSample = data.get("15,15") || data.get("14,14") || "#FFCD94";
-  const topSample = data.get("16,20") || data.get("15,21") || "#FFC42A";
-  const accentSample = data.get("16,22") || data.get("14,25") || "#D50000";
-  const leftSample = data.get("9,22") || data.get("8,23") || "";
-  const hairSample = data.get("13,7") || data.get("14,8") || BLK;
+// Compare data against each template's pixels — count matches on outline pixels
+function detectTemplate(data: PixelMap): number {
+  let bestIdx = 0, bestScore = -1;
+  BASE_TEMPLATES.forEach((template, idx) => {
+    let score = 0;
+    template.pixels.forEach(([x, y, c]) => {
+      const role = template.colorRoles[c];
+      if (role !== "outline") return;
+      // Check if outline pixel matches in the data
+      if (data.get(`${x},${y}`) === BLK) score++;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = idx;
+    }
+  });
+  return bestIdx;
+}
 
-  const skinIdx = findClosestColorIdx(skinSample, SKIN_TONES);
-  const topIdx = findClosestColorIdx(topSample, OUTFIT_COLORS);
-  const accentIdx = findClosestColorIdx(accentSample, OUTFIT_COLORS);
-  const hairColorIdx = hairSample === BLK ? 0 : findClosestColorIdx(hairSample, HAIR_COLORS);
-  const hasCape = !!leftSample && leftSample !== BLK && findClosestColorIdx(leftSample, OUTFIT_COLORS) !== topIdx;
-  const capeColorIdx = hasCape ? findClosestColorIdx(leftSample, OUTFIT_COLORS) : 0;
+export function analyzePixelData(data: PixelMap): BuilderState {
+  const templateIdx = detectTemplate(data);
+  const template = BASE_TEMPLATES[templateIdx];
+
+  // For each role in the template, find a sample pixel and match closest color
+  const roleSamples: Partial<Record<ColorRole, string>> = {};
+  for (const [srcColor, role] of Object.entries(template.colorRoles)) {
+    if (role === "outline" || role === "literal") continue;
+    // Find first pixel with this source color in the template — sample data at that position
+    const samplePixel = template.pixels.find(([, , c]) => c === srcColor);
+    if (samplePixel) {
+      const [x, y] = samplePixel;
+      const sampledColor = data.get(`${x},${y}`);
+      if (sampledColor) roleSamples[role] = sampledColor;
+    }
+  }
+
+  const skinIdx = roleSamples.skin ? findClosestColorIdx(roleSamples.skin, SKIN_TONES) : 1;
+  const hairColorIdx = roleSamples.hair ? findClosestColorIdx(roleSamples.hair, HAIR_COLORS) : 2;
+  const topIdx = roleSamples.top ? findClosestColorIdx(roleSamples.top, OUTFIT_COLORS) : 3;
+  const accentIdx = roleSamples.accent ? findClosestColorIdx(roleSamples.accent, OUTFIT_COLORS) : 0;
+  const bottomIdx = roleSamples.bottom ? findClosestColorIdx(roleSamples.bottom, OUTFIT_COLORS) : 18;
+  const eyeColorIdx = roleSamples.eye ? findClosestColorIdx(roleSamples.eye, EYE_COLORS) : 0;
+  const hasCape = template.hasCape || (roleSamples.cape !== undefined && roleSamples.cape !== roleSamples.top);
+  const capeColorIdx = roleSamples.cape ? findClosestColorIdx(roleSamples.cape, OUTFIT_COLORS) : 0;
 
   return {
-    templateIdx: 1, // default to Crofly
+    templateIdx,
     skinIdx,
     hairColorIdx,
     topIdx,
     accentIdx,
+    bottomIdx,
+    eyeColorIdx,
     hasCape,
     capeColorIdx,
     hairStyleIdx: 0,
@@ -468,13 +610,3 @@ export function analyzePixelData(data: PixelMap): BuilderState {
     accessoryIdx: 0,
   };
 }
-
-// ══════════════════════════════════════════════════════
-// EXPORTS for legacy compatibility
-// ══════════════════════════════════════════════════════
-
-export const TEMPLATE_STYLES = BASE_TEMPLATES.map((t) => ({ name: t.name, icon: "👤" }));
-export const CAPE_OPTIONS = [
-  { name: "Cape", icon: "🦸" },
-  { name: "No Cape", icon: "❌" },
-];

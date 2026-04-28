@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
 import {
-  SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS,
+  SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS, EYE_COLORS,
   BASE_TEMPLATES, HAIR_STYLES, EYE_STYLES, MOUTH_STYLES, ACCESSORIES, CAPE_OPTIONS,
   compositeCharacter, analyzePixelData,
   type BuilderState, DEFAULT_BUILDER_STATE,
@@ -924,6 +924,8 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
       hairColorIdx: Math.floor(Math.random() * HAIR_COLORS.length),
       topIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
       accentIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      bottomIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
+      eyeColorIdx: Math.floor(Math.random() * EYE_COLORS.length),
       hasCape: Math.random() > 0.4,
       capeColorIdx: Math.floor(Math.random() * OUTFIT_COLORS.length),
       hairStyleIdx: Math.floor(Math.random() * HAIR_STYLES.length),
@@ -1095,12 +1097,14 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
                 {colorRow("Skin", SKIN_TONES, builder.skinIdx, (i) => updateBuilder({ skinIdx: i }))}
                 {colorRow("Hair Color", HAIR_COLORS, builder.hairColorIdx, (i) => updateBuilder({ hairColorIdx: i }))}
                 {partRow("Hair Style", HAIR_STYLES, builder.hairStyleIdx, (i) => updateBuilder({ hairStyleIdx: i }))}
+                {colorRow("Eye Color", EYE_COLORS, builder.eyeColorIdx, (i) => updateBuilder({ eyeColorIdx: i }))}
+                {partRow("Eye Style", EYE_STYLES, builder.eyeIdx, (i) => updateBuilder({ eyeIdx: i }))}
+                {partRow("Mouth", MOUTH_STYLES, builder.mouthIdx, (i) => updateBuilder({ mouthIdx: i }))}
                 {colorRow("Shirt Color", OUTFIT_COLORS, builder.topIdx, (i) => updateBuilder({ topIdx: i }))}
                 {colorRow("Accent Color", OUTFIT_COLORS, builder.accentIdx, (i) => updateBuilder({ accentIdx: i }))}
+                {colorRow("Pants Color", OUTFIT_COLORS, builder.bottomIdx, (i) => updateBuilder({ bottomIdx: i }))}
                 {partRow("Cape", CAPE_OPTIONS, builder.hasCape ? 0 : 1, (i) => updateBuilder({ hasCape: i === 0 }))}
                 {builder.hasCape && colorRow("Cape Color", OUTFIT_COLORS, builder.capeColorIdx, (i) => updateBuilder({ capeColorIdx: i }))}
-                {partRow("Eyes", EYE_STYLES, builder.eyeIdx, (i) => updateBuilder({ eyeIdx: i }))}
-                {partRow("Mouth", MOUTH_STYLES, builder.mouthIdx, (i) => updateBuilder({ mouthIdx: i }))}
                 {partRow("Accessory", ACCESSORIES, builder.accessoryIdx, (i) => updateBuilder({ accessoryIdx: i }))}
               </BlockStack>
             </div>
