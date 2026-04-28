@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Text, Button, InlineStack, BlockStack } from "@shopify/polaris";
 import {
   SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS, EYE_COLORS,
@@ -952,10 +952,15 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
   const [isDrawing, setIsDrawing] = useState(false);
   const [selectedPremade, setSelectedPremade] = useState<number | null>(null);
 
+  // Drag state: a quick second click on the same cell flips the in-progress
+  // drag to erase mode until mouseup, even when the active tool is Pencil.
+  const lastDownRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const eraseDragRef = useRef(false);
+
   const handleCellInteract = useCallback((x: number, y: number) => {
     setPixelData((prev) => {
       const next = new Map(prev);
-      if (tool === "eraser") {
+      if (tool === "eraser" || eraseDragRef.current) {
         next.delete(`${x},${y}`);
       } else {
         next.set(`${x},${y}`, selectedColor);
@@ -965,6 +970,12 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
   }, [selectedColor, tool]);
 
   const handleMouseDown = useCallback((x: number, y: number) => {
+    const now = Date.now();
+    const last = lastDownRef.current;
+    if (last && last.x === x && last.y === y && now - last.t < 350) {
+      eraseDragRef.current = true;
+    }
+    lastDownRef.current = { x, y, t: now };
     setIsDrawing(true);
     handleCellInteract(x, y);
   }, [handleCellInteract]);
@@ -973,7 +984,19 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
     if (isDrawing) handleCellInteract(x, y);
   }, [isDrawing, handleCellInteract]);
 
-  const handleMouseUp = useCallback(() => setIsDrawing(false), []);
+  const handleErasePixel = useCallback((x: number, y: number) => {
+    setPixelData((prev) => {
+      if (!prev.has(`${x},${y}`)) return prev;
+      const next = new Map(prev);
+      next.delete(`${x},${y}`);
+      return next;
+    });
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDrawing(false);
+    eraseDragRef.current = false;
+  }, []);
 
   const handleSavePremade = useCallback(() => {
     if (selectedPremade === null) return;
@@ -1143,6 +1166,7 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
                     key={i}
                     onMouseDown={() => handleMouseDown(x, y)}
                     onMouseEnter={() => handleMouseEnter(x, y)}
+                    onDoubleClick={() => handleErasePixel(x, y)}
                     style={{
                       width: CELL_PX, height: CELL_PX,
                       backgroundColor: color || ((x + y) % 2 === 0 ? "#fafafa" : "#f0f0f0"),
