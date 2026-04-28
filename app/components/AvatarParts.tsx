@@ -140,29 +140,35 @@ export interface BaseTemplate {
   hasIntegratedHair: boolean;
   // Whether the template ships with a cape
   hasCape: boolean;
+  // Color indices that reproduce the template's original look exactly
+  naturalState: Partial<BuilderState>;
 }
 
 // ══════════════════════════════════════════════════════
-// CAPE OVERLAY — extracted from Hero, applied to non-cape templates
+// CAPE DEFINITION — extracted from Hero's cape shape.
+// Used for both ADDING cape to non-cape templates AND REMOVING cape from
+// templates that ship with one (Hero, Crofly).
 // ══════════════════════════════════════════════════════
 
-// Cape outline pixels (to add) and cape fill pixels with their role
-const CAPE_OVERLAY_PIXELS: Pixel[] = [
-  // Outline (left sweep)
-  [9,20,BLK],[8,21,BLK],[7,22,BLK],[8,22,BLK],[7,23,BLK],
-  [6,24,BLK],[6,25,BLK],[5,26,BLK],
-  [5,27,BLK],[6,27,BLK],[7,27,BLK],[8,27,BLK],[9,27,BLK],[10,27,BLK],[11,27,BLK],
-  // Cape fill (will be recolored to user's cape color)
-  [10,21,"#__CAPE__"],
-  [9,22,"#__CAPE__"],[10,22,"#__CAPE__"],
-  [8,23,"#__CAPE__"],[9,23,"#__CAPE__"],[10,23,"#__CAPE__"],
-  [7,24,"#__CAPE__"],[8,24,"#__CAPE__"],[9,24,"#__CAPE__"],
-  [7,25,"#__CAPE__"],[8,25,"#__CAPE__"],
-  [6,26,"#__CAPE__"],[7,26,"#__CAPE__"],
-  // Cape shadow (auto-derived darker)
-  [9,21,"#__CAPESHADOW__"],
-  [8,26,"#__CAPESHADOW__"],[9,26,"#__CAPESHADOW__"],[10,26,"#__CAPESHADOW__"],
+type CapeRole = "outline" | "fill" | "shadow";
+const CAPE_PIXELS: Array<[number, number, CapeRole]> = [
+  // Top attachment (above where cape meets shoulder)
+  [9, 19, "outline"], [10, 19, "outline"], [11, 19, "fill"],
+  // Cape body — flowing left sweep
+  [8, 20, "outline"], [9, 20, "shadow"],   [10, 20, "fill"],
+  [7, 21, "outline"], [8, 21, "shadow"],   [9, 21, "fill"],
+  [6, 22, "outline"], [7, 22, "outline"],  [8, 22, "fill"],   [9, 22, "fill"],
+  [6, 23, "outline"], [7, 23, "fill"],     [8, 23, "fill"],   [9, 23, "fill"],
+  [5, 24, "outline"], [6, 24, "fill"],     [7, 24, "fill"],   [8, 24, "fill"],   [9, 24, "shadow"],
+  [5, 25, "outline"], [6, 25, "fill"],     [7, 25, "fill"],   [8, 25, "shadow"], [9, 25, "shadow"], [10, 25, "outline"],
+  [4, 26, "outline"], [5, 26, "fill"],     [6, 26, "fill"],   [7, 26, "shadow"], [8, 26, "shadow"], [9, 26, "shadow"], [10, 26, "shadow"],
+  // Bottom edge
+  [4, 27, "outline"], [5, 27, "outline"], [6, 27, "outline"], [7, 27, "outline"], [8, 27, "outline"], [9, 27, "outline"], [10, 27, "outline"],
 ];
+
+// All pixel coords occupied by the cape — used to DELETE cape pixels when a
+// cape-bearing template (Hero, Crofly) is rendered with hasCape: false.
+const CAPE_COORD_SET = new Set(CAPE_PIXELS.map(([x, y]) => `${x},${y}`));
 
 // ══════════════════════════════════════════════════════
 // BASE TEMPLATES — full v1 character starting points
@@ -183,6 +189,8 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
       "#850000": "capeShadow",
       "#FFC42A": "accent",
     },
+    // Light skin, blue suit, red cape, yellow accent
+    naturalState: { skinIdx: 1, topIdx: 8, accentIdx: 3, capeColorIdx: 0, hasCape: true },
   },
   {
     name: "Crofly",
@@ -199,6 +207,8 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
       "#2196F3": "capeHighlight",
       "#D50000": "accent",
     },
+    // Brown hair, yellow top, blue cape, red accent
+    naturalState: { skinIdx: 1, hairColorIdx: 2, topIdx: 3, accentIdx: 0, capeColorIdx: 8, hasCape: true },
   },
   {
     name: "Zebos",
@@ -213,6 +223,8 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
       "#8D5524": "accent", // belt
       "#607D8B": "bottom", // pants
     },
+    // Porcelain skin, white top, brown belt, dark grey pants, brown eyes
+    naturalState: { skinIdx: 0, topIdx: 16, accentIdx: 14, bottomIdx: 18, eyeColorIdx: 1, hasCape: false },
   },
   {
     name: "Guru",
@@ -228,6 +240,8 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
       "#795548": "hair",    // beard/sideburns
       "#546E7A": "bottom",  // shoes
     },
+    // Light skin, brown beard, dark red robe, white details, dark grey shoes
+    naturalState: { skinIdx: 1, hairColorIdx: 2, topIdx: 1, accentIdx: 16, bottomIdx: 18, hasCape: false },
   },
   {
     name: "Iron",
@@ -236,12 +250,14 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
     hasCape: false,
     colorRoles: {
       "#000000": "outline",
-      "#FFC42A": "skin",   // gold mask — treat as skin so user can recolor mask
-      "#850000": "top",    // red body
+      "#FFC42A": "literal", // gold mask — preserve iconic gold
+      "#850000": "top",     // red body
       "#BDBDBD": "literal", // arc reactor metals
       "#E0E0E0": "literal",
       "#FFFFFF": "accent",  // arc reactor highlight
     },
+    // Dark red body, white arc reactor
+    naturalState: { topIdx: 1, accentIdx: 16, hasCape: false },
   },
   {
     name: "Hipster",
@@ -263,6 +279,8 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
       "#607D8B": "bottom",      // pants
       "#391E0B": "literal",     // shoes
     },
+    // Light skin, brown beard, cyan/blue shirt, red accent, dark grey pants
+    naturalState: { skinIdx: 1, hairColorIdx: 2, topIdx: 7, accentIdx: 0, bottomIdx: 18, hasCape: false },
   },
   {
     name: "MW",
@@ -271,13 +289,15 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
     hasCape: false,
     colorRoles: {
       "#000000": "outline",
-      "#613D24": "skin",   // mouse fur — recolor as skin
+      "#613D24": "skin",    // mouse fur — recolor as skin
       "#FFFFFF": "literal", // eye whites
       "#212121": "top",
       "#9E9E9E": "accent",
-      "#FFC42A": "eye",     // yellow eyes
+      "#FFC42A": "literal", // iconic yellow eyes — preserve
       "#544C0D": "bottom",
     },
+    // Dark brown fur, black top, grey accent, brown bottom
+    naturalState: { skinIdx: 7, topIdx: 19, accentIdx: 17, bottomIdx: 14, hasCape: false },
   },
 ];
 
@@ -370,7 +390,7 @@ export const DEFAULT_BUILDER_STATE: BuilderState = {
   accentIdx: 0,
   bottomIdx: 18,
   eyeColorIdx: 0,
-  hasCape: true,
+  hasCape: false, // off by default — pre-mades opt in via hasCape: true
   capeColorIdx: 8,
   hairStyleIdx: 0,
   eyeIdx: 0,
@@ -417,26 +437,25 @@ export function compositeCharacter(state: BuilderState): PixelMap {
     }
   };
 
-  // 1. Apply recolored template
+  // 1. Apply recolored template — skip cape silhouette pixels when removing cape
   const d: PixelMap = new Map();
+  const removeCape = template.hasCape && !state.hasCape;
   template.pixels.forEach(([x, y, c]) => {
+    if (removeCape && CAPE_COORD_SET.has(`${x},${y}`)) return;
     const role = template.colorRoles[c];
     if (role) {
       d.set(`${x},${y}`, roleColor(role, c));
     } else {
-      // Unmapped color — keep as literal
       d.set(`${x},${y}`, c);
     }
   });
 
   // 2. Add cape overlay if user wants cape on a non-cape template
   if (state.hasCape && !template.hasCape) {
-    CAPE_OVERLAY_PIXELS.forEach(([x, y, c]) => {
-      let final: string;
-      if (c === "#__CAPE__") final = cape;
-      else if (c === "#__CAPESHADOW__") final = darken(cape, 40);
-      else final = c;
-      d.set(`${x},${y}`, final);
+    const capeShadow = darken(cape, 40);
+    CAPE_PIXELS.forEach(([x, y, role]) => {
+      const color = role === "outline" ? BLK : role === "shadow" ? capeShadow : cape;
+      d.set(`${x},${y}`, color);
     });
   }
 

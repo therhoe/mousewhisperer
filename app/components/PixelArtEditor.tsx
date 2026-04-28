@@ -187,8 +187,13 @@ function generateOutlinedCharacter(opts: CharOpts): Map<string, string> {
   return d;
 }
 
-// Build pre-mades using the new modular system
-const _cc = (s: Partial<BuilderState>) => compositeCharacter({ ...DEFAULT_BUILDER_STATE, ...s });
+// Build pre-mades using the new modular system.
+// Each template's naturalState reproduces its original colors; user overrides win.
+const _cc = (s: Partial<BuilderState>) => {
+  const templateIdx = s.templateIdx ?? DEFAULT_BUILDER_STATE.templateIdx;
+  const natural = BASE_TEMPLATES[templateIdx]?.naturalState ?? {};
+  return compositeCharacter({ ...DEFAULT_BUILDER_STATE, ...natural, ...s });
+};
 
 const PREMADE_AVATARS = [
   // Exact base templates (from .pixil files, no modifications)
@@ -1093,7 +1098,7 @@ export function PixelArtEditor({ onSave, currentAvatarUrl }: PixelArtEditorProps
             {/* Parts panel */}
             <div style={{ flex: 1, maxHeight: 600, overflowY: "auto" }}>
               <BlockStack gap="300">
-                {partRow("Character Template", BASE_TEMPLATES.map(t => ({ name: t.name, icon: "👤" })), builder.templateIdx, (i) => updateBuilder({ templateIdx: i }))}
+                {partRow("Character Template", BASE_TEMPLATES.map(t => ({ name: t.name, icon: "👤" })), builder.templateIdx, (i) => updateBuilder({ templateIdx: i, ...(BASE_TEMPLATES[i]?.naturalState ?? {}) }))}
                 {colorRow("Skin", SKIN_TONES, builder.skinIdx, (i) => updateBuilder({ skinIdx: i }))}
                 {colorRow("Hair Color", HAIR_COLORS, builder.hairColorIdx, (i) => updateBuilder({ hairColorIdx: i }))}
                 {partRow("Hair Style", HAIR_STYLES, builder.hairStyleIdx, (i) => updateBuilder({ hairStyleIdx: i }))}
