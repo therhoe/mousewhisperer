@@ -827,6 +827,7 @@ export async function createTemplateAbTest({
   name,
   targetPageType,
   goal,
+  notes,
   themeId,
   themeName,
   themeRole,
@@ -842,6 +843,7 @@ export async function createTemplateAbTest({
   name: string;
   targetPageType: AbTestPageType;
   goal: AbTestGoal;
+  notes?: string | null;
   themeId?: string | null;
   themeName?: string | null;
   themeRole?: string | null;
@@ -860,6 +862,7 @@ export async function createTemplateAbTest({
       name: name.trim() || "Untitled template test",
       targetPageType,
       goal,
+      notes: notes || null,
       themeId: themeId || null,
       themeName: themeName || null,
       themeRole: themeRole || null,

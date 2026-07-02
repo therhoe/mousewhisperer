@@ -157,11 +157,23 @@ type VariantCreateActionData =
       templateName: string;
       templateSuffix: string;
       message: string;
+      recommendationPlan?: TemplateRecommendationPlan | null;
     }
   | {
       ok: false;
       error: string;
     };
+
+type TemplateRecommendationPlan = {
+  title: string;
+  summary: string;
+  sourceLabel: string;
+  confidence: number | null;
+  focusAreas: Array<{
+    label: string;
+    detail: string;
+  }>;
+};
 
 type ParsedTemplateOption = {
   themeId?: string | null;
@@ -346,6 +358,212 @@ function parseOptionValue(value: string): ParsedTemplateOption | null {
   } catch {
     return null;
   }
+}
+
+function abPageTypeToResourceType(pageType?: string | null) {
+  if (
+    pageType === "PRODUCT" ||
+    pageType === "COLLECTION" ||
+    pageType === "PAGE" ||
+    pageType === "BLOG" ||
+    pageType === "HOMEPAGE"
+  ) {
+    return pageType;
+  }
+  return null;
+}
+
+function pathFromPreviewUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value).pathname || null;
+  } catch {
+    return null;
+  }
+}
+
+function handleFromPreviewPath(
+  pageType?: string | null,
+  pagePath?: string | null,
+) {
+  if (!pagePath) return null;
+  const patterns: Partial<Record<string, RegExp>> = {
+    PRODUCT: /^\/products\/([^/?#]+)/,
+    COLLECTION: /^\/collections\/([^/?#]+)/,
+    PAGE: /^\/pages\/([^/?#]+)/,
+    BLOG: /^\/blogs\/([^/?#]+)(?:\/([^/?#]+))?/,
+  };
+  const match = pagePath.match(patterns[pageType || ""] || /$a/);
+  if (!match) return null;
+  return match[2] || match[1] || null;
+}
+
+function defaultRecommendationFocusAreas(pageType?: string | null) {
+  if (pageType === "PRODUCT") {
+    return [
+      {
+        label: "Strengthen the buying path",
+        detail:
+          "Make the primary add-to-cart area easier to find and support it with shipping, returns, sizing, and trust cues close to the action.",
+      },
+      {
+        label: "Reduce product-page hesitation",
+        detail:
+          "Move fit, comparison, guarantee, and proof content above or near the first decision point so visitors do not need to hunt for reassurance.",
+      },
+      {
+        label: "Make variant B measurable",
+        detail:
+          "Change one meaningful conversion lever in the copied template so the A/B result is attributable.",
+      },
+    ];
+  }
+  if (pageType === "COLLECTION") {
+    return [
+      {
+        label: "Improve product discovery",
+        detail:
+          "Use the variant to test stronger collection intro copy, clearer sorting/filter defaults, or more scannable product cards.",
+      },
+      {
+        label: "Increase product click-through",
+        detail:
+          "Expose decision-making details on cards such as price, reviews, benefits, or quick actions where the theme supports it.",
+      },
+      {
+        label: "Keep the test focused",
+        detail:
+          "Avoid changing navigation and product-card behavior at the same time unless the whole collection journey is the hypothesis.",
+      },
+    ];
+  }
+  if (pageType === "HOMEPAGE") {
+    return [
+      {
+        label: "Clarify the first action",
+        detail:
+          "Use the variant to make the main next step obvious above the fold and reduce competing calls to action.",
+      },
+      {
+        label: "Improve pathing",
+        detail:
+          "Push visitors toward the most valuable collection, product, or quiz path with clearer content hierarchy.",
+      },
+      {
+        label: "Separate message from layout",
+        detail:
+          "Test one major homepage hypothesis, such as hero offer, category routing, or trust proof placement.",
+      },
+    ];
+  }
+  return [
+    {
+      label: "Clarify the next step",
+      detail:
+        "Use the variant to make the page's primary action easier to understand and easier to reach.",
+    },
+    {
+      label: "Improve engagement depth",
+      detail:
+        "Move the strongest proof, explanation, or offer higher on the page so visitors do not abandon before reaching it.",
+    },
+    {
+      label: "Keep the variant clean",
+      detail:
+        "Make one meaningful page-template change before launch so the test result has a clear interpretation.",
+    },
+  ];
+}
+
+async function buildTemplateRecommendationPlan({
+  shop,
+  controlTemplate,
+}: {
+  shop: string;
+  controlTemplate: ThemeTemplateOption;
+}): Promise<TemplateRecommendationPlan> {
+  const pagePath = pathFromPreviewUrl(controlTemplate.previewPageUrl);
+  const resourceHandle = handleFromPreviewPath(
+    controlTemplate.pageType,
+    pagePath,
+  );
+  const recommendedType = abPageTypeToResourceType(controlTemplate.pageType);
+  const baseWhere = {
+    storeSnapshot: { shop },
+    status: { in: ["OPEN", "CREATED"] as const },
+  };
+  const preciseFilters = [
+    resourceHandle ? { resourceHandle } : null,
+    pagePath ? { pagePath } : null,
+  ].filter(Boolean) as Array<Record<string, string>>;
+
+  const recommendation =
+    preciseFilters.length > 0
+      ? await prisma.storeSnapshotRecommendation.findFirst({
+          where: {
+            ...baseWhere,
+            OR: preciseFilters,
+          },
+          orderBy: [
+            { confidence: "desc" },
+            { priority: "desc" },
+            { createdAt: "desc" },
+          ],
+        })
+      : null;
+
+  const typeRecommendation =
+    recommendation || !recommendedType
+      ? null
+      : await prisma.storeSnapshotRecommendation.findFirst({
+          where: {
+            ...baseWhere,
+            recommendedType,
+          },
+          orderBy: [
+            { confidence: "desc" },
+            { priority: "desc" },
+            { createdAt: "desc" },
+          ],
+        });
+
+  const matchedRecommendation = recommendation || typeRecommendation;
+  const focusAreas = defaultRecommendationFocusAreas(controlTemplate.pageType);
+
+  if (!matchedRecommendation) {
+    return {
+      title: `Recommended ${selectedPageTypeName(controlTemplate.pageType)} variant`,
+      summary:
+        "No matching store-snapshot recommendation was found, so this copy starts with a focused best-practice edit plan for the selected template type.",
+      sourceLabel: "Template best-practice plan",
+      confidence: null,
+      focusAreas,
+    };
+  }
+
+  return {
+    title: matchedRecommendation.title,
+    summary: matchedRecommendation.reason,
+    sourceLabel: `${matchedRecommendation.pageTitle || matchedRecommendation.pagePath} · ${matchedRecommendation.confidence}% confidence`,
+    confidence: matchedRecommendation.confidence,
+    focusAreas: [
+      {
+        label: "Start from the detected weakness",
+        detail: matchedRecommendation.reason,
+      },
+      {
+        label: "Build Variant B around one hypothesis",
+        detail:
+          matchedRecommendation.actionLabel ||
+          "Use the copied template to test one clear improvement against the original.",
+      },
+      ...focusAreas.slice(0, 2),
+    ],
+  };
+}
+
+function selectedPageTypeName(pageType?: string | null) {
+  return (PAGE_TYPE_LABELS[pageType || ""] || "template").toLowerCase();
 }
 
 function templateIdentity(option?: ParsedTemplateOption | null) {
@@ -1516,24 +1734,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     try {
+      const isRecommendationAction =
+        actionType === "recommend-template-variant";
       const template = await createThemeTemplateVariant({
         admin,
         control: controlTemplate,
-        kind:
-          actionType === "recommend-template-variant"
-            ? "recommendation"
-            : "duplicate",
+        kind: isRecommendationAction ? "recommendation" : "duplicate",
       });
+      const recommendationPlan = isRecommendationAction
+        ? await buildTemplateRecommendationPlan({
+            shop,
+            controlTemplate,
+          })
+        : null;
 
       return json<VariantCreateActionData>({
         ok: true,
         templateOption: serializeOption(template),
         templateName: template.templateName,
         templateSuffix: template.templateSuffix || "",
-        message:
-          actionType === "recommend-template-variant"
-            ? "Recommended variant template created."
-            : "Duplicate variant template created.",
+        message: isRecommendationAction
+          ? "Recommended variant template created."
+          : "Duplicate variant template created.",
+        recommendationPlan,
       });
     } catch (error) {
       return json<VariantCreateActionData>(
@@ -1580,6 +1803,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       variantOption?.templateFileName ||
       String(formData.get("variantTemplateFileName") || "") ||
       null;
+    const recommendationNotes =
+      String(formData.get("recommendationPlan") || "").trim() || null;
 
     if (
       isSameTemplateSelection({
@@ -1606,6 +1831,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       name: String(formData.get("name") || "Untitled template test"),
       targetPageType,
       goal: normalizeAbTestGoal(formData.get("goal")),
+      notes: recommendationNotes ? recommendationNotes.slice(0, 10000) : null,
       themeId: controlOption?.themeId || variantOption?.themeId || null,
       themeName: controlOption?.themeName || variantOption?.themeName || null,
       themeRole: controlOption?.themeRole || variantOption?.themeRole || null,
@@ -1699,6 +1925,8 @@ export default function AbTestsIndex() {
   const [wizardStep, setWizardStep] = useState<CreateWizardStep>("setup");
   const [variantBuildMode, setVariantBuildMode] =
     useState<VariantBuildMode>(null);
+  const [recommendationPlan, setRecommendationPlan] =
+    useState<TemplateRecommendationPlan | null>(null);
   const [templateSearch, setTemplateSearch] = useState("");
   const [variantTemplateSearch, setVariantTemplateSearch] = useState("");
   const [detailTestId, setDetailTestId] = useState<string | null>(null);
@@ -1897,6 +2125,7 @@ export default function AbTestsIndex() {
     setVariantOption(data.templateOption);
     setVariantTemplateName(data.templateName);
     setVariantTemplateSuffix(data.templateSuffix);
+    setRecommendationPlan(data.recommendationPlan || null);
     setWizardStep("settings");
   }, [variantCreateFetcher.data]);
 
@@ -1909,6 +2138,7 @@ export default function AbTestsIndex() {
     setVariantTemplateName("");
     setVariantTemplateSuffix("");
     setVariantBuildMode(null);
+    setRecommendationPlan(null);
     setTemplateSearch("");
     setVariantTemplateSearch("");
     setWizardStep("setup");
@@ -1940,6 +2170,7 @@ export default function AbTestsIndex() {
       setVariantTemplateName("");
       setVariantTemplateSuffix("");
       setVariantBuildMode(null);
+      setRecommendationPlan(null);
     }
   }
 
@@ -1950,6 +2181,7 @@ export default function AbTestsIndex() {
 
   function returnToVariantBuildOptions() {
     setVariantBuildMode(null);
+    setRecommendationPlan(null);
     setVariantTemplateSearch("");
     setVariantOption("");
     setVariantTemplateName("");
@@ -1960,6 +2192,7 @@ export default function AbTestsIndex() {
     const value = serializeOption(template);
     if (isSameTemplateOption(selectedControl, parseOptionValue(value))) return;
     setVariantBuildMode("existing");
+    setRecommendationPlan(null);
     setVariantOption(value);
     setVariantTemplateName(template.templateName);
     setVariantTemplateSuffix(template.templateSuffix || "");
@@ -1995,11 +2228,13 @@ export default function AbTestsIndex() {
         setVariantOption("");
         setVariantTemplateName("");
         setVariantTemplateSuffix("");
+        setRecommendationPlan(null);
       }
     } else {
       setVariantOption("");
       setVariantTemplateName(variantTemplateName.trim() || "Manual variant");
       setVariantBuildMode("existing");
+      setRecommendationPlan(null);
     }
   }
 
@@ -2017,6 +2252,9 @@ export default function AbTestsIndex() {
     formData.append("controlTemplateSuffix", controlTemplateSuffix);
     formData.append("variantTemplateName", variantTemplateName);
     formData.append("variantTemplateSuffix", variantTemplateSuffix);
+    if (recommendationPlan) {
+      formData.append("recommendationPlan", JSON.stringify(recommendationPlan));
+    }
     submit(formData, { method: "POST" });
     setCreateOpen(false);
   }
@@ -2038,12 +2276,14 @@ export default function AbTestsIndex() {
 
   function openCreateWizard() {
     setWizardStep("setup");
+    setRecommendationPlan(null);
     setCreateOpen(true);
   }
 
   function closeCreateWizard() {
     setCreateOpen(false);
     setWizardStep("setup");
+    setRecommendationPlan(null);
   }
 
   return (
@@ -2602,7 +2842,7 @@ export default function AbTestsIndex() {
                               <VariantChoiceCard
                                 icon="spark"
                                 title="Create with recommendation"
-                                description="Create a recommendation-ready template copy to edit before launch."
+                                description="Create a copy plus an edit plan based on snapshot findings when available."
                                 selected={variantBuildMode === "recommendation"}
                                 accent="amber"
                                 onClick={() =>
@@ -2656,6 +2896,77 @@ export default function AbTestsIndex() {
                                   Choose a different B template before
                                   continuing.
                                 </Text>
+                              ) : null}
+                              {recommendationPlan ? (
+                                <div
+                                  style={{
+                                    marginTop: 10,
+                                    border:
+                                      "1px solid var(--p-color-border-secondary)",
+                                    borderRadius: 10,
+                                    padding: 12,
+                                    background: "#fffaf0",
+                                  }}
+                                >
+                                  <BlockStack gap="200">
+                                    <InlineStack
+                                      align="space-between"
+                                      blockAlign="center"
+                                      gap="200"
+                                      wrap
+                                    >
+                                      <Text as="span" fontWeight="semibold">
+                                        {recommendationPlan.title}
+                                      </Text>
+                                      {recommendationPlan.confidence !==
+                                      null ? (
+                                        <Badge tone="info">
+                                          {recommendationPlan.confidence}%
+                                          confidence
+                                        </Badge>
+                                      ) : (
+                                        <Badge>Best practice</Badge>
+                                      )}
+                                    </InlineStack>
+                                    <Text as="p" tone="subdued">
+                                      {recommendationPlan.summary}
+                                    </Text>
+                                    <Text as="span" tone="subdued">
+                                      Source: {recommendationPlan.sourceLabel}
+                                    </Text>
+                                    <div
+                                      style={{
+                                        display: "grid",
+                                        gap: 8,
+                                      }}
+                                    >
+                                      {recommendationPlan.focusAreas.map(
+                                        (area) => (
+                                          <div
+                                            key={area.label}
+                                            style={{
+                                              borderTop:
+                                                "1px solid var(--p-color-border-secondary)",
+                                              paddingTop: 8,
+                                            }}
+                                          >
+                                            <BlockStack gap="050">
+                                              <Text
+                                                as="span"
+                                                fontWeight="semibold"
+                                              >
+                                                {area.label}
+                                              </Text>
+                                              <Text as="span" tone="subdued">
+                                                {area.detail}
+                                              </Text>
+                                            </BlockStack>
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  </BlockStack>
+                                </div>
                               ) : null}
                             </BlockStack>
                           </div>
