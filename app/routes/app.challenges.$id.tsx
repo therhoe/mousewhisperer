@@ -22,6 +22,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sanitizeHTML } from "../utils/sanitize.server";
 import { createNotification } from "../utils/notifications.server";
+import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 import { RichTextDisplay } from "../components/challenges/RichTextDisplay";
 import { RichTextEditor } from "../components/challenges/RichTextEditor";
 import { CategoryBadge } from "../components/challenges/CategoryBadge";
@@ -42,6 +43,10 @@ function timeAgo(dateStr: string): string {
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
@@ -114,6 +119,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });

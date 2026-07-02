@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { attributeAbTestConversion } from "../utils/ab-tests.server";
+import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
@@ -14,14 +16,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const orderTotal = order.total_price ? parseFloat(order.total_price) : null;
     const orderCurrency = order.currency || null;
 
+    const getAttributeValue = (attributes: any[] | undefined, key: string) => {
+      if (!Array.isArray(attributes)) return null;
+      return attributes.find((attribute: any) => {
+        return attribute?.name === key || attribute?.key === key;
+      })?.value || null;
+    };
+
     // Extract session ID from cart/note attributes (written by tracker.js)
-    const noteAttributes = order.note_attributes || [];
-    const sessionId = noteAttributes.find((a: any) => a.name === '_mw_sid')?.value || null;
+    const sessionId =
+      getAttributeValue(order.note_attributes, '_mw_sid') ||
+      getAttributeValue(order.custom_attributes, '_mw_sid');
 
     console.log(`[MW Webhook] Order #${order.order_number || order.name} — session: ${sessionId || "none"}, total: ${orderTotal} ${orderCurrency}`);
 
+    let storeSnapshotConversionsTracked = 0;
+    let abTestConversionsTracked = 0;
+    if (sessionId) {
+      storeSnapshotConversionsTracked = await attributeStoreSnapshotOrder({
+        shop,
+        sessionId,
+        timestamp: orderCreatedAt,
+        totalPrice: orderTotal,
+        currency: orderCurrency,
+      });
+      abTestConversionsTracked = await attributeAbTestConversion({
+        shop,
+        sessionId,
+        timestamp: orderCreatedAt,
+        totalPrice: orderTotal,
+        currency: orderCurrency,
+      });
+    }
+
     if (lineItems.length === 0) {
-      console.log("[MW Webhook] Order has no line items, skipping");
+      console.log(
+        `[MW Webhook] Order has no line items, focused snapshot tracking skipped; store snapshot conversions: ${storeSnapshotConversionsTracked}; A/B conversions: ${abTestConversionsTracked}`,
+      );
       return new Response();
     }
 
@@ -35,7 +66,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (productIds.size === 0) {
-      console.log("[MW Webhook] No product IDs found in line items, skipping");
+      console.log(
+        `[MW Webhook] No product IDs found in line items, focused snapshot tracking skipped; store snapshot conversions: ${storeSnapshotConversionsTracked}; A/B conversions: ${abTestConversionsTracked}`,
+      );
       return new Response();
     }
 
@@ -142,7 +175,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    console.log(`[MW Webhook] Order processing complete — ${conversionsTracked} conversions tracked`);
+    console.log(
+      `[MW Webhook] Order processing complete — focused conversions: ${conversionsTracked}, store snapshot conversions: ${storeSnapshotConversionsTracked}, A/B conversions: ${abTestConversionsTracked}`,
+    );
 
     return new Response();
   } catch (error) {

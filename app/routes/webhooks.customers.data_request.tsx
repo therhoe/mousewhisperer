@@ -20,7 +20,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`Received ${topic} webhook for ${shop}`);
     console.log(`Customer data request for customer ID: ${payload.customer?.id}`);
 
-    // Mouse Whisperer tracks anonymous visitor sessions on product pages.
+    // Mouse Whisperer tracks anonymous visitor sessions on supported storefront pages.
     // We do not store data linked to Shopify customer IDs, so there is no
     // customer-specific data to return.
 

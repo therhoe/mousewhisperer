@@ -1,12 +1,91 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
 
+const NON_INTERNAL_EXIT_TYPES = ["window_closed", "back_button", "idle", "external_link"];
+const STREAM_POLL_INTERVAL_MS = 30_000;
+const STATS_CACHE_TTL_MS = 30_000;
+const statsCache = new Map<string, { expiresAt: number; value: Awaited<ReturnType<typeof getSnapshotStats>> }>();
+const statsRefreshes = new Map<string, Promise<Awaited<ReturnType<typeof getSnapshotStats>>>>();
+
+type TrackedClick = {
+  label?: string;
+  tag?: string;
+  href?: string | null;
+  zone?: string;
+};
+
+function percent(numerator: number, denominator: number): number {
+  return denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+}
+
+function parseTrackedClicks(raw: string | null): TrackedClick[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+
+    if (parsed && typeof parsed === "object") {
+      return Object.entries(parsed).flatMap(([label, count]) => {
+        const clickCount = typeof count === "number" ? count : 0;
+        return Array.from({ length: clickCount }, () => ({ label, tag: "button", zone: "main" }));
+      });
+    }
+  } catch {}
+
+  return [];
+}
+
+function isLinkClick(click: TrackedClick): boolean {
+  return (click.tag || "").toLowerCase() === "a" && !!click.href;
+}
+
+function isBodyCtaClick(click: TrackedClick): boolean {
+  const tag = (click.tag || "").toLowerCase();
+  return (click.zone || "main") === "main" && (tag === "button" || tag === "input");
+}
+
+function isLinkOrButtonClick(click: TrackedClick): boolean {
+  const tag = (click.tag || "").toLowerCase();
+  return tag === "a" || tag === "button" || tag === "input";
+}
+
+function summarizeClicks(rows: Array<{ ctaClicks: string | null }>) {
+  let linkClickCount = 0;
+  let bodyCtaClickCount = 0;
+  let anyLinkOrButtonClickCount = 0;
+  let visitsWithBodyCtaClick = 0;
+  let visitsWithAnyLinkOrButtonClick = 0;
+
+  rows.forEach((row) => {
+    const clicks = parseTrackedClicks(row.ctaClicks);
+    const bodyClicks = clicks.filter(isBodyCtaClick).length;
+    const linkOrButtonClicks = clicks.filter(isLinkOrButtonClick).length;
+
+    linkClickCount += clicks.filter(isLinkClick).length;
+    bodyCtaClickCount += bodyClicks;
+    anyLinkOrButtonClickCount += linkOrButtonClicks;
+    if (bodyClicks > 0) visitsWithBodyCtaClick++;
+    if (linkOrButtonClicks > 0) visitsWithAnyLinkOrButtonClick++;
+  });
+
+  return {
+    linkClickCount,
+    bodyCtaClickCount,
+    anyLinkOrButtonClickCount,
+    visitsWithBodyCtaClick,
+    visitsWithAnyLinkOrButtonClick,
+  };
+}
+
 // Calculate stats for a snapshot using efficient database aggregations
 async function getSnapshotStats(snapshotId: string) {
-  // Use parallel queries for efficiency
+  // Keep stats refreshes on one DB connection so background SSE work does not
+  // starve interactive page navigation on the remote connection pool.
   const [
     visitorTypeCounts,
-    conversionCounts,
+    addToCartCount,
+    conversionCount,
     realUserMetrics,
     sourceCategoryStats,
     countryCounts,
@@ -19,8 +98,19 @@ async function getSnapshotStats(snapshotId: string) {
     sortPreferences,
     filterUsageCount,
     productClickCount,
+    productClicksBySource,
+    searchBySource,
+    exitBySource,
+    scroll50BySource,
+    scroll100BySource,
     revenueAggregate,
-  ] = await Promise.all([
+    searchSessionCount,
+    scroll50Count,
+    scroll100Count,
+    nonInternalExitCount,
+    bounceCandidateRows,
+    ctaClickRows,
+  ] = await prisma.$transaction([
     // Count by visitor type
     prisma.visit.groupBy({
       by: ["visitorType"],
@@ -28,10 +118,8 @@ async function getSnapshotStats(snapshotId: string) {
       _count: true,
     }),
     // Count conversions and add-to-cart
-    Promise.all([
-      prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
-      prisma.visit.count({ where: { snapshotId, converted: true } }),
-    ]).then(([atc, conv]) => ({ addToCartCount: atc, conversionCount: conv })),
+    prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
+    prisma.visit.count({ where: { snapshotId, converted: true } }),
     // Get average time and scroll for REAL users only
     prisma.visit.aggregate({
       where: { snapshotId, visitorType: "REAL" },
@@ -99,6 +187,9 @@ async function getSnapshotStats(snapshotId: string) {
         botScore: true,
         addedToCart: true,
         converted: true,
+        orderValue: true,
+        currency: true,
+        ctaClicks: true,
         startedAt: true,
         endedAt: true,
         exitType: true,
@@ -140,11 +231,60 @@ async function getSnapshotStats(snapshotId: string) {
     prisma.visit.count({
       where: { snapshotId, exitUrl: { contains: "/products/" } },
     }),
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { snapshotId, exitUrl: { contains: "/products/" } },
+      _count: true,
+    }),
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { snapshotId, searchQuery: { not: null } },
+      _count: true,
+    }),
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { snapshotId, exitType: { in: NON_INTERNAL_EXIT_TYPES } },
+      _count: true,
+    }),
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { snapshotId, scrollDepth: { gte: 50 } },
+      _count: true,
+    }),
+    prisma.visit.groupBy({
+      by: ["sourceCategory"],
+      where: { snapshotId, scrollDepth: { gte: 100 } },
+      _count: true,
+    }),
     // Revenue aggregation
     prisma.visit.aggregate({
       where: { snapshotId, converted: true, orderValue: { not: null } },
       _sum: { orderValue: true },
       _count: { _all: true },
+    }),
+    prisma.visit.count({
+      where: { snapshotId, searchQuery: { not: null } },
+    }),
+    prisma.visit.count({
+      where: { snapshotId, scrollDepth: { gte: 50 } },
+    }),
+    prisma.visit.count({
+      where: { snapshotId, scrollDepth: { gte: 100 } },
+    }),
+    prisma.visit.count({
+      where: { snapshotId, exitType: { in: NON_INTERNAL_EXIT_TYPES } },
+    }),
+    prisma.visit.findMany({
+      where: {
+        snapshotId,
+        scrollDepth: { lt: 50 },
+        exitType: { in: NON_INTERNAL_EXIT_TYPES },
+      },
+      select: { sourceCategory: true, ctaClicks: true },
+    }),
+    prisma.visit.findMany({
+      where: { snapshotId, ctaClicks: { not: null } },
+      select: { sourceCategory: true, ctaClicks: true },
     }),
   ]);
 
@@ -156,8 +296,6 @@ async function getSnapshotStats(snapshotId: string) {
     else if (item.visitorType === "ZOMBIE") zombieCount = item._count;
     else if (item.visitorType === "BOT") botCount = item._count;
   });
-
-  const { addToCartCount, conversionCount } = conversionCounts;
 
   const avgTimeOnPage = realUserMetrics._avg.timeOnPage
     ? Math.round(realUserMetrics._avg.timeOnPage / 1000)
@@ -176,6 +314,15 @@ async function getSnapshotStats(snapshotId: string) {
     avgScroll: number;
     atc: number;
     conversions: number;
+    productClicks: number;
+    searches: number;
+    exits: number;
+    scroll50: number;
+    scroll100: number;
+    linkClicks: number;
+    bodyCtaVisits: number;
+    anyClickVisits: number;
+    bounces: number;
   }>();
 
   sourceCategoryStats.forEach((item) => {
@@ -183,6 +330,7 @@ async function getSnapshotStats(snapshotId: string) {
     if (!sourceMap.has(category)) {
       sourceMap.set(category, {
         sessions: 0, real: 0, zombie: 0, bot: 0, avgTime: 0, avgScroll: 0, atc: 0, conversions: 0,
+        productClicks: 0, searches: 0, exits: 0, scroll50: 0, scroll100: 0, linkClicks: 0, bodyCtaVisits: 0, anyClickVisits: 0, bounces: 0,
       });
     }
     const stats = sourceMap.get(category)!;
@@ -222,6 +370,57 @@ async function getSnapshotStats(snapshotId: string) {
     if (stats) stats.conversions = item._count;
   });
 
+  productClicksBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.productClicks = item._count;
+  });
+
+  searchBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.searches = item._count;
+  });
+
+  exitBySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.exits = item._count;
+  });
+
+  scroll50BySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.scroll50 = item._count;
+  });
+
+  scroll100BySource.forEach((item) => {
+    const category = item.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (stats) stats.scroll100 = item._count;
+  });
+
+  ctaClickRows.forEach((row) => {
+    const category = row.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (!stats) return;
+    const clicks = parseTrackedClicks(row.ctaClicks);
+    const bodyClicks = clicks.filter(isBodyCtaClick).length;
+    const linkOrButtonClicks = clicks.filter(isLinkOrButtonClick).length;
+    stats.linkClicks += clicks.filter(isLinkClick).length;
+    if (bodyClicks > 0) stats.bodyCtaVisits++;
+    if (linkOrButtonClicks > 0) stats.anyClickVisits++;
+  });
+
+  bounceCandidateRows.forEach((row) => {
+    const category = row.sourceCategory || "Unknown";
+    const stats = sourceMap.get(category);
+    if (!stats) return;
+    if (parseTrackedClicks(row.ctaClicks).filter(isLinkOrButtonClick).length === 0) {
+      stats.bounces++;
+    }
+  });
+
   const sourceStats = Array.from(sourceMap.entries()).map(([category, stats]) => ({
     category,
     sessions: stats.sessions,
@@ -232,6 +431,16 @@ async function getSnapshotStats(snapshotId: string) {
     avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
     atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
     convRate: stats.real > 0 ? Math.min(Math.round((stats.conversions / stats.real) * 100), 100) : 0,
+    productClickRate: stats.real > 0 ? Math.round((stats.productClicks / stats.real) * 100) : 0,
+    linkClicks: stats.linkClicks,
+    searches: stats.searches,
+    exitRate: percent(stats.exits, stats.sessions),
+    productCtrRate: percent(stats.productClicks, stats.sessions),
+    bodyCtaCtrRate: percent(stats.bodyCtaVisits, stats.sessions),
+    bounceRate: percent(stats.bounces, stats.sessions),
+    scroll50Rate: percent(stats.scroll50, stats.sessions),
+    scroll100Rate: percent(stats.scroll100, stats.sessions),
+    anyClickCtrRate: percent(stats.anyClickVisits, stats.sessions),
   })).sort((a, b) => b.sessions - a.sessions);
 
   // Process top countries
@@ -282,6 +491,10 @@ async function getSnapshotStats(snapshotId: string) {
 
   const totalRevenue = revenueAggregate._sum.orderValue || 0;
   const ordersWithValue = revenueAggregate._count._all || 0;
+  const clickSummary = summarizeClicks(ctaClickRows);
+  const bounceCount = bounceCandidateRows.filter((row) =>
+    parseTrackedClicks(row.ctaClicks).filter(isLinkOrButtonClick).length === 0
+  ).length;
 
   return {
     totalSessions,
@@ -304,6 +517,21 @@ async function getSnapshotStats(snapshotId: string) {
     aov: ordersWithValue > 0 ? Math.round((totalRevenue / ordersWithValue) * 100) / 100 : 0,
     atcRate: realCount > 0 ? Math.round((addToCartCount / realCount) * 1000) / 10 : 0,
     convRate: realCount > 0 ? Math.min(Math.round((conversionCount / realCount) * 1000) / 10, 100) : 0,
+    productCtrRate: percent(productClickCount, totalSessions),
+    linkClickCount: clickSummary.linkClickCount,
+    searchCount: searchSessionCount,
+    exitCount: nonInternalExitCount,
+    exitRate: percent(nonInternalExitCount, totalSessions),
+    bodyCtaClickCount: clickSummary.bodyCtaClickCount,
+    bodyCtaCtrRate: percent(clickSummary.visitsWithBodyCtaClick, totalSessions),
+    anyLinkOrButtonClickCount: clickSummary.anyLinkOrButtonClickCount,
+    anyClickCtrRate: percent(clickSummary.visitsWithAnyLinkOrButtonClick, totalSessions),
+    bounceCount,
+    bounceRate: percent(bounceCount, totalSessions),
+    scroll50Count,
+    scroll50Rate: percent(scroll50Count, totalSessions),
+    scroll100Count,
+    scroll100Rate: percent(scroll100Count, totalSessions),
     sourceStats,
     topCountries,
     topCities,
@@ -313,6 +541,62 @@ async function getSnapshotStats(snapshotId: string) {
     searchStats,
     recentVisits,
   };
+}
+
+async function refreshCachedSnapshotStats(snapshotId: string) {
+  const existing = statsRefreshes.get(snapshotId);
+  if (existing) return existing;
+
+  const refresh = getSnapshotStats(snapshotId)
+    .then(async (value) => {
+      statsCache.set(snapshotId, { value, expiresAt: Date.now() + STATS_CACHE_TTL_MS });
+      try {
+        await prisma.snapshotStatsCache.upsert({
+          where: { snapshotId },
+          create: {
+            snapshotId,
+            stats: JSON.parse(JSON.stringify(value)),
+            recomputedAt: new Date(),
+          },
+          update: {
+            stats: JSON.parse(JSON.stringify(value)),
+            recomputedAt: new Date(),
+          },
+        });
+      } catch (error) {
+        console.warn("[MW Perf] SSE stats cache write skipped:", error);
+      }
+      return value;
+    })
+    .finally(() => {
+      statsRefreshes.delete(snapshotId);
+    });
+
+  statsRefreshes.set(snapshotId, refresh);
+  return refresh;
+}
+
+async function getCachedSnapshotStats(
+  snapshotId: string,
+  persistedStats?: { stats: unknown; recomputedAt: Date } | null,
+) {
+  const cached = statsCache.get(snapshotId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  if (persistedStats?.stats) {
+    const value = persistedStats.stats as Awaited<ReturnType<typeof getSnapshotStats>>;
+    statsCache.set(snapshotId, { value, expiresAt: Date.now() + STATS_CACHE_TTL_MS });
+    if (persistedStats.recomputedAt.getTime() <= Date.now() - STATS_CACHE_TTL_MS) {
+      void refreshCachedSnapshotStats(snapshotId).catch((error) => {
+        console.warn("[MW Perf] SSE stats refresh skipped:", error);
+      });
+    }
+    return value;
+  }
+
+  return refreshCachedSnapshotStats(snapshotId);
 }
 
 function formatExitType(type: string): string {
@@ -336,7 +620,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   }
 
   // Check if snapshot exists and is active
-  const snapshot = await prisma.snapshot.findFirst({
+  const snapshot = await prisma.snapshot.findUnique({
     where: { id: snapshotId },
     select: { id: true, status: true },
   });
@@ -351,40 +635,54 @@ export async function loader({ params }: LoaderFunctionArgs) {
   }
 
   const encoder = new TextEncoder();
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+  const closeStream = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (interval) clearInterval(interval);
+    if (!closed) {
+      closed = true;
+      controller.close();
+    }
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
-      // Send initial stats
-      const initialStats = await getSnapshotStats(snapshotId);
-      if (initialStats) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialStats)}\n\n`));
-      }
+      controller.enqueue(encoder.encode(`: connected\n\n`));
 
-      // Set up polling interval (every 5 seconds)
-      const interval = setInterval(async () => {
+      interval = setInterval(async () => {
         try {
           // Check if snapshot is still active
-          const currentSnapshot = await prisma.snapshot.findFirst({
+          const currentSnapshot = await prisma.snapshot.findUnique({
             where: { id: snapshotId },
-            select: { status: true },
+            select: {
+              status: true,
+              statsCache: {
+                select: {
+                  stats: true,
+                  recomputedAt: true,
+                },
+              },
+            },
           });
 
           if (!currentSnapshot || currentSnapshot.status !== "ACTIVE") {
-            clearInterval(interval);
-            controller.close();
+            closeStream(controller);
             return;
           }
 
-          const stats = await getSnapshotStats(snapshotId);
+          const stats = await getCachedSnapshotStats(snapshotId, currentSnapshot.statsCache);
           if (stats) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
           }
         } catch (error) {
           console.error("SSE error:", error);
-          clearInterval(interval);
-          controller.close();
+          closeStream(controller);
         }
-      }, 5000);
+      }, STREAM_POLL_INTERVAL_MS);
+    },
+    cancel() {
+      if (interval) clearInterval(interval);
+      closed = true;
     },
   });
 

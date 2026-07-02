@@ -42,6 +42,7 @@ interface ChallengeCardProps {
     realPercent?: number;
     addToCartRate?: number;
     conversionRate?: number;
+    summaryMetrics?: Array<{ label: string; value: string }>;
   } | null;
   answers?: Answer[];
 }
@@ -94,6 +95,12 @@ export function InsightCard({
   const [replyText, setReplyText] = useState("");
   const level = getLevel(profile.reputation || 0);
   const hasImage = !!imageUrl;
+  const summaryMetrics = snapshotStats?.summaryMetrics || [
+    { label: (snapshotStats as any)?.rateLabel || "ATC", value: `${snapshotStats?.addToCartRate ?? 0}%` },
+    { label: "CVR", value: `${snapshotStats?.conversionRate ?? 0}%` },
+    { label: "REV", value: `$${(snapshotStats as any)?.totalRevenue ?? 0}` },
+    { label: "Real%", value: `${snapshotStats?.realPercent ?? 0}%` },
+  ];
 
   return (
     <Card padding="0">
@@ -102,7 +109,7 @@ export function InsightCard({
         <InlineStack gap="200" blockAlign="center">
           <AvatarIcon profile={profile} />
           <Text as="span" variant="bodySm" fontWeight="semibold">{profile.displayName}</Text>
-          <Badge tone="info">LVL {level}</Badge>
+          <Badge tone="info">{`LVL ${level}`}</Badge>
           <Text as="span" variant="bodySm" tone="subdued">{"\u00B7"} {timeAgo(createdAt)}</Text>
         </InlineStack>
         <InlineStack gap="200" blockAlign="center">
@@ -129,22 +136,12 @@ export function InsightCard({
         {snapshotStats && (
           <div style={{ flex: "0 0 180px", padding: 12, display: "flex", alignItems: "stretch" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, rowGap: 10, background: "#f6f6f7", borderRadius: 8, padding: "8px 6px", width: "100%" }}>
-              <div style={{ textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">{(snapshotStats as any).rateLabel || "ATC"}</Text>
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.addToCartRate ?? 0}%</Text>
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">CVR</Text>
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.conversionRate ?? 0}%</Text>
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">REV</Text>
-                <Text as="p" variant="bodyMd" fontWeight="semibold">${(snapshotStats as any).totalRevenue ?? 0}</Text>
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Real%</Text>
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{snapshotStats.realPercent ?? 0}%</Text>
-              </div>
+              {summaryMetrics.slice(0, 4).map((metric) => (
+                <div key={metric.label} style={{ textAlign: "center" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">{metric.label}</Text>
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">{metric.value}</Text>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -209,10 +206,10 @@ export function InsightCard({
                     <InlineStack gap="200" blockAlign="center">
                       <AvatarIcon profile={answer.profile} size={24} />
                       <Text as="span" variant="bodySm" fontWeight="semibold">{answer.profile.displayName}</Text>
-                      <Badge tone="info">LVL {ansLevel}</Badge>
+                      <Badge tone="info">{`LVL ${ansLevel}`}</Badge>
                       <Text as="span" variant="bodySm" tone="subdued">{timeAgo(answer.createdAt)}</Text>
                     </InlineStack>
-                    {answer.isAccepted && <Badge tone="success">{"\u2713"} Accepted</Badge>}
+                    {answer.isAccepted && <Badge tone="success">{"\u2713 Accepted"}</Badge>}
                   </div>
                   <Text as="p" variant="bodySm">{answer.content}</Text>
                   <div style={{ marginTop: 6 }}>

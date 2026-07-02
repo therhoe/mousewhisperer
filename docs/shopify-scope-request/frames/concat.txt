@@ -1,0 +1,13 @@
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/001-dashboard.png'
+duration 2.5
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/002-create-test-opened.png'
+duration 2.5
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/003-wizard-templates-loaded.png'
+duration 4.0
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/004-duplicate-denied.png'
+duration 6.0
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/005-recommendations-option.png'
+duration 5.0
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/006-recommendations-denied.png'
+duration 5.0
+file '/Users/nobrainer/WorkSpace/Gadget.dev/tracking app/docs/shopify-scope-request/frames/006-recommendations-denied.png'

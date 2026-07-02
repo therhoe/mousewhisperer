@@ -3,6 +3,8 @@ import { register } from "@shopify/web-pixels-extension";
 register(({ configuration, analytics, browser }) => {
   const apiEndpoint = configuration.apiEndpoint;
   const COOKIE_NAME = 'mw_sid'; // Must match tracker.js cookie name
+  const RICH_TRACKER_COOKIE = 'mw_rich_seen';
+  const RICH_TRACKER_RECENCY_MS = 30 * 60 * 1000;
 
   // Helper to get session ID from cookie (set by tracker.js)
   async function getSessionIdFromCookie() {
@@ -29,34 +31,51 @@ register(({ configuration, analytics, browser }) => {
     return null;
   }
 
-  // Fallback: generate a session ID if no other source found
-  function generateSessionId() {
-    return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+  async function richThemeTrackerIsRecent() {
+    try {
+      const value = await browser.cookie.get(RICH_TRACKER_COOKIE);
+      const timestamp = Number(value);
+      return Number.isFinite(timestamp) && Date.now() - timestamp < RICH_TRACKER_RECENCY_MS;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function resolveSessionId(checkoutAttributes, options = {}) {
+    let sessionId = getSessionIdFromAttributes(checkoutAttributes);
+    let source = sessionId ? 'cart_attributes' : null;
+
+    if (!sessionId && options.requireCartAttributes) {
+      return null;
+    }
+
+    if (!sessionId && options.requireRecentRichTracker && !(await richThemeTrackerIsRecent())) {
+      return null;
+    }
+
+    if (!sessionId) {
+      sessionId = await getSessionIdFromCookie();
+      source = sessionId ? 'cookie' : null;
+    }
+
+    return sessionId ? { sessionId, source } : null;
   }
 
   // Send event to our API
-  async function sendEvent(eventType, data, checkoutAttributes) {
+  async function sendEvent(eventType, data, checkoutAttributes, options = {}) {
     if (!apiEndpoint) {
       console.warn('[MW Pixel] apiEndpoint not configured — cannot send events');
       return;
     }
 
-    // Priority 1: Get session ID from cart attributes (written by tracker.js)
-    let sessionId = getSessionIdFromAttributes(checkoutAttributes);
-    const sessionSource = sessionId ? 'cart_attributes' : null;
-
-    // Priority 2: Try cookie
-    if (!sessionId) {
-      sessionId = await getSessionIdFromCookie();
-    }
-    const finalSource = sessionSource || (sessionId ? 'cookie' : 'generated');
-
-    // Priority 3: Generate fallback (conversion attributed via product handle)
-    if (!sessionId) {
-      sessionId = generateSessionId();
+    const resolvedSession = await resolveSessionId(checkoutAttributes, options);
+    if (!resolvedSession) {
+      console.log(`[MW Pixel] ${eventType} skipped — Mouse Whisperer theme app embed session not found`);
+      return;
     }
 
-    console.log(`[MW Pixel] Sending ${eventType} — session: ${sessionId} (from: ${finalSource})`);
+    const { sessionId, source } = resolvedSession;
+    console.log(`[MW Pixel] Sending ${eventType} — session: ${sessionId} (from: ${source})`);
 
     const payload = {
       eventType,
@@ -95,7 +114,7 @@ register(({ configuration, analytics, browser }) => {
         quantity: cartLine.quantity,
         price: cartLine.merchandise.price?.amount,
         currency: cartLine.merchandise.price?.currencyCode,
-      }, null);
+      }, null, { requireRecentRichTracker: true });
     }
   });
 
@@ -150,7 +169,7 @@ register(({ configuration, analytics, browser }) => {
         currency: checkout.currencyCode,
         products,
         email: checkout.email,
-      }, checkout.attributes);
+      }, checkout.attributes, { requireRecentRichTracker: true });
     }
   });
 
@@ -177,7 +196,7 @@ register(({ configuration, analytics, browser }) => {
         totalPrice: checkout.totalPrice?.amount,
         currency: checkout.currencyCode,
         products,
-      }, checkout.attributes);
+      }, checkout.attributes, { requireRecentRichTracker: true });
     }
   });
 });

@@ -1,10 +1,9 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, Link, useFetcher } from "@remix-run/react";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, useSubmit, useNavigation, Link, useFetcher, PrefetchPageLinks } from "@remix-run/react";
 import {
   Page,
-  Layout,
   Card,
   Text,
   Badge,
@@ -15,17 +14,9 @@ import {
   TextField,
   FormLayout,
   Banner,
-  Box,
-  Icon,
-  Divider,
   ChoiceList,
   Popover,
-  ProgressBar,
 } from "@shopify/polaris";
-import {
-  CheckCircleIcon,
-  MinusCircleIcon,
-} from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -35,9 +26,74 @@ import {
   markAsRead,
   markAllAsRead,
 } from "../utils/notifications.server";
+import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
+import { ensureWebPixel } from "../utils/web-pixel.server";
+import {
+  cachedValue,
+  clearCacheKey,
+  clearCachePrefix,
+  loaderCacheKeys,
+} from "../utils/loader-cache.server";
+import { createStoreSnapshot } from "../utils/store-snapshot.server";
 
-const APP_CLIENT_ID = "be249e7dc1288f980804d0bf5e40cde0";
-const THEME_BLOCK_HANDLE = "tracker";
+const HOMEPAGE_RESOURCE = {
+  id: "gid://shopify/Homepage/__homepage__",
+  title: "Homepage",
+  handle: "__homepage__",
+};
+type AuditResourceType = "product" | "collection" | "homepage" | "page" | "blog";
+type PrismaResourceType = "PRODUCT" | "COLLECTION" | "HOMEPAGE" | "PAGE" | "BLOG";
+type ActiveAuditRow = {
+  id: string;
+  productTitle: string;
+  resourceType: PrismaResourceType;
+  targetVisitors: number;
+  realCount: number;
+};
+type ActiveAudit = ActiveAuditRow & {
+  progress: number;
+};
+type DashboardSummary = {
+  setupGuideDismissed: boolean;
+  completedCount: number;
+  activeAudits: ActiveAudit[];
+  profile: {
+    avatarEmoji: string | null;
+    avatarUrl: string | null;
+    bio: string | null;
+    displayName: string;
+    reputation: number;
+    answersCount: number;
+    insightsCount: number;
+  } | null;
+};
+type StoreSnapshotListItem = {
+  id: string;
+  name: string | null;
+  status: string;
+  completionMode: string;
+  targetHumanVisitors: number | null;
+  targetTotalVisits: number | null;
+  durationDays: number | null;
+  startedAt: string;
+  completedAt: string | null;
+  _count: { visits: number };
+};
+
+const DASHBOARD_CACHE_TTL_MS = 5 * 60_000;
+const DETAIL_PREFETCH_LIMIT = 12;
+
+const AUDIT_TYPE_CARDS: Array<{
+  resourceType: PrismaResourceType;
+  title: string;
+  href: string;
+}> = [
+  { resourceType: "PRODUCT", title: "Product", href: "/app/audits/products" },
+  { resourceType: "COLLECTION", title: "Collection", href: "/app/audits/collections" },
+  { resourceType: "PAGE", title: "Pages", href: "/app/audits/pages" },
+  { resourceType: "BLOG", title: "Blogs", href: "/app/audits/blogs" },
+  { resourceType: "HOMEPAGE", title: "Homepage", href: "/app/audits/homepage" },
+];
 
 function getLevel(rep: number) {
   if (rep >= 200) return { level: 10, title: "Grandmaster", next: 200, prev: 150 };
@@ -52,106 +108,115 @@ function getLevel(rep: number) {
   return { level: 1, title: "Newcomer", next: 5, prev: 0 };
 }
 
+async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
+  return cachedValue(loaderCacheKeys.dashboard(shop), DASHBOARD_CACHE_TTL_MS, async () => {
+    const [shopSettings, activeAuditRows, completedCount, profile] =
+      await Promise.all([
+        prisma.shopSettings.upsert({
+          where: { shop },
+          update: {},
+          create: { shop },
+        }),
+        prisma.$queryRaw<ActiveAuditRow[]>`
+          SELECT
+            p.id,
+            p."productTitle",
+            p."resourceType"::text AS "resourceType",
+            s."targetVisitors",
+            COALESCE((stats_cache.stats->>'realCount')::int, 0)::int AS "realCount"
+          FROM "Project" p
+          JOIN "Snapshot" s
+            ON s."projectId" = p.id
+            AND s.status = 'ACTIVE'
+          LEFT JOIN "SnapshotStatsCache" stats_cache
+            ON stats_cache."snapshotId" = s.id
+          WHERE p.shop = ${shop}
+          ORDER BY p."createdAt" DESC
+        `,
+        prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
+        COMMUNITY_FEATURES_ENABLED
+          ? prisma.insightProfile.findUnique({
+              where: { shop },
+              include: {
+                _count: { select: { answers: true, insights: true } },
+              },
+            })
+          : Promise.resolve(null),
+      ]);
+
+    const activeAudits = activeAuditRows.map((row) => ({
+      id: row.id,
+      productTitle: row.productTitle,
+      resourceType: row.resourceType,
+      realCount: Number(row.realCount || 0),
+      targetVisitors: row.targetVisitors,
+      progress: Math.min(100, Math.round((Number(row.realCount || 0) / row.targetVisitors) * 100)),
+    }));
+
+    return {
+      setupGuideDismissed: shopSettings.setupGuideDismissed,
+      completedCount,
+      activeAudits,
+      profile: profile
+        ? {
+            avatarEmoji: profile.avatarEmoji,
+            avatarUrl: profile.avatarUrl,
+            bio: profile.bio,
+            displayName: profile.displayName,
+            reputation: profile.reputation,
+            answersCount: profile._count.answers,
+            insightsCount: profile._count.insights,
+          }
+        : null,
+    };
+  });
+}
+
+function clearDashboardCache(shop: string) {
+  clearCacheKey(loaderCacheKeys.dashboard(shop));
+}
+
+function clearAuditListCaches(shop: string) {
+  clearDashboardCache(shop);
+  clearCachePrefix(loaderCacheKeys.categoryPrefix(shop));
+  clearCachePrefix(loaderCacheKeys.categoryFastPrefix(shop));
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Get or create shop settings
-  let shopSettings = await prisma.shopSettings.findUnique({
-    where: { shop },
-  });
-
-  if (!shopSettings) {
-    shopSettings = await prisma.shopSettings.create({
-      data: { shop },
-    });
-  }
-
-  // Fetch profile first so we can conditionally query answers
-  const profile = await prisma.insightProfile.findUnique({
-    where: { shop },
-    include: {
-      _count: { select: { answers: true, insights: true } },
-    },
-  });
-
-  const [projects, activeCount, completedCount, trendingChallenges, notifications, unreadCount] =
-    await Promise.all([
-      // Project query — snapshot metadata only
-      prisma.project.findMany({
-        where: { shop },
-        orderBy: { createdAt: "desc" },
-        include: {
-          snapshots: {
-            orderBy: { number: "desc" },
-            select: {
-              id: true,
-              number: true,
-              name: true,
-              status: true,
-              targetVisitors: true,
-              _count: { select: { visits: { where: { visitorType: "REAL" } } } },
-            },
-          },
-        },
-      }),
-      prisma.snapshot.count({ where: { project: { shop }, status: "ACTIVE" } }),
-      prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
-      // Trending challenges (last 14 days)
-      prisma.insight.findMany({
-        where: { createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) } },
-        orderBy: [{ meTooCount: "desc" }, { viewCount: "desc" }, { createdAt: "desc" }],
-        take: 5,
-        select: { id: true, title: true, viewCount: true, meTooCount: true, answerCount: true },
-      }),
-      getNotifications(shop, { take: 10 }),
-      getUnreadCount(shop),
-    ]);
-
-  // Build active audits list (projects with active or in-progress snapshots)
-  const activeAudits = projects
-    .map((project) => {
-      const activeSnap = project.snapshots.find((s) => s.status === "ACTIVE");
-      if (!activeSnap) return null;
-      const realCount = activeSnap._count.visits;
-      return {
-        id: project.id,
-        productTitle: project.productTitle,
-        realCount,
-        targetVisitors: activeSnap.targetVisitors,
-        progress: Math.min(100, Math.round((realCount / activeSnap.targetVisitors) * 100)),
-      };
-    })
-    .filter(Boolean);
+  const [summary, storeSnapshots] = await Promise.all([
+    getDashboardSummary(shop),
+    prisma.storeSnapshot.findMany({
+      where: { shop },
+      orderBy: { startedAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        completionMode: true,
+        targetHumanVisitors: true,
+        targetTotalVisits: true,
+        durationDays: true,
+        startedAt: true,
+        completedAt: true,
+        _count: { select: { visits: true } },
+      },
+    }),
+  ]);
 
   return json({
-    shop,
-    setupGuideDismissed: shopSettings.setupGuideDismissed,
-    activeCount,
-    completedCount,
-    activeAudits,
-    trendingChallenges,
-    profile: profile
-      ? {
-          avatarEmoji: profile.avatarEmoji,
-          avatarUrl: profile.avatarUrl,
-          bio: profile.bio,
-          displayName: profile.displayName,
-          reputation: profile.reputation,
-          answersCount: profile._count.answers,
-          insightsCount: profile._count.insights,
-        }
-      : null,
-    notifications: notifications.map((n) => ({
-      id: n.id,
-      type: n.type,
-      title: n.title,
-      message: n.message,
-      linkUrl: n.linkUrl,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
+    ...summary,
+    storeSnapshots: storeSnapshots.map((snapshot) => ({
+      ...snapshot,
+      startedAt: snapshot.startedAt.toISOString(),
+      completedAt: snapshot.completedAt?.toISOString() ?? null,
     })),
-    unreadCount,
+    notifications: [],
+    unreadCount: 0,
+    notificationsPending: true,
   });
 };
 
@@ -165,9 +230,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = formData.get("productId") as string;
     const productTitle = formData.get("productTitle") as string;
     const productHandle = formData.get("productHandle") as string;
-    const resourceType = (formData.get("resourceType") as "PRODUCT" | "COLLECTION" | "PAGE" | "BLOG") || "PRODUCT";
+    const resourceType = (formData.get("resourceType") as PrismaResourceType) || "PRODUCT";
     const snapshotName = formData.get("snapshotName") as string | null;
     const targetVisitors = parseInt(formData.get("targetVisitors") as string) || 1000;
+
+    await ensureWebPixel(admin, shop);
 
     // Check if project already exists for this resource with an active snapshot
     const existing = await prisma.project.findFirst({
@@ -184,7 +251,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (existing) {
-      const resourceLabel = resourceType === "COLLECTION" ? "collection" : "product";
+      const resourceLabel =
+        resourceType === "COLLECTION" ? "collection" :
+        resourceType === "HOMEPAGE" ? "homepage" :
+        resourceType === "PAGE" ? "page" :
+        resourceType === "BLOG" ? "blog" :
+        "product";
       return json({ error: `An active audit already exists for this ${resourceLabel}` }, { status: 400 });
     }
 
@@ -226,12 +298,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    clearAuditListCaches(shop);
     return json({ success: true });
+  }
+
+  if (actionType === "create-store-snapshot") {
+    const rawMode = String(formData.get("completionMode") || "HUMAN_VISITORS");
+    const completionMode =
+      rawMode === "TOTAL_VISITS" || rawMode === "TIME_WINDOW"
+        ? rawMode
+        : "HUMAN_VISITORS";
+
+    await ensureWebPixel(admin, shop);
+
+    const snapshot = await createStoreSnapshot({
+      shop,
+      name: formData.get("name") as string | null,
+      completionMode,
+      targetHumanVisitors: parseInt(String(formData.get("targetHumanVisitors") || "1000"), 10),
+      targetTotalVisits: parseInt(String(formData.get("targetTotalVisits") || "2500"), 10),
+      durationDays: parseInt(String(formData.get("durationDays") || "7"), 10),
+    });
+
+    return redirect(`/app/store-snapshots/${snapshot.id}`);
   }
 
   if (actionType === "delete") {
     const projectId = formData.get("projectId") as string;
     await prisma.project.delete({ where: { id: projectId } });
+    clearAuditListCaches(shop);
     return json({ success: true });
   }
 
@@ -244,6 +339,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "mark-all-read") {
     await markAllAsRead(shop);
     return json({ success: true });
+  }
+
+  if (actionType === "load-notifications") {
+    const [notifications, unreadCount] = await Promise.all([
+      getNotifications(shop, { take: 10 }),
+      getUnreadCount(shop),
+    ]);
+
+    return json({
+      notifications: notifications.map((n) => ({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        linkUrl: n.linkUrl,
+        isRead: n.isRead,
+        createdAt: n.createdAt,
+      })),
+      unreadCount,
+    });
   }
 
   if (actionType === "load-more-notifications") {
@@ -268,6 +383,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       update: { setupGuideDismissed: true },
       create: { shop, setupGuideDismissed: true },
     });
+    clearDashboardCache(shop);
     return json({ success: true });
   }
 
@@ -276,12 +392,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Index() {
   const {
-    shop,
     setupGuideDismissed,
-    activeCount,
     completedCount,
     activeAudits,
-    trendingChallenges,
+    storeSnapshots,
     profile,
     notifications: initialNotifications,
     unreadCount: initialUnreadCount,
@@ -289,31 +403,59 @@ export default function Index() {
   const submit = useSubmit();
   const navigation = useNavigation();
   const notifFetcher = useFetcher<any>();
+  const notificationsLoadStarted = useRef(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
+  const [isStoreSnapshotModalOpen, setIsStoreSnapshotModalOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
-  const [notifPage, setNotifPage] = useState(1);
+  const [notifPage, setNotifPage] = useState(0);
   const [hasMoreNotifs, setHasMoreNotifs] = useState(initialNotifications.length === 10);
+  const [prefetchDetails, setPrefetchDetails] = useState(false);
 
-  // Sync from loader when data refreshes
   useEffect(() => {
+    if (initialNotifications.length === 0 && initialUnreadCount === 0) return;
     setNotifications(initialNotifications);
     setUnreadCount(initialUnreadCount);
-    setNotifPage(1);
+    setNotifPage(0);
     setHasMoreNotifs(initialNotifications.length === 10);
   }, [initialNotifications, initialUnreadCount]);
 
-  // Handle load-more response
+  useEffect(() => {
+    if (notificationsLoadStarted.current) return;
+    notificationsLoadStarted.current = true;
+    const formData = new FormData();
+    formData.append("action", "load-notifications");
+    const timeoutId = window.setTimeout(() => {
+      notifFetcher.submit(formData, { method: "POST" });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [notifFetcher]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setPrefetchDetails(true);
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   useEffect(() => {
     if (notifFetcher.data?.notifications) {
       const more = notifFetcher.data.notifications;
-      setNotifications((prev: any[]) => [...prev, ...more]);
+      if (typeof notifFetcher.data.unreadCount === "number") {
+        setNotifications(more);
+        setUnreadCount(notifFetcher.data.unreadCount);
+        setNotifPage(0);
+      } else {
+        setNotifications((prev: any[]) => [...prev, ...more]);
+      }
       setHasMoreNotifs(more.length === 10);
     }
   }, [notifFetcher.data]);
-  const [resourceType, setResourceType] = useState<"product" | "collection" | "page" | "blog">("product");
+  const [resourceType, setResourceType] = useState<AuditResourceType>("product");
   const [selectedProduct, setSelectedProduct] = useState<{
     id: string;
     title: string;
@@ -323,15 +465,15 @@ export default function Index() {
   const [targetVisitors, setTargetVisitors] = useState("1000");
   const [manualTitle, setManualTitle] = useState("");
   const [manualHandle, setManualHandle] = useState("");
+  const [storeSnapshotName, setStoreSnapshotName] = useState("");
+  const [storeSnapshotMode, setStoreSnapshotMode] = useState("HUMAN_VISITORS");
+  const [storeSnapshotHumanTarget, setStoreSnapshotHumanTarget] = useState("1000");
+  const [storeSnapshotVisitTarget, setStoreSnapshotVisitTarget] = useState("2500");
+  const [storeSnapshotDurationDays, setStoreSnapshotDurationDays] = useState("7");
 
   const isLoading = navigation.state !== "idle";
 
-  // Check if setup is complete
-  const hasProjects = activeAudits.length > 0 || completedCount > 0;
   const showSetupGuide = !setupGuideDismissed;
-
-  // Deeplink to enable theme extension
-  const themeEditorDeeplink = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${APP_CLIENT_ID}/${THEME_BLOCK_HANDLE}`;
 
   const handleDismissSetup = useCallback(() => {
     const formData = new FormData();
@@ -348,6 +490,14 @@ export default function Index() {
   // After selecting type, open the actual resource picker or manual input
   const handleSelectType = useCallback(async () => {
     setIsTypeModalOpen(false);
+
+    if (resourceType === "homepage") {
+      setSelectedProduct(HOMEPAGE_RESOURCE);
+      setSnapshotName("");
+      setTargetVisitors("1000");
+      setIsModalOpen(true);
+      return;
+    }
 
     if (resourceType === "page" || resourceType === "blog") {
       // No Shopify resource picker for pages/blogs — go straight to create modal
@@ -384,9 +534,14 @@ export default function Index() {
 
   const handleCreateProject = useCallback(() => {
     const isManual = resourceType === "page" || resourceType === "blog";
+    const isHomepage = resourceType === "homepage";
     const title = isManual ? manualTitle : selectedProduct?.title;
     const handle = isManual ? manualHandle : selectedProduct?.handle;
-    const id = isManual ? `gid://shopify/${resourceType === "page" ? "Page" : "Blog"}/${manualHandle}` : selectedProduct?.id;
+    const id = isHomepage
+      ? HOMEPAGE_RESOURCE.id
+      : isManual
+        ? `gid://shopify/${resourceType === "page" ? "Page" : "Blog"}/${manualHandle}`
+        : selectedProduct?.id;
 
     if (!title || !handle) return;
 
@@ -404,6 +559,25 @@ export default function Index() {
     setManualTitle("");
     setManualHandle("");
   }, [selectedProduct, resourceType, snapshotName, targetVisitors, submit, manualTitle, manualHandle]);
+
+  const handleCreateStoreSnapshot = useCallback(() => {
+    const formData = new FormData();
+    formData.append("action", "create-store-snapshot");
+    formData.append("name", storeSnapshotName);
+    formData.append("completionMode", storeSnapshotMode);
+    formData.append("targetHumanVisitors", storeSnapshotHumanTarget);
+    formData.append("targetTotalVisits", storeSnapshotVisitTarget);
+    formData.append("durationDays", storeSnapshotDurationDays);
+    submit(formData, { method: "POST" });
+    setIsStoreSnapshotModalOpen(false);
+  }, [
+    storeSnapshotDurationDays,
+    storeSnapshotHumanTarget,
+    storeSnapshotMode,
+    storeSnapshotName,
+    storeSnapshotVisitTarget,
+    submit,
+  ]);
 
   const handleCloseModal = useCallback(() => {
     setIsModalOpen(false);
@@ -468,103 +642,181 @@ export default function Index() {
     ANSWER_ACCEPTED: "\u2705",
     INSIGHT_METOOED: "\uD83D\uDE4B",
     SNAPSHOT_COMPLETED: "\uD83C\uDFC1",
+    STORE_SNAPSHOT_COMPLETED: "\uD83C\uDFC1",
     HIGH_BOT_TRAFFIC: "\uD83E\uDD16",
   };
 
+  const auditCards = AUDIT_TYPE_CARDS.map((card) => {
+    const audits = (activeAudits as any[]).filter((audit) => audit.resourceType === card.resourceType);
+    return {
+      ...card,
+      runningCount: audits.length,
+      previewAudits: audits.slice(0, 3),
+    };
+  });
+  const detailPrefetchPages = Array.from(
+    new Set(
+      (activeAudits as ActiveAudit[])
+        .slice(0, DETAIL_PREFETCH_LIMIT)
+        .map((audit) => `/app/project/${audit.id}`),
+    ),
+  );
+  const activeStoreSnapshot = (storeSnapshots as StoreSnapshotListItem[]).find(
+    (snapshot) => snapshot.status === "ACTIVE",
+  );
+  const latestStoreSnapshot = (storeSnapshots as StoreSnapshotListItem[])[0];
+  const storeSnapshotTargetLabel = activeStoreSnapshot
+    ? activeStoreSnapshot.completionMode === "TOTAL_VISITS"
+      ? `${activeStoreSnapshot.targetTotalVisits?.toLocaleString() || "Total"} visits`
+      : activeStoreSnapshot.completionMode === "TIME_WINDOW"
+        ? `${activeStoreSnapshot.durationDays || 7} days`
+        : `${activeStoreSnapshot.targetHumanVisitors?.toLocaleString() || "Human"} humans`
+    : null;
 
-  // Setup guide component
-  const setupGuideMarkup = showSetupGuide ? (
-    <Layout.Section>
-      <Card>
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="start">
-            <Text variant="headingMd" as="h2">
-              Get started with Mouse Whisperer
-            </Text>
-            <Button variant="plain" onClick={handleDismissSetup}>
-              Dismiss
-            </Button>
-          </InlineStack>
-
-          <Text as="p" tone="subdued">
-            Follow these steps to start tracking visitor engagement on your product and collection pages.
+  const announcementMarkup = showSetupGuide ? (
+    <Card>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", justifyContent: "space-between" }}>
+        <BlockStack gap="300">
+          <Text variant="headingLg" as="h2">
+            Getting Started
           </Text>
-
-          <Divider />
-
-          <BlockStack gap="400">
-            {/* Step 1 */}
-            <InlineStack gap="300" blockAlign="start">
-              <Box>
-                <Icon source={hasProjects ? CheckCircleIcon : MinusCircleIcon} tone={hasProjects ? "success" : "subdued"} />
-              </Box>
-              <BlockStack gap="200">
-                <Text variant="headingSm" as="h3">
-                  Step 1: Enable the tracker in your theme
-                </Text>
-                <Text as="p" tone="subdued">
-                  Add the Mouse Whisperer tracker to your online store theme. This invisible script will track visitor engagement on your product and collection pages.
-                </Text>
-                <Box paddingBlockStart="200">
-                  <Button
-                    url={themeEditorDeeplink}
-                    target="_blank"
-                  >
-                    Open Theme Editor
-                  </Button>
-                </Box>
-              </BlockStack>
-            </InlineStack>
-
-            {/* Step 2 */}
-            <InlineStack gap="300" blockAlign="start">
-              <Box>
-                <Icon source={hasProjects ? CheckCircleIcon : MinusCircleIcon} tone={hasProjects ? "success" : "subdued"} />
-              </Box>
-              <BlockStack gap="200">
-                <Text variant="headingSm" as="h3">
-                  Step 2: Create your first audit
-                </Text>
-                <Text as="p" tone="subdued">
-                  Select a product or collection to start tracking. Mouse Whisperer will analyze visitor behavior and classify traffic as real users, zombies (low engagement), or bots.
-                </Text>
-                {!hasProjects && (
-                  <Box paddingBlockStart="200">
-                    <Button onClick={handleOpenPicker} variant="primary">
-                      Create New Audit
-                    </Button>
-                  </Box>
-                )}
-              </BlockStack>
-            </InlineStack>
-
-            {/* Step 3 */}
-            <InlineStack gap="300" blockAlign="start">
-              <Box>
-                <Icon source={MinusCircleIcon} tone="subdued" />
-              </Box>
-              <BlockStack gap="200">
-                <Text variant="headingSm" as="h3">
-                  Step 3: Review your analytics
-                </Text>
-                <Text as="p" tone="subdued">
-                  Once visitors start landing on your tracked pages, you'll see real-time engagement data including time on page, scroll depth, and conversion tracking.
-                </Text>
-              </BlockStack>
-            </InlineStack>
-          </BlockStack>
-
-          <Divider />
-
-          <Banner tone="info">
-            <p>
-              <strong>Tip:</strong> For best results, track pages that receive regular traffic. The more visitors, the faster you'll get statistically significant insights.
-            </p>
-          </Banner>
+          <Text as="p" tone="subdued">
+            Create an audit for any supported storefront page and Mouse Whisperer will track active visitors, classify traffic quality, and surface the page metrics that matter for that audit type.
+          </Text>
         </BlockStack>
-      </Card>
-    </Layout.Section>
+        <Button variant="plain" onClick={handleDismissSetup}>
+          Dismiss
+        </Button>
+      </div>
+    </Card>
   ) : null;
+
+  const auditTypeCardsMarkup = (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+        gap: 16,
+        alignItems: "start",
+      }}
+    >
+      {auditCards.map((card) => (
+        <Card key={card.resourceType}>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="end">
+              <Link to={card.href} prefetch="render" style={{ textDecoration: "none", color: "inherit" }}>
+                <Text as="h2" variant="headingLg" fontWeight="semibold">
+                  {card.title}
+                </Text>
+              </Link>
+              <InlineStack gap="200" blockAlign="baseline">
+                <Text as="span" variant="heading2xl" fontWeight="semibold">
+                  {card.runningCount}
+                </Text>
+                <Text as="span" variant="bodyLg" tone="subdued">
+                  running
+                </Text>
+              </InlineStack>
+            </InlineStack>
+
+            <div style={{ height: 1, background: "var(--p-color-border-subdued)" }} />
+
+            {card.previewAudits.length > 0 ? (
+              <BlockStack gap="200">
+                {card.previewAudits.map((audit: any) => (
+                  <Link key={audit.id} to={`/app/project/${audit.id}`} prefetch="viewport" style={{ color: "inherit", textDecoration: "none" }}>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        gap: 16,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text as="span" variant="bodyLg" fontWeight="semibold" truncate>
+                        {audit.productTitle}
+                      </Text>
+                      <Text as="span" variant="bodyLg" tone="subdued">
+                        {audit.progress}%
+                      </Text>
+                    </div>
+                  </Link>
+                ))}
+              </BlockStack>
+            ) : (
+              <Text as="p" variant="bodyMd" tone="subdued">
+                No active audits
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+      ))}
+    </div>
+  );
+
+  const storeSnapshotMarkup = (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="start" gap="400">
+          <BlockStack gap="150">
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="h2" variant="headingLg" fontWeight="semibold">
+                Store snapshot
+              </Text>
+              {activeStoreSnapshot ? (
+                <Badge tone="success">Running</Badge>
+              ) : latestStoreSnapshot ? (
+                <Badge>Ready</Badge>
+              ) : (
+                <Badge tone="info">Recommended</Badge>
+              )}
+            </InlineStack>
+            <Text as="p" tone="subdued">
+              Capture engagement across the whole store, find weak pages, and get recommendations for focused snapshots.
+            </Text>
+          </BlockStack>
+          {activeStoreSnapshot ? (
+            <Link to={`/app/store-snapshots/${activeStoreSnapshot.id}`} prefetch="render" style={{ textDecoration: "none" }}>
+              <Button>Open snapshot</Button>
+            </Link>
+          ) : latestStoreSnapshot ? (
+            <InlineStack gap="200">
+              <Link to={`/app/store-snapshots/${latestStoreSnapshot.id}`} prefetch="render" style={{ textDecoration: "none" }}>
+                <Button>View latest</Button>
+              </Link>
+              <Button variant="primary" onClick={() => setIsStoreSnapshotModalOpen(true)}>
+                Start new
+              </Button>
+            </InlineStack>
+          ) : (
+            <Button variant="primary" onClick={() => setIsStoreSnapshotModalOpen(true)}>
+              Start store snapshot
+            </Button>
+          )}
+        </InlineStack>
+
+        {activeStoreSnapshot ? (
+          <InlineStack gap="400" wrap>
+            <Text as="span" tone="subdued">
+              Target: {storeSnapshotTargetLabel}
+            </Text>
+            <Text as="span" tone="subdued">
+              Captured visits: {activeStoreSnapshot._count.visits.toLocaleString()}
+            </Text>
+          </InlineStack>
+        ) : latestStoreSnapshot ? (
+          <InlineStack gap="400" wrap>
+            <Text as="span" tone="subdued">
+              Last snapshot: {new Date(latestStoreSnapshot.startedAt).toLocaleDateString()}
+            </Text>
+            <Text as="span" tone="subdued">
+              Captured visits: {latestStoreSnapshot._count.visits.toLocaleString()}
+            </Text>
+          </InlineStack>
+        ) : null}
+      </BlockStack>
+    </Card>
+  );
 
   const bellActivator = (
     <div
@@ -611,20 +863,31 @@ export default function Index() {
   );
 
   return (
-    <Page>
-      <TitleBar title="Mouse Whisperer">
+    <Page
+      title="Dashboard"
+      primaryAction={{
+        content: "Create New Audit",
+        onAction: handleOpenPicker,
+        loading: isLoading,
+      }}
+    >
+      <TitleBar title="Dashboard">
         <button variant="primary" onClick={handleOpenPicker} disabled={isLoading}>
           Create New Audit
         </button>
       </TitleBar>
+      {prefetchDetails &&
+        detailPrefetchPages.map((page) => <PrefetchPageLinks key={page} page={page} />)}
 
       {/* Notification bell + Profile */}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 12 }}>
-        <Link to="/app/challenges/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
-          <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
-            <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
-          </svg>
-        </Link>
+        {COMMUNITY_FEATURES_ENABLED && (
+          <Link to="/app/challenges/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
+            <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
+              <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
+            </svg>
+          </Link>
+        )}
         <Popover
           active={bellOpen}
           activator={bellActivator}
@@ -758,10 +1021,11 @@ export default function Index() {
       </div>
 
       <BlockStack gap="400">
-        {setupGuideMarkup}
+        {announcementMarkup}
+        {storeSnapshotMarkup}
 
         {/* Profile Card — horizontal full-width */}
-        {profile ? (() => {
+        {COMMUNITY_FEATURES_ENABLED && (profile ? (() => {
           const lvl = getLevel(profile.reputation);
           const badges: { label: string; emoji: string; tone: "success" | "info" | "warning" }[] = [];
           if (profile.answersCount >= 5) badges.push({ label: "Top Contributor", emoji: "\uD83C\uDF1F", tone: "success" });
@@ -786,7 +1050,7 @@ export default function Index() {
                     {profile.bio && <Text as="p" variant="bodySm">{profile.bio}</Text>}
                     {badges.length > 0 && (
                       <InlineStack gap="100" wrap>
-                        {badges.map((b) => <Badge key={b.label} tone={b.tone}>{b.emoji} {b.label}</Badge>)}
+                        {badges.map((b) => <Badge key={b.label} tone={b.tone}>{`${b.emoji} ${b.label}`}</Badge>)}
                       </InlineStack>
                     )}
                   </BlockStack>
@@ -795,7 +1059,7 @@ export default function Index() {
                   <Text as="p" variant="bodySm" tone="subdued">Reputation</Text>
                   <Text as="p" variant="headingLg" fontWeight="semibold">{profile.reputation} pts</Text>
                   <div style={{ marginTop: 4 }}>
-                    <Badge tone="info">LVL {lvl.level}</Badge>
+                    <Badge tone="info">{`LVL ${lvl.level}`}</Badge>
                   </div>
                   <div style={{ marginTop: 4 }}>
                     <Text as="span" variant="bodySm" tone="subdued">{lvl.next - profile.reputation} pts to LVL {lvl.level + 1}</Text>
@@ -808,68 +1072,9 @@ export default function Index() {
           <Banner title="Set up your community profile" tone="info" action={{ content: "Create profile", url: "/app/challenges/profile?returnTo=/app" }}>
             <p>Create a display name and avatar to start posting challenges and helping fellow merchants.</p>
           </Banner>
-        )}
+        ))}
 
-        {/* Two-column row: Active Audits | Trending Challenges */}
-        <Layout>
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingMd">Active audits</Text>
-                  <Text as="span" variant="bodySm" tone="subdued">{activeAudits.length} running</Text>
-                </InlineStack>
-                {activeAudits.length === 0 ? (
-                  <Text as="p" variant="bodySm" tone="subdued">No audits currently running. Start a new one to begin collecting data.</Text>
-                ) : (
-                  <BlockStack gap="300">
-                    {(activeAudits as any[]).map((a: any) => (
-                      <Link key={a.id} to={`/app/project/${a.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                        <div>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                            <Text as="span" variant="bodySm" fontWeight="semibold">{a.productTitle}</Text>
-                            <Text as="span" variant="bodySm" tone="subdued">{a.realCount}/{a.targetVisitors}</Text>
-                          </div>
-                          <ProgressBar progress={a.progress} size="small" tone="primary" />
-                        </div>
-                      </Link>
-                    ))}
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h3" variant="headingMd">Trending challenges</Text>
-                {(trendingChallenges as any[]).length === 0 ? (
-                  <Text as="p" variant="bodySm" tone="subdued">No challenges posted yet.</Text>
-                ) : (
-                  <BlockStack gap="200">
-                    {(trendingChallenges as any[]).map((c: any, idx: number) => (
-                      <Link key={c.id} to={`/app/challenges/${c.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                        <div style={{ padding: "10px 0", borderBottom: idx < (trendingChallenges as any[]).length - 1 ? "1px solid #ebebeb" : "none" }}>
-                          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                            <Text as="span" variant="bodySm" tone="subdued">{idx + 1}.</Text>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">{c.title}</Text>
-                              <InlineStack gap="400" blockAlign="center">
-                                <Text as="span" variant="bodySm" tone="subdued">{"\uD83D\uDC41"} {c.viewCount}</Text>
-                                <Text as="span" variant="bodySm" tone="subdued">{"\uD83D\uDE4B"} {c.meTooCount} me too</Text>
-                                <Text as="span" variant="bodySm" tone="subdued">{"\uD83D\uDCAC"} {c.answerCount} answers</Text>
-                              </InlineStack>
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    ))}
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
+        {auditTypeCardsMarkup}
       </BlockStack>
 
       {/* Type Selection Modal */}
@@ -903,6 +1108,11 @@ export default function Index() {
                 helpText: "Track visitor engagement on a collection page (/collections/...)",
               },
               {
+                label: "Homepage",
+                value: "homepage",
+                helpText: "Track visitor engagement on your store homepage (/)",
+              },
+              {
                 label: "Page",
                 value: "page",
                 helpText: "Track visitor engagement on a custom page (/pages/...)",
@@ -914,8 +1124,90 @@ export default function Index() {
               },
             ]}
             selected={[resourceType]}
-            onChange={(value) => setResourceType(value[0] as "product" | "collection" | "page" | "blog")}
+            onChange={(value) => setResourceType(value[0] as AuditResourceType)}
           />
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={isStoreSnapshotModalOpen}
+        onClose={() => setIsStoreSnapshotModalOpen(false)}
+        title="Start store snapshot"
+        primaryAction={{
+          content: "Start snapshot",
+          onAction: handleCreateStoreSnapshot,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setIsStoreSnapshotModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <TextField
+              label="Snapshot name"
+              value={storeSnapshotName}
+              onChange={setStoreSnapshotName}
+              placeholder="e.g., Store baseline"
+              autoComplete="off"
+            />
+            <ChoiceList
+              title="Completion rule"
+              choices={[
+                {
+                  label: "Count unique human visitors",
+                  value: "HUMAN_VISITORS",
+                  helpText: "Best default for page recommendations because bots and unengaged traffic do not control completion.",
+                },
+                {
+                  label: "Count total visits",
+                  value: "TOTAL_VISITS",
+                  helpText: "Useful when you want a pageview-based scan across the store.",
+                },
+                {
+                  label: "Run for a time window",
+                  value: "TIME_WINDOW",
+                  helpText: "Useful for campaigns, launches, and weekly or monthly store checks.",
+                },
+              ]}
+              selected={[storeSnapshotMode]}
+              onChange={(value) => setStoreSnapshotMode(value[0])}
+            />
+            {storeSnapshotMode === "HUMAN_VISITORS" && (
+              <TextField
+                label="Target human visitors"
+                type="number"
+                value={storeSnapshotHumanTarget}
+                onChange={setStoreSnapshotHumanTarget}
+                min={25}
+                autoComplete="off"
+              />
+            )}
+            {storeSnapshotMode === "TOTAL_VISITS" && (
+              <TextField
+                label="Target total visits"
+                type="number"
+                value={storeSnapshotVisitTarget}
+                onChange={setStoreSnapshotVisitTarget}
+                min={25}
+                autoComplete="off"
+              />
+            )}
+            {storeSnapshotMode === "TIME_WINDOW" && (
+              <TextField
+                label="Duration in days"
+                type="number"
+                value={storeSnapshotDurationDays}
+                onChange={setStoreSnapshotDurationDays}
+                min={1}
+                max={90}
+                autoComplete="off"
+              />
+            )}
+          </FormLayout>
         </Modal.Section>
       </Modal>
 
@@ -923,7 +1215,7 @@ export default function Index() {
       <Modal
         open={isModalOpen}
         onClose={handleCloseModal}
-        title={`Create Audit: ${selectedProduct?.title || manualTitle || (resourceType === "page" ? "Page" : resourceType === "blog" ? "Blog" : "")}`}
+        title={`Create Audit: ${selectedProduct?.title || manualTitle || (resourceType === "homepage" ? "Homepage" : resourceType === "page" ? "Page" : resourceType === "blog" ? "Blog" : "")}`}
         primaryAction={{
           content: "Create Audit",
           onAction: handleCreateProject,

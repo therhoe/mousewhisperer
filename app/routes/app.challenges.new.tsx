@@ -19,6 +19,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sanitizeHTML } from "../utils/sanitize.server";
+import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 import { RichTextEditor } from "../components/challenges/RichTextEditor";
 import { SnapshotStatsPicker } from "../components/challenges/SnapshotStatsPicker";
 
@@ -31,8 +32,65 @@ const CATEGORY_OPTIONS = [
   { label: "General", value: "GENERAL" },
 ];
 
+const NON_INTERNAL_EXIT_TYPES = ["window_closed", "back_button", "idle", "external_link"];
+
+type TrackedClick = {
+  label?: string;
+  tag?: string;
+  href?: string | null;
+  zone?: string;
+};
+
+function percent(numerator: number, denominator: number): number {
+  return denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+}
+
+function formatCount(value: number): string {
+  return Math.round(value).toLocaleString();
+}
+
+function formatPercent(value: number): string {
+  return `${Number(value || 0).toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+function parseTrackedClicks(raw: string | null): TrackedClick[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+
+    if (parsed && typeof parsed === "object") {
+      return Object.entries(parsed).flatMap(([label, count]) => {
+        const clickCount = typeof count === "number" ? count : 0;
+        return Array.from({ length: clickCount }, () => ({ label, tag: "button", zone: "main" }));
+      });
+    }
+  } catch {}
+
+  return [];
+}
+
+function isLinkClick(click: TrackedClick): boolean {
+  return (click.tag || "").toLowerCase() === "a" && !!click.href;
+}
+
+function isBodyCtaClick(click: TrackedClick): boolean {
+  const tag = (click.tag || "").toLowerCase();
+  return (click.zone || "main") === "main" && (tag === "button" || tag === "input");
+}
+
+function isLinkOrButtonClick(click: TrackedClick): boolean {
+  const tag = (click.tag || "").toLowerCase();
+  return tag === "a" || tag === "button" || tag === "input";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
@@ -67,6 +125,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
@@ -114,7 +176,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       title,
       content: sanitizedContent,
       category: category as any,
-      snapshotStats,
+      snapshotStats: snapshotStats ?? undefined,
     },
   });
 
@@ -122,7 +184,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 async function buildAnonymizedStats(snapshotId: string) {
-  const [typeCounts, metrics, sourceCats, deviceCounts] = await Promise.all([
+  const [
+    typeCounts,
+    metrics,
+    sourceCats,
+    deviceCounts,
+    snapshotWithProject,
+    atcCount,
+    convCount,
+    productClickCount,
+    searchCount,
+    exitCount,
+    scroll50Count,
+    scroll100Count,
+    ctaRows,
+    bounceRows,
+  ] = await Promise.all([
     prisma.visit.groupBy({
       by: ["visitorType"],
       where: { snapshotId },
@@ -145,6 +222,26 @@ async function buildAnonymizedStats(snapshotId: string) {
       _count: true,
       orderBy: { _count: { deviceType: "desc" } },
     }),
+    prisma.snapshot.findUnique({
+      where: { id: snapshotId },
+      include: { project: { select: { resourceType: true } } },
+    }),
+    prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
+    prisma.visit.count({ where: { snapshotId, converted: true } }),
+    prisma.visit.count({ where: { snapshotId, exitUrl: { contains: "/products/" } } }),
+    prisma.visit.count({ where: { snapshotId, searchQuery: { not: null } } }),
+    prisma.visit.count({ where: { snapshotId, exitType: { in: NON_INTERNAL_EXIT_TYPES } } }),
+    prisma.visit.count({ where: { snapshotId, scrollDepth: { gte: 50 } } }),
+    prisma.visit.count({ where: { snapshotId, scrollDepth: { gte: 100 } } }),
+    prisma.visit.findMany({ where: { snapshotId, ctaClicks: { not: null } }, select: { ctaClicks: true } }),
+    prisma.visit.findMany({
+      where: {
+        snapshotId,
+        scrollDepth: { lt: 50 },
+        exitType: { in: NON_INTERNAL_EXIT_TYPES },
+      },
+      select: { ctaClicks: true },
+    }),
   ]);
 
   let total = 0, real = 0, zombie = 0, bot = 0;
@@ -155,12 +252,58 @@ async function buildAnonymizedStats(snapshotId: string) {
     if (t.visitorType === "BOT") bot = t._count;
   });
 
-  const [atcCount, convCount] = await Promise.all([
-    prisma.visit.count({ where: { snapshotId, addedToCart: true } }),
-    prisma.visit.count({ where: { snapshotId, converted: true } }),
-  ]);
-
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+  const resourceType = snapshotWithProject?.project.resourceType || "PRODUCT";
+  let linkClickCount = 0;
+  let bodyCtaVisits = 0;
+  let anyClickVisits = 0;
+
+  ctaRows.forEach((row) => {
+    const clicks = parseTrackedClicks(row.ctaClicks);
+    linkClickCount += clicks.filter(isLinkClick).length;
+    if (clicks.some(isBodyCtaClick)) bodyCtaVisits++;
+    if (clicks.some(isLinkOrButtonClick)) anyClickVisits++;
+  });
+
+  const bounceCount = bounceRows.filter((row) =>
+    parseTrackedClicks(row.ctaClicks).filter(isLinkOrButtonClick).length === 0
+  ).length;
+
+  const summaryMetrics = (() => {
+    if (resourceType === "COLLECTION") {
+      return [
+        { label: "Links", value: formatCount(linkClickCount) },
+        { label: "Search", value: formatCount(searchCount) },
+        { label: "Exit", value: formatPercent(percent(exitCount, total)) },
+        { label: "Product CTR", value: formatPercent(percent(productClickCount, total)) },
+      ];
+    }
+
+    if (resourceType === "PAGE" || resourceType === "HOMEPAGE") {
+      return [
+        { label: "Links", value: formatCount(linkClickCount) },
+        { label: "Search", value: formatCount(searchCount) },
+        { label: "Exit", value: formatPercent(percent(exitCount, total)) },
+        { label: "CTA CTR", value: formatPercent(percent(bodyCtaVisits, total)) },
+      ];
+    }
+
+    if (resourceType === "BLOG") {
+      return [
+        { label: "Bounce", value: formatPercent(percent(bounceCount, total)) },
+        { label: "50% Scroll", value: formatPercent(percent(scroll50Count, total)) },
+        { label: "100% Scroll", value: formatPercent(percent(scroll100Count, total)) },
+        { label: "CTR", value: formatPercent(percent(anyClickVisits, total)) },
+      ];
+    }
+
+    return [
+      { label: "Real", value: formatPercent(pct(real)) },
+      { label: "ATC", value: formatPercent(pct(atcCount)) },
+      { label: "Conv", value: formatPercent(pct(convCount)) },
+      { label: "Avg Scroll", value: formatPercent(Math.round(metrics._avg.scrollDepth || 0)) },
+    ];
+  })();
 
   return {
     totalSessions: total,
@@ -171,6 +314,9 @@ async function buildAnonymizedStats(snapshotId: string) {
     avgScrollDepth: Math.round(metrics._avg.scrollDepth || 0),
     addToCartRate: pct(atcCount),
     conversionRate: pct(convCount),
+    resourceType,
+    rateLabel: resourceType === "PRODUCT" ? "ATC" : undefined,
+    summaryMetrics,
     topSourceCategories: sourceCats.map((s) => ({
       name: s.sourceCategory || "Direct",
       percent: pct(s._count),

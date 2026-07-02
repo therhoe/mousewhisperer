@@ -17,6 +17,7 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 import { PixelArtEditor } from "../components/PixelArtEditor";
 
 const STORE_CATEGORIES = [
@@ -39,6 +40,10 @@ const EMOJI_OPTIONS = [
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({ where: { shop } });
@@ -57,6 +62,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const formData = await request.formData();

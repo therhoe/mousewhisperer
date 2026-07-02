@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSearchParams, useNavigate, Link } from "@remix-run/react";
 import {
   Page,
@@ -20,6 +20,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 import { InsightCard } from "../components/challenges/InsightCard";
 import { ProfileSetupBanner } from "../components/challenges/ProfileSetupBanner";
 import { LeaderboardCard } from "../components/challenges/LeaderboardCard";
@@ -62,6 +63,10 @@ function getLevel(rep: number) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!COMMUNITY_FEATURES_ENABLED) {
+    return redirect("/app");
+  }
+
   const shop = session.shop;
 
   const profile = await prisma.insightProfile.findUnique({
@@ -110,7 +115,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   // Fetch challenges + counts
-  const [insights, leaders, activeCount, completedCount, productCount, collectionCount, pageCount, blogCount] = await Promise.all([
+  const [insights, leaders, activeCount, completedCount, productCount, collectionCount, homepageCount, pageCount, blogCount] = await Promise.all([
     prisma.insight.findMany({
       where,
       orderBy,
@@ -151,6 +156,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
     prisma.project.count({ where: { shop, resourceType: "PRODUCT" } }),
     prisma.project.count({ where: { shop, resourceType: "COLLECTION" } }),
+    prisma.project.count({ where: { shop, resourceType: "HOMEPAGE" } }),
     prisma.project.count({ where: { shop, resourceType: "PAGE" } }),
     prisma.project.count({ where: { shop, resourceType: "BLOG" } }),
   ]);
@@ -210,13 +216,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     completedCount,
     productCount,
     collectionCount,
+    homepageCount,
     pageCount,
     blogCount,
   });
 };
 
 export default function ChallengesFeed() {
-  const { hasProfile, profileData, insights, nextCursor, leaderboard, filters, activeCount, completedCount, productCount, collectionCount, pageCount, blogCount } =
+  const { hasProfile, profileData, insights, nextCursor, leaderboard, filters, activeCount, completedCount, productCount, collectionCount, homepageCount, pageCount, blogCount } =
     useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -296,7 +303,7 @@ export default function ChallengesFeed() {
                         {/* Points + Level */}
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <Text as="span" variant="bodyMd" fontWeight="semibold">{profileData.reputation} pts</Text>
-                          <Badge tone="info">LVL {lvl?.level}</Badge>
+                          <Badge tone="info">{`LVL ${lvl?.level || 1}`}</Badge>
                           <Text as="span" variant="bodySm" tone="subdued">{(lvl?.next || 0) - profileData.reputation} pts to LVL {(lvl?.level || 0) + 1}</Text>
                         </div>
 
@@ -327,6 +334,7 @@ export default function ChallengesFeed() {
                         {[
                           { label: "Products", count: productCount, url: "/app/audits/products" },
                           { label: "Collections", count: collectionCount, url: "/app/audits/collections" },
+                          { label: "Homepage", count: homepageCount, url: "/app/audits/homepage" },
                           { label: "Pages", count: pageCount, url: "/app/audits/pages" },
                           { label: "Blogs", count: blogCount, url: "/app/audits/blogs" },
                         ].map(({ label, count, url }) => (

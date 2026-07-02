@@ -35,20 +35,21 @@ enum ResourceType {
   COLLECTION
   PAGE
   BLOG
+  HOMEPAGE
 }
 
-// A tracking project/audit for a specific product or collection
+// A tracking project/audit for a specific storefront resource
 model Project {
-  id              String       @id @default(cuid())
-  shop            String       // Shopify shop domain
-  resourceType    ResourceType @default(PRODUCT) // Type of page being tracked
-  productId       String       // Shopify resource GID (product or collection)
-  productTitle    String       // Resource title
-  productHandle   String       // URL handle for matching
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id            String       @id @default(cuid())
+  shop          String // Shopify shop domain
+  resourceType  ResourceType @default(PRODUCT) // Type of page being tracked
+  productId     String // Shopify resource GID (product or collection)
+  productTitle  String // Resource title
+  productHandle String // URL handle for matching
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
-  snapshots       Snapshot[]
+  snapshots Snapshot[]
 
   @@index([shop])
   @@index([productId])
@@ -58,25 +59,38 @@ model Project {
 
 // A snapshot/measurement period within a project
 model Snapshot {
-  id              String         @id @default(cuid())
-  projectId       String
-  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  number          Int            // Auto-increment per project: 1, 2, 3...
-  name            String?        // User-defined label (e.g., "Baseline", "After Redesign")
-  targetVisitors  Int            @default(1000)
-  status          SnapshotStatus @default(ACTIVE)
+  number         Int // Auto-increment per project: 1, 2, 3...
+  name           String? // User-defined label (e.g., "Baseline", "After Redesign")
+  targetVisitors Int            @default(1000)
+  status         SnapshotStatus @default(ACTIVE)
 
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  completedAt     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
 
-  visits          Visit[]
+  visits     Visit[]
+  statsCache SnapshotStatsCache?
 
   @@unique([projectId, number])
   @@index([projectId])
   @@index([status])
   @@index([projectId, status])
+}
+
+model SnapshotStatsCache {
+  id           String   @id @default(cuid())
+  snapshotId   String   @unique
+  snapshot     Snapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  stats        Json
+  recomputedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([recomputedAt])
 }
 
 enum SnapshotStatus {
@@ -85,80 +99,502 @@ enum SnapshotStatus {
   PAUSED
 }
 
+enum StoreSnapshotStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum StoreSnapshotCompletionMode {
+  HUMAN_VISITORS
+  TOTAL_VISITS
+  TIME_WINDOW
+}
+
+enum StoreSnapshotRecommendationStatus {
+  OPEN
+  CREATED
+  DISMISSED
+}
+
+enum AbTestStatus {
+  DRAFT
+  LIVE
+  PAUSED
+  ENDED
+}
+
+enum AbTestType {
+  TEMPLATE
+}
+
+enum AbTestGoal {
+  ADD_TO_CART
+  CONVERSION
+  REVENUE
+  CLICK_THROUGH
+  ENGAGEMENT
+}
+
+enum AbTestPageType {
+  PRODUCT
+  COLLECTION
+  PAGE
+  BLOG
+  HOMEPAGE
+  CART
+}
+
+enum AbTestVariantKey {
+  A
+  B
+}
+
+// Store-wide snapshot that captures behavior across all supported storefront pages.
+model StoreSnapshot {
+  id                  String                      @id @default(cuid())
+  shop                String
+  name                String?
+  status              StoreSnapshotStatus         @default(ACTIVE)
+  completionMode      StoreSnapshotCompletionMode @default(HUMAN_VISITORS)
+  targetHumanVisitors Int?
+  targetTotalVisits   Int?
+  durationDays        Int?
+  startedAt           DateTime                    @default(now())
+  endsAt              DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+
+  visits          StoreSnapshotVisit[]
+  statsCache      StoreSnapshotStatsCache?
+  pageAggregates  StoreSnapshotPageAggregate[]
+  recommendations StoreSnapshotRecommendation[]
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([startedAt])
+  @@index([endsAt])
+}
+
+model StoreSnapshotVisit {
+  id              String        @id @default(cuid())
+  storeSnapshotId String
+  storeSnapshot   StoreSnapshot @relation(fields: [storeSnapshotId], references: [id], onDelete: Cascade)
+
+  sessionId      String
+  pageViewId     String
+  pagePath       String
+  pageUrl        String?
+  pageTitle      String?
+  resourceType   ResourceType?
+  resourceHandle String?
+  isLandingPage  Boolean       @default(false)
+  pageOrder      Int?
+
+  visitorType    VisitorType @default(PENDING)
+  source         String?
+  medium         String?
+  campaign       String?
+  referrer       String?
+  sourceCategory String?
+
+  timeOnPage     Int @default(0)
+  scrollDepth    Int @default(0)
+  mouseMovements Int @default(0)
+  keyPresses     Int @default(0)
+  touchEvents    Int @default(0)
+
+  ipAddress   String?
+  country     String?
+  countryCode String?
+  city        String?
+  region      String?
+  timezone    String?
+
+  hasMouseMoved  Boolean @default(false)
+  hasScrolled    Boolean @default(false)
+  hasKeyPressed  Boolean @default(false)
+  hasTouched     Boolean @default(false)
+  isWebdriver    Boolean @default(false)
+  suspiciousUA   Boolean @default(false)
+  linearMovement Boolean @default(false)
+  datacenterIP   Boolean @default(false)
+  botScore       Int     @default(0)
+
+  addedToCart   Boolean   @default(false)
+  addedToCartAt DateTime?
+  converted     Boolean   @default(false)
+  convertedAt   DateTime?
+  orderValue    Float?
+  currency      String?
+
+  ctaClicks          String?
+  startedAt          DateTime  @default(now())
+  endedAt            DateTime?
+  exitType           String?
+  exitUrl            String?
+  searchQuery        String?
+  appliedFilters     String?
+  sortBy             String?
+  filterInteractions Int       @default(0)
+  userAgent          String?
+  deviceType         String?
+
+  @@unique([pageViewId, storeSnapshotId])
+  @@index([storeSnapshotId])
+  @@index([storeSnapshotId, visitorType])
+  @@index([storeSnapshotId, sessionId])
+  @@index([storeSnapshotId, pagePath])
+  @@index([storeSnapshotId, resourceType])
+  @@index([storeSnapshotId, startedAt])
+  @@index([storeSnapshotId, converted])
+}
+
+model StoreSnapshotStatsCache {
+  id              String        @id @default(cuid())
+  storeSnapshotId String        @unique
+  storeSnapshot   StoreSnapshot @relation(fields: [storeSnapshotId], references: [id], onDelete: Cascade)
+  stats           Json
+  recomputedAt    DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([recomputedAt])
+}
+
+model StoreSnapshotPageAggregate {
+  id              String        @id @default(cuid())
+  storeSnapshotId String
+  storeSnapshot   StoreSnapshot @relation(fields: [storeSnapshotId], references: [id], onDelete: Cascade)
+  pageKey         String
+  pagePath        String
+  pageTitle       String?
+  pageType        ResourceType?
+  resourceHandle  String?
+
+  totalVisits         Int      @default(0)
+  humanVisits         Int      @default(0)
+  zombieVisits        Int      @default(0)
+  botVisits           Int      @default(0)
+  uniqueHumanSessions Int      @default(0)
+  avgTimeOnPage       Int      @default(0)
+  avgScrollDepth      Float    @default(0)
+  clickThroughRate    Float    @default(0)
+  addToCartRate       Float    @default(0)
+  conversionRate      Float    @default(0)
+  orderCount          Int      @default(0)
+  revenue             Float    @default(0)
+  searchCount         Int      @default(0)
+  exitCount           Int      @default(0)
+  weaknessScore       Int      @default(0)
+  opportunityScore    Int      @default(0)
+  confidence          Int      @default(0)
+  metrics             Json
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  recommendations StoreSnapshotRecommendation[]
+
+  @@unique([storeSnapshotId, pageKey])
+  @@index([storeSnapshotId])
+  @@index([storeSnapshotId, opportunityScore])
+  @@index([storeSnapshotId, weaknessScore])
+  @@index([storeSnapshotId, pageType])
+}
+
+model StoreSnapshotRecommendation {
+  id              String                            @id @default(cuid())
+  storeSnapshotId String
+  storeSnapshot   StoreSnapshot                     @relation(fields: [storeSnapshotId], references: [id], onDelete: Cascade)
+  pageAggregateId String?
+  pageAggregate   StoreSnapshotPageAggregate?       @relation(fields: [pageAggregateId], references: [id], onDelete: SetNull)
+  status          StoreSnapshotRecommendationStatus @default(OPEN)
+
+  pageKey          String
+  pagePath         String
+  pageTitle        String?
+  pageType         ResourceType?
+  resourceHandle   String?
+  recommendedType  ResourceType?
+  priority         Int           @default(0)
+  confidence       Int           @default(0)
+  weaknessScore    Int           @default(0)
+  opportunityScore Int           @default(0)
+  title            String
+  reason           String
+  actionLabel      String
+  createdProjectId String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([storeSnapshotId])
+  @@index([storeSnapshotId, status])
+  @@index([storeSnapshotId, priority])
+  @@index([pageAggregateId])
+}
+
+model AbTest {
+  id             String         @id @default(cuid())
+  shop           String
+  name           String
+  status         AbTestStatus   @default(DRAFT)
+  testType       AbTestType     @default(TEMPLATE)
+  targetPageType AbTestPageType
+  goal           AbTestGoal     @default(CONVERSION)
+  themeId        String?
+  themeName      String?
+  themeRole      String?
+  trafficSplit   Int            @default(50)
+  notes          String?
+  launchedAt     DateTime?
+  pausedAt       DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  variants    AbTestVariant[]
+  assignments AbTestAssignment[]
+  visits      AbTestVisit[]
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, targetPageType])
+  @@index([createdAt])
+}
+
+model AbTestVariant {
+  id               String           @id @default(cuid())
+  testId           String
+  test             AbTest           @relation(fields: [testId], references: [id], onDelete: Cascade)
+  key              AbTestVariantKey
+  name             String
+  templateName     String
+  templateSuffix   String?
+  templateFileName String?
+  previewUrl       String?
+  isControl        Boolean          @default(false)
+  trafficPercent   Int              @default(50)
+  sortOrder        Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  assignments AbTestAssignment[]
+  visits      AbTestVisit[]
+
+  @@unique([testId, key])
+  @@index([testId])
+  @@index([testId, sortOrder])
+}
+
+model AbTestAssignment {
+  id             String        @id @default(cuid())
+  testId         String
+  test           AbTest        @relation(fields: [testId], references: [id], onDelete: Cascade)
+  variantId      String
+  variant        AbTestVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  shop           String
+  sessionId      String
+  pageViewId     String?
+  pagePath       String?
+  pageUrl        String?
+  pageTitle      String?
+  resourceType   ResourceType?
+  resourceHandle String?
+  visitorType    VisitorType   @default(PENDING)
+  source         String?
+  medium         String?
+  campaign       String?
+  referrer       String?
+  sourceCategory String?
+  timeOnPage     Int           @default(0)
+  scrollDepth    Int           @default(0)
+  addedToCart    Boolean       @default(false)
+  addedToCartAt  DateTime?
+  converted      Boolean       @default(false)
+  convertedAt    DateTime?
+  orderValue     Float?
+  currency       String?
+  ctaClicks      String?
+  assignedAt     DateTime      @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  visits AbTestVisit[]
+
+  @@unique([testId, sessionId])
+  @@index([shop])
+  @@index([testId])
+  @@index([variantId])
+  @@index([sessionId])
+  @@index([testId, variantId])
+  @@index([testId, visitorType])
+  @@index([testId, converted])
+  @@index([assignedAt])
+}
+
+model AbTestVisit {
+  id           String            @id @default(cuid())
+  testId       String
+  test         AbTest            @relation(fields: [testId], references: [id], onDelete: Cascade)
+  variantId    String
+  variant      AbTestVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  assignmentId String?
+  assignment   AbTestAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  shop           String
+  sessionId      String
+  pageViewId     String
+  pagePath       String
+  pageUrl        String?
+  pageTitle      String?
+  resourceType   ResourceType?
+  resourceHandle String?
+  isLandingPage  Boolean       @default(false)
+  pageOrder      Int?
+
+  visitorType    VisitorType @default(PENDING)
+  source         String?
+  medium         String?
+  campaign       String?
+  referrer       String?
+  sourceCategory String?
+
+  timeOnPage     Int @default(0)
+  scrollDepth    Int @default(0)
+  mouseMovements Int @default(0)
+  keyPresses     Int @default(0)
+  touchEvents    Int @default(0)
+
+  ipAddress   String?
+  country     String?
+  countryCode String?
+  city        String?
+  region      String?
+  timezone    String?
+
+  hasMouseMoved  Boolean @default(false)
+  hasScrolled    Boolean @default(false)
+  hasKeyPressed  Boolean @default(false)
+  hasTouched     Boolean @default(false)
+  isWebdriver    Boolean @default(false)
+  suspiciousUA   Boolean @default(false)
+  linearMovement Boolean @default(false)
+  datacenterIP   Boolean @default(false)
+  botScore       Int     @default(0)
+
+  addedToCart   Boolean   @default(false)
+  addedToCartAt DateTime?
+  converted     Boolean   @default(false)
+  convertedAt   DateTime?
+  orderValue    Float?
+  currency      String?
+
+  ctaClicks          String?
+  startedAt          DateTime  @default(now())
+  endedAt            DateTime?
+  exitType           String?
+  exitUrl            String?
+  searchQuery        String?
+  appliedFilters     String?
+  sortBy             String?
+  filterInteractions Int       @default(0)
+  userAgent          String?
+  deviceType         String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([testId, pageViewId])
+  @@index([shop])
+  @@index([testId])
+  @@index([variantId])
+  @@index([assignmentId])
+  @@index([sessionId])
+  @@index([testId, variantId])
+  @@index([testId, visitorType])
+  @@index([testId, sessionId])
+  @@index([testId, pagePath])
+  @@index([testId, resourceType])
+  @@index([testId, startedAt])
+  @@index([testId, converted])
+}
+
 // Individual visit/session to a product page
 model Visit {
-  id              String   @id @default(cuid())
-  snapshotId      String
-  snapshot        Snapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  snapshotId String
+  snapshot   Snapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   // Visitor classification
-  visitorType     VisitorType @default(PENDING)
+  visitorType VisitorType @default(PENDING)
 
   // Session & page view tracking
-  sessionId       String   // Session identifier (persists across page loads)
-  pageViewId      String   // Unique per page load (each visit = new pageViewId)
+  sessionId  String // Session identifier (persists across page loads)
+  pageViewId String // Unique per page load (each visit = new pageViewId)
 
   // Traffic source
-  source          String?  // e.g., "google", "facebook", "direct"
-  medium          String?  // e.g., "cpc", "organic", "referral"
-  campaign        String?  // UTM campaign
-  referrer        String?  // Full referrer URL
-  sourceCategory  String?  // e.g., "Paid Search", "Organic Social"
+  source         String? // e.g., "google", "facebook", "direct"
+  medium         String? // e.g., "cpc", "organic", "referral"
+  campaign       String? // UTM campaign
+  referrer       String? // Full referrer URL
+  sourceCategory String? // e.g., "Paid Search", "Organic Social"
 
   // Engagement metrics
-  timeOnPage      Int      @default(0) // milliseconds
-  scrollDepth     Int      @default(0) // percentage 0-100
-  mouseMovements  Int      @default(0) // count of mouse move events
-  keyPresses      Int      @default(0) // count of key press events
-  touchEvents     Int      @default(0) // count of touch events (mobile)
+  timeOnPage     Int @default(0) // milliseconds
+  scrollDepth    Int @default(0) // percentage 0-100
+  mouseMovements Int @default(0) // count of mouse move events
+  keyPresses     Int @default(0) // count of key press events
+  touchEvents    Int @default(0) // count of touch events (mobile)
 
   // Geo-location (from IP)
-  ipAddress       String?
-  country         String?
-  countryCode     String?
-  city            String?
-  region          String?
-  timezone        String?
+  ipAddress   String?
+  country     String?
+  countryCode String?
+  city        String?
+  region      String?
+  timezone    String?
 
   // Bot detection signals
-  hasMouseMoved   Boolean  @default(false)
-  hasScrolled     Boolean  @default(false)
-  hasKeyPressed   Boolean  @default(false)
-  hasTouched      Boolean  @default(false)
-  isWebdriver     Boolean  @default(false)
-  suspiciousUA    Boolean  @default(false)
-  linearMovement  Boolean  @default(false) // bot-like straight-line movement
-  datacenterIP    Boolean  @default(false) // IP belongs to known datacenter
-  botScore        Int      @default(0)     // 0-100 bot confidence score
+  hasMouseMoved  Boolean @default(false)
+  hasScrolled    Boolean @default(false)
+  hasKeyPressed  Boolean @default(false)
+  hasTouched     Boolean @default(false)
+  isWebdriver    Boolean @default(false)
+  suspiciousUA   Boolean @default(false)
+  linearMovement Boolean @default(false) // bot-like straight-line movement
+  datacenterIP   Boolean @default(false) // IP belongs to known datacenter
+  botScore       Int     @default(0) // 0-100 bot confidence score
 
   // Conversion events
-  addedToCart     Boolean  @default(false)
-  addedToCartAt   DateTime?
-  converted       Boolean  @default(false)
-  convertedAt     DateTime?
-  orderValue      Float?   // Total order value in store currency
-  currency        String?  // Currency code (e.g., "USD", "EUR")
+  addedToCart   Boolean   @default(false)
+  addedToCartAt DateTime?
+  converted     Boolean   @default(false)
+  convertedAt   DateTime?
+  orderValue    Float? // Total order value in store currency
+  currency      String? // Currency code (e.g., "USD", "EUR")
 
   // CTA click tracking
-  ctaClicks       String?  // JSON: {"Add to Cart": 3, "Buy Now": 1, ...}
+  ctaClicks String? // JSON: {"Add to Cart": 3, "Buy Now": 1, ...}
 
   // Timestamps
-  startedAt       DateTime @default(now())
-  endedAt         DateTime?
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
 
   // Exit tracking
-  exitType        String?  // window_closed, back_button, idle, internal_link, external_link, checkout
-  exitUrl         String?  // URL the visitor navigated to when exiting
+  exitType String? // window_closed, back_button, idle, internal_link, external_link, checkout
+  exitUrl  String? // URL the visitor navigated to when exiting
 
   // Search & filter tracking
-  searchQuery             String?  // Search term from URL ?q= or referrer
-  appliedFilters          String?  // JSON of active filters (filter.v.*, filter.p.*)
-  sortBy                  String?  // Sort preference (e.g., "price-ascending")
-  filterInteractions      Int      @default(0) // Number of filter changes during visit
+  searchQuery        String? // Search term from URL ?q= or referrer
+  appliedFilters     String? // JSON of active filters (filter.v.*, filter.p.*)
+  sortBy             String? // Sort preference (e.g., "price-ascending")
+  filterInteractions Int     @default(0) // Number of filter changes during visit
 
   // Device info
-  userAgent       String?
-  deviceType      String?  // desktop, mobile, tablet
+  userAgent  String?
+  deviceType String? // desktop, mobile, tablet
 
   @@unique([pageViewId, snapshotId])
   @@index([snapshotId])
@@ -168,16 +604,16 @@ model Visit {
   @@index([country])
   @@index([startedAt])
   // Compound indexes for optimized queries
-  @@index([snapshotId, visitorType])  // Filter by snapshot + type
-  @@index([snapshotId, startedAt])    // Sort visits by time within snapshot
-  @@index([snapshotId, converted])    // Conversion lookups
+  @@index([snapshotId, visitorType]) // Filter by snapshot + type
+  @@index([snapshotId, startedAt]) // Sort visits by time within snapshot
+  @@index([snapshotId, converted]) // Conversion lookups
 }
 
 enum VisitorType {
-  PENDING   // Not yet classified
-  REAL      // Real engaged user (5+ seconds, engagement signals)
-  ZOMBIE    // Human but low engagement
-  BOT       // Automated traffic
+  PENDING // Not yet classified
+  REAL // Real engaged user (5+ seconds, engagement signals)
+  ZOMBIE // Human but low engagement
+  BOT // Automated traffic
 }
 
 // ─── Insights Board ───────────────────────────────────────────
@@ -202,32 +638,32 @@ model InsightProfile {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  insights      Insight[]
-  answers       InsightAnswer[]
-  votes         InsightVote[]
-  meToos        InsightMeToo[]
-  bookmarks     InsightBookmark[]
+  insights  Insight[]
+  answers   InsightAnswer[]
+  votes     InsightVote[]
+  meToos    InsightMeToo[]
+  bookmarks InsightBookmark[]
 }
 
 model Insight {
-  id            String          @id @default(cuid())
-  profileId     String
-  profile       InsightProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  title         String
-  content       String          // sanitized HTML
-  category      InsightCategory
-  snapshotStats Json?           // anonymized metrics
-  imageUrl      String?         // product/collection image or custom upload
-  answerCount   Int             @default(0)
-  meTooCount    Int             @default(0)
-  viewCount     Int             @default(0)
-  hasAcceptedAnswer Boolean     @default(false)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id                String          @id @default(cuid())
+  profileId         String
+  profile           InsightProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title             String
+  content           String // sanitized HTML
+  category          InsightCategory
+  snapshotStats     Json? // anonymized metrics
+  imageUrl          String? // product/collection image or custom upload
+  answerCount       Int             @default(0)
+  meTooCount        Int             @default(0)
+  viewCount         Int             @default(0)
+  hasAcceptedAnswer Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  answers       InsightAnswer[]
-  meToos        InsightMeToo[]
-  bookmarks     InsightBookmark[]
+  answers   InsightAnswer[]
+  meToos    InsightMeToo[]
+  bookmarks InsightBookmark[]
 
   @@index([profileId])
   @@index([category])
@@ -243,13 +679,13 @@ model InsightAnswer {
   insight     Insight        @relation(fields: [insightId], references: [id], onDelete: Cascade)
   profileId   String
   profile     InsightProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  content     String         // sanitized HTML
+  content     String // sanitized HTML
   upvoteCount Int            @default(0)
   isAccepted  Boolean        @default(false)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
-  votes       InsightVote[]
+  votes InsightVote[]
 
   @@index([insightId])
   @@index([profileId])
@@ -297,6 +733,7 @@ enum NotificationType {
   ANSWER_ACCEPTED
   INSIGHT_METOOED
   SNAPSHOT_COMPLETED
+  STORE_SNAPSHOT_COMPLETED
   HIGH_BOT_TRAFFIC
 }
 
@@ -308,19 +745,19 @@ model Notification {
   message     String
   linkUrl     String?
   isRead      Boolean          @default(false)
-  referenceId String?          // for de-duplication (e.g. snapshotId)
+  referenceId String? // for de-duplication (e.g. snapshotId)
   createdAt   DateTime         @default(now())
 
+  @@unique([shop, type, referenceId])
   @@index([shop, isRead])
   @@index([shop, createdAt])
-  @@unique([shop, type, referenceId])
 }
 
 // Shop-level settings
 model ShopSettings {
-  id                    String   @id @default(cuid())
-  shop                  String   @unique
-  setupGuideDismissed   Boolean  @default(false)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  shop                String   @unique
+  setupGuideDismissed Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }

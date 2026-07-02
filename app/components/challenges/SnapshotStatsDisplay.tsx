@@ -9,6 +9,7 @@ interface SnapshotStats {
   avgScrollDepth: number;
   addToCartRate: number;
   conversionRate: number;
+  summaryMetrics?: { label: string; value: string }[];
   topSourceCategories: { name: string; percent: number }[];
   deviceBreakdown: { type: string; percent: number }[];
 }
@@ -47,8 +48,16 @@ export function SnapshotStatsDisplay({ stats }: { stats: SnapshotStats }) {
             <Text as="p" variant="bodySm" fontWeight="semibold">Engagement</Text>
             <StatRow label="Avg. time on page" value={`${stats.avgTimeOnPage}s`} />
             <StatRow label="Avg. scroll depth" value={`${stats.avgScrollDepth}%`} />
-            <StatRow label="Add to cart rate" value={`${stats.addToCartRate}%`} />
-            <StatRow label="Conversion rate" value={`${stats.conversionRate}%`} />
+            {stats.summaryMetrics?.length
+              ? stats.summaryMetrics.slice(0, 4).map((metric) => (
+                  <StatRow key={metric.label} label={metric.label} value={metric.value} />
+                ))
+              : (
+                  <>
+                    <StatRow label="Add to cart rate" value={`${stats.addToCartRate}%`} />
+                    <StatRow label="Conversion rate" value={`${stats.conversionRate}%`} />
+                  </>
+                )}
           </BlockStack>
         </Card>
 
