@@ -6,29 +6,35 @@ import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
-    const { payload, shop, topic } = await authenticate.webhook(request);
+    const { payload, shop, topic, admin } = await authenticate.webhook(request);
 
     console.log(`[MW Webhook] Received ${topic} for ${shop}`);
 
     const order = payload as any;
     const lineItems = order.line_items || [];
-    const orderCreatedAt = order.created_at ? new Date(order.created_at) : new Date();
+    const orderCreatedAt = order.created_at
+      ? new Date(order.created_at)
+      : new Date();
     const orderTotal = order.total_price ? parseFloat(order.total_price) : null;
     const orderCurrency = order.currency || null;
 
     const getAttributeValue = (attributes: any[] | undefined, key: string) => {
       if (!Array.isArray(attributes)) return null;
-      return attributes.find((attribute: any) => {
-        return attribute?.name === key || attribute?.key === key;
-      })?.value || null;
+      return (
+        attributes.find((attribute: any) => {
+          return attribute?.name === key || attribute?.key === key;
+        })?.value || null
+      );
     };
 
     // Extract session ID from cart/note attributes (written by tracker.js)
     const sessionId =
-      getAttributeValue(order.note_attributes, '_mw_sid') ||
-      getAttributeValue(order.custom_attributes, '_mw_sid');
+      getAttributeValue(order.note_attributes, "_mw_sid") ||
+      getAttributeValue(order.custom_attributes, "_mw_sid");
 
-    console.log(`[MW Webhook] Order #${order.order_number || order.name} — session: ${sessionId || "none"}, total: ${orderTotal} ${orderCurrency}`);
+    console.log(
+      `[MW Webhook] Order #${order.order_number || order.name} — session: ${sessionId || "none"}, total: ${orderTotal} ${orderCurrency}`,
+    );
 
     let storeSnapshotConversionsTracked = 0;
     let abTestConversionsTracked = 0;
@@ -56,7 +62,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return new Response();
     }
 
-    // Extract unique product IDs from line items
+    // Extract unique product IDs from line items.
     const productIds = new Set<string>();
     for (const item of lineItems) {
       if (item.product_id) {
@@ -72,18 +78,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return new Response();
     }
 
+    // Resolve handles as a fallback for focused snapshots that were generated
+    // from store snapshots before real Shopify product IDs were persisted.
+    const productHandles = await resolveProductHandles(
+      admin,
+      Array.from(productIds),
+    );
+
     // Calculate per-product revenue share
-    const perProductRevenue = orderTotal && productIds.size > 0 ? orderTotal / productIds.size : null;
+    const perProductRevenue =
+      orderTotal && productIds.size > 0 ? orderTotal / productIds.size : null;
 
     let conversionsTracked = 0;
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     for (const productGid of productIds) {
+      const productHandle = productHandles.get(productGid);
+      const productMatches = [
+        { productId: productGid },
+        ...(productHandle ? [{ productHandle }] : []),
+      ];
       const project = await prisma.project.findFirst({
         where: {
           shop,
-          productId: productGid,
+          resourceType: "PRODUCT",
+          OR: productMatches,
           snapshots: {
             some: {
               status: { in: ["ACTIVE", "COMPLETED"] },
@@ -105,6 +125,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (!project || project.snapshots.length === 0) {
         continue;
+      }
+
+      if (project.productId !== productGid) {
+        await prisma.project.update({
+          where: { id: project.id },
+          data: { productId: productGid },
+        });
       }
 
       const snapshot = project.snapshots[0];
@@ -139,7 +166,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       // Tier 3: No session ID available — match by ATC only (best effort)
-      if (!visit) {
+      if (!visit && !sessionId) {
         visit = await prisma.visit.findFirst({
           where: {
             snapshotId: snapshot.id,
@@ -155,7 +182,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (visit) {
         if (visit.converted) {
-          console.log(`[MW Webhook] Visit ${visit.id} already converted, skipping`);
+          console.log(
+            `[MW Webhook] Visit ${visit.id} already converted, skipping`,
+          );
           continue;
         }
 
@@ -168,10 +197,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             ...(orderCurrency ? { currency: orderCurrency } : {}),
           },
         });
+        await prisma.snapshotStatsCache
+          .deleteMany({ where: { snapshotId: snapshot.id } })
+          .catch(() => {});
         conversionsTracked++;
-        console.log(`[MW Webhook] Converted visit ${visit.id} via ${matchTier} (product: ${productGid}, revenue: ${perProductRevenue})`);
+        console.log(
+          `[MW Webhook] Converted visit ${visit.id} via ${matchTier} (product: ${productGid}, revenue: ${perProductRevenue})`,
+        );
       } else {
-        console.log(`[MW Webhook] No match for product ${productGid} in snapshot ${snapshot.id} (session: ${sessionId || "none"})`);
+        console.log(
+          `[MW Webhook] No match for product ${productGid} in snapshot ${snapshot.id} (session: ${sessionId || "none"})`,
+        );
       }
     }
 
@@ -189,3 +225,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     throw error;
   }
 };
+
+async function resolveProductHandles(
+  admin:
+    | { graphql: (query: string, options?: any) => Promise<Response> }
+    | null
+    | undefined,
+  productIds: string[],
+) {
+  const handles = new Map<string, string>();
+  if (!admin || productIds.length === 0) return handles;
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query ProductHandlesForOrderAttribution($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              handle
+            }
+          }
+        }
+      `,
+      { variables: { ids: productIds } },
+    );
+    const payload = (await response.json()) as {
+      data?: {
+        nodes?: Array<{ id?: string | null; handle?: string | null } | null>;
+      };
+    };
+
+    for (const product of payload.data?.nodes || []) {
+      if (product?.id && product.handle) {
+        handles.set(product.id, product.handle);
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "[MW Webhook] Could not resolve product handles for order attribution",
+      error,
+    );
+  }
+
+  return handles;
+}

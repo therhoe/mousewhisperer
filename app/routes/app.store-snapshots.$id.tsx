@@ -101,6 +101,10 @@ type FocusedSnapshotListItem = {
   metricValues: Record<string, number>;
 };
 
+type ShopifyAdminClient = {
+  graphql: (query: string, options?: any) => Promise<Response>;
+};
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
@@ -144,7 +148,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const snapshotId = params.id;
   const formData = await request.formData();
@@ -237,6 +241,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     for (const page of selectedPages) {
       const result = await createFocusedSnapshotFromStorePage(
+        admin,
         shop,
         snapshot.id,
         page,
@@ -290,6 +295,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     );
 
     if (existing) {
+      await repairFocusedProductId(admin, existing, resource);
       await prisma.storeSnapshotRecommendation.update({
         where: { id: recommendation.id },
         data: { status: "CREATED", createdProjectId: existing.id },
@@ -298,6 +304,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const project = await createFocusedSnapshot({
+      admin,
       shop,
       resourceType: resource.resourceType,
       resourceHandle: resource.resourceHandle,
@@ -321,8 +328,7 @@ export default function StoreSnapshotDetails() {
   const { snapshot, stats, trackerStatus, focusedSnapshots } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as
-    | ActionResponse
-    | undefined;
+    ActionResponse | undefined;
   const submit = useSubmit();
   const navigation = useNavigation();
   const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>([]);
@@ -330,8 +336,7 @@ export default function StoreSnapshotDetails() {
     String(DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS),
   );
   const [pageFilter, setPageFilter] = useState<PageFilter>("human");
-  const [pageSortKey, setPageSortKey] =
-    useState<PageSortKey>("humanVisits");
+  const [pageSortKey, setPageSortKey] = useState<PageSortKey>("humanVisits");
   const [pageSortDirection, setPageSortDirection] =
     useState<SortDirection>("desc");
   const [pageTablePage, setPageTablePage] = useState(1);
@@ -1854,24 +1859,30 @@ async function findProjectWithActiveSnapshot(
       productHandle: resourceHandle,
       snapshots: { some: { status: "ACTIVE" } },
     },
-    select: { id: true },
+    select: { id: true, productId: true },
   });
 }
 
 async function createFocusedSnapshot({
+  admin,
   shop,
   resourceType,
   resourceHandle,
   title,
   targetVisitors,
 }: {
+  admin: ShopifyAdminClient;
   shop: string;
   resourceType: ResourceType;
   resourceHandle: string;
   title: string;
   targetVisitors: number;
 }) {
-  const productId = syntheticResourceId(resourceType, resourceHandle);
+  const productId = await resolveShopifyResourceId(
+    admin,
+    resourceType,
+    resourceHandle,
+  );
   const productTitle = title?.trim() || resourceHandle;
 
   const project = await prisma.project.findFirst({
@@ -1880,6 +1891,12 @@ async function createFocusedSnapshot({
   });
 
   if (project) {
+    if (project.productId !== productId) {
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { productId },
+      });
+    }
     await prisma.snapshot.create({
       data: {
         projectId: project.id,
@@ -1912,6 +1929,7 @@ async function createFocusedSnapshot({
 }
 
 async function createFocusedSnapshotFromStorePage(
+  admin: ShopifyAdminClient,
   shop: string,
   storeSnapshotId: string,
   page: StoreSnapshotPageSummary,
@@ -1926,6 +1944,7 @@ async function createFocusedSnapshotFromStorePage(
     resource.resourceHandle,
   );
   if (existing) {
+    await repairFocusedProductId(admin, existing, resource);
     await recordFocusedSnapshotLink({
       storeSnapshotId,
       page,
@@ -1936,6 +1955,7 @@ async function createFocusedSnapshotFromStorePage(
   }
 
   const project = await createFocusedSnapshot({
+    admin,
     shop,
     resourceType: resource.resourceType,
     resourceHandle: resource.resourceHandle,
@@ -1985,6 +2005,66 @@ function syntheticResourceId(resourceType: ResourceType, handle: string) {
           ? "Blog"
           : "Page";
   return `gid://shopify/${type}/${handle}`;
+}
+
+async function resolveShopifyResourceId(
+  admin: ShopifyAdminClient,
+  resourceType: ResourceType,
+  resourceHandle: string,
+) {
+  if (resourceType !== "PRODUCT") {
+    return syntheticResourceId(resourceType, resourceHandle);
+  }
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query ProductIdFromHandle($handle: String!) {
+          productByHandle(handle: $handle) {
+            id
+          }
+        }
+      `,
+      { variables: { handle: resourceHandle } },
+    );
+    const payload = (await response.json()) as {
+      data?: { productByHandle?: { id?: string | null } | null };
+    };
+    const productId = payload.data?.productByHandle?.id;
+    if (productId) return productId;
+  } catch (error) {
+    console.warn(
+      `[MW Store Snapshot] Could not resolve Shopify product ID for ${resourceHandle}`,
+      error,
+    );
+  }
+
+  return syntheticResourceId(resourceType, resourceHandle);
+}
+
+async function repairFocusedProductId(
+  admin: ShopifyAdminClient,
+  project: { id: string; productId: string },
+  resource: FocusedSnapshotResource,
+) {
+  if (
+    resource.resourceType !== "PRODUCT" ||
+    /^gid:\/\/shopify\/Product\/\d+$/.test(project.productId)
+  ) {
+    return;
+  }
+
+  const productId = await resolveShopifyResourceId(
+    admin,
+    resource.resourceType,
+    resource.resourceHandle,
+  );
+  if (productId === project.productId) return;
+
+  await prisma.project.update({
+    where: { id: project.id },
+    data: { productId },
+  });
 }
 
 function clearDashboardAndCategoryCaches(shop: string) {

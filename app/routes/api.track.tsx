@@ -649,9 +649,19 @@ async function handlePixelEvent(
       return json({ ok: true, tracked: false }, { headers });
     }
 
-    // Find visit by session and update
+    const productMatch = buildProductProjectMatch({
+      productId,
+      productHandle,
+    });
+
+    // Find the visit for this product and session, including focused snapshots
+    // created from a store snapshot that may still have a legacy synthetic ID.
     const visit = await prisma.visit.findFirst({
-      where: { sessionId },
+      where: {
+        sessionId,
+        ...(productMatch ? { snapshot: { project: productMatch } } : {}),
+      },
+      orderBy: { startedAt: "desc" },
     });
 
     if (visit) {
@@ -662,6 +672,9 @@ async function handlePixelEvent(
           addedToCartAt: new Date(timestamp),
         },
       });
+      await prisma.snapshotStatsCache
+        .deleteMany({ where: { snapshotId: visit.snapshotId } })
+        .catch(() => {});
       console.log(`[MW Pixel] ATC tracked for visit ${visit.id}`);
     } else {
       console.log(`[MW Pixel] ATC — no visit found for session ${sessionId}`);
@@ -686,25 +699,29 @@ async function handlePixelEvent(
 
   if (eventType === "conversion") {
     const { products, orderId, orderNumber } = data;
+    const uniqueProducts = deduplicateOrderProducts(products);
+    const numericTotal = Number.parseFloat(String(data.totalPrice ?? ""));
+    const perProductRevenue =
+      Number.isFinite(numericTotal) && uniqueProducts.length > 0
+        ? numericTotal / uniqueProducts.length
+        : null;
     console.log(
-      `[MW Pixel] Conversion event — session: ${sessionId}, order: ${orderNumber || orderId || "unknown"}, products: ${(products || []).length}`,
+      `[MW Pixel] Conversion event — session: ${sessionId}, order: ${orderNumber || orderId || "unknown"}, products: ${uniqueProducts.length}`,
     );
     console.log(
       `[MW Pixel] Conversion products:`,
-      JSON.stringify(products || [], null, 2),
+      JSON.stringify(uniqueProducts, null, 2),
     );
 
     let conversionsTracked = 0;
 
     // Update all visits for products in this order
-    for (const product of products || []) {
-      // Build project match condition - try productId first (more reliable), then handle
-      const projectMatch: any = {};
-      if (product.productId) {
-        projectMatch.productId = product.productId;
-      } else if (product.productHandle) {
-        projectMatch.productHandle = decodeURIComponent(product.productHandle);
-      } else {
+    for (const product of uniqueProducts) {
+      // Match both the real Shopify ID and handle. Store-snapshot-generated
+      // focused audits historically used a synthetic ID, so handle matching is
+      // required to attribute their conversions correctly.
+      const projectMatch = buildProductProjectMatch(product);
+      if (!projectMatch) {
         console.log(
           `[MW Pixel] Conversion — product has no ID or handle, skipping:`,
           JSON.stringify(product),
@@ -725,6 +742,7 @@ async function handlePixelEvent(
             project: projectMatch,
           },
           addedToCart: true,
+          converted: false,
         },
         orderBy: { startedAt: "desc" },
       });
@@ -739,6 +757,7 @@ async function handlePixelEvent(
             snapshot: {
               project: projectMatch,
             },
+            converted: false,
           },
           orderBy: { startedAt: "desc" },
         });
@@ -761,12 +780,15 @@ async function handlePixelEvent(
           data: {
             converted: true,
             convertedAt: new Date(timestamp),
-            ...(data.totalPrice
-              ? { orderValue: parseFloat(data.totalPrice) }
+            ...(perProductRevenue != null
+              ? { orderValue: perProductRevenue }
               : {}),
             ...(data.currency ? { currency: data.currency } : {}),
           },
         });
+        await prisma.snapshotStatsCache
+          .deleteMany({ where: { snapshotId: visit.snapshotId } })
+          .catch(() => {});
         conversionsTracked++;
         console.log(
           `[MW Pixel] Conversion matched visit ${visit.id} via ${matchTier}`,
@@ -780,7 +802,7 @@ async function handlePixelEvent(
     }
 
     console.log(
-      `[MW Pixel] Conversion complete — ${conversionsTracked}/${(products || []).length} tracked`,
+      `[MW Pixel] Conversion complete — ${conversionsTracked}/${uniqueProducts.length} tracked`,
     );
     const storeConversionsTracked = await updateStoreSnapshotConversion({
       sessionId,
@@ -812,4 +834,54 @@ async function handlePixelEvent(
 
   console.log(`[MW Pixel] Unknown event type: ${eventType}`);
   return json({ ok: true, tracked: false }, { headers });
+}
+
+function buildProductProjectMatch(product: {
+  productId?: unknown;
+  productHandle?: unknown;
+}) {
+  const matches: Array<Record<string, string>> = [];
+  if (typeof product.productId === "string" && product.productId.trim()) {
+    matches.push({ productId: product.productId.trim() });
+  }
+  if (
+    typeof product.productHandle === "string" &&
+    product.productHandle.trim()
+  ) {
+    matches.push({
+      productHandle: decodeURIComponent(product.productHandle.trim()),
+    });
+  }
+
+  if (matches.length === 0) return null;
+  return matches.length === 1 ? matches[0] : { OR: matches };
+}
+
+function deduplicateOrderProducts(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  const products = new Map<
+    string,
+    { productId?: string; productHandle?: string }
+  >();
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const product = item as {
+      productId?: unknown;
+      productHandle?: unknown;
+    };
+    const productId =
+      typeof product.productId === "string" && product.productId.trim()
+        ? product.productId.trim()
+        : undefined;
+    const productHandle =
+      typeof product.productHandle === "string" && product.productHandle.trim()
+        ? decodeURIComponent(product.productHandle.trim())
+        : undefined;
+    const key = productId || productHandle;
+    if (!key) continue;
+    products.set(key, { productId, productHandle });
+  }
+
+  return Array.from(products.values());
 }
