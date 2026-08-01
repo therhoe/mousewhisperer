@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Engagement by Zone</title>
+<style>
+  :root {
+    --bg-page: #f1f1f1;
+    --bg-surface: #ffffff;
+    --bg-surface-secondary: #f7f7f7;
+    --border: #e3e3e3;
+    --border-strong: #d0d0d0;
+    --text: #303030;
+    --text-subdued: #616161;
+    --text-disabled: #8a8a8a;
+
+    --zone-header: #6366f1;
+    --zone-image: #0ea5e9;
+    --zone-button: #f59e0b;
+    --zone-link: #10b981;
+    --zone-widget: #8b5cf6;
+    --zone-footer: #64748b;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 32px 16px;
+    background: var(--bg-page);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1015px; margin: 0 auto; }
+
+  .card {
+    background: var(--bg-surface);
+    border-radius: 12px;
+    box-shadow: 0 1px 0 rgba(26, 26, 26, 0.07), 0 0 0 1px rgba(26, 26, 26, 0.06);
+    padding: 20px;
+  }
+
+  h2.card-title { margin: 0 0 18px; font-size: 14px; line-height: 20px; font-weight: 650; }
+
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+
+  /* ---------- zone overview (stacked bar) ---------- */
+  .overview { margin-bottom: 22px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+
+  .stack { display: flex; height: 28px; border-radius: 6px; overflow: hidden; gap: 2px; }
+  .stack span {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 650; color: #fff;
+    white-space: nowrap; overflow: hidden;
+  }
+  .stack-key { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 10px; font-size: 12px; }
+  .stack-key span { display: flex; align-items: center; gap: 6px; }
+  .stack-key .muted { color: var(--text-subdued); }
+
+  /* ---------- category rows ---------- */
+  .cat { margin-bottom: 20px; }
+  .cat-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cat-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .cat-total { font-size: 12px; color: var(--text-subdued); }
+
+  .rows { padding-left: 18px; }
+
+  .col-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 54px 96px;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-disabled);
+    padding-bottom: 4px;
+  }
+  .col-head span:not(:first-child) { text-align: right; }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 54px 96px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .bar { position: relative; height: 22px; border-radius: 4px; background: var(--bg-surface-secondary); overflow: hidden; }
+  .bar-fill { position: absolute; top: 0; left: 0; bottom: 0; border-radius: 4px; opacity: 0.22; }
+  .bar-label {
+    position: relative; padding: 1px 8px; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .num { font-size: 12px; text-align: right; }
+  .num.rate { font-weight: 600; }
+
+  /* bar width = clicks / clicks of the single largest item across all body zones (global scale) */
+  .bar-fill { width: var(--w-glob); }
+
+  /* ---------- images ---------- */
+  .img-block { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .sheet {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 14px;
+    padding-left: 18px;
+  }
+  .thumb-card { min-width: 0; }
+  .thumb {
+    position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
+    background: var(--bg-surface-secondary); border: 1px solid var(--border);
+  }
+  .thumb svg { display: block; width: 100%; height: 100%; }
+  .thumb-count {
+    position: absolute; top: 6px; left: 6px;
+    background: rgba(255, 255, 255, 0.94); border-radius: 6px;
+    padding: 1px 7px; font-size: 12px; font-weight: 650; line-height: 18px;
+    box-shadow: 0 0 0 1px rgba(26, 26, 26, 0.08);
+  }
+  .thumb-share { position: absolute; left: 0; bottom: 0; height: 4px; background: var(--zone-image); }
+  .thumb-meta { margin-top: 6px; }
+  .thumb-pct { font-size: 12px; font-weight: 600; }
+  .thumb-alt { font-size: 12px; color: var(--text-subdued); }
+  .thumb.rest {
+    display: flex; align-items: center; justify-content: center;
+    border-style: dashed; border-color: var(--border-strong);
+    color: var(--text-subdued); font-size: 12px;
+  }
+
+  .hint { margin: 12px 0 0 18px; font-size: 12px; color: var(--text-disabled); }
+
+  /* ---------- header / footer ---------- */
+  .hf-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border);
+  }
+  .hf-box { background: var(--bg-surface-secondary); border-radius: 8px; padding: 12px; }
+  .hf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .hf-item { display: grid; grid-template-columns: minmax(0,1fr) 44px 76px; gap: 8px; font-size: 12px; padding: 1px 0; }
+  .hf-item span:not(:first-child) { text-align: right; color: var(--text-subdued); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <h2 class="card-title">Engagement by Zone <span style="font-weight:400;color:var(--text-subdued)">· 297 sessions</span></h2>
+
+    <!-- ================= zone overview — stacked bar, global scale ================= -->
+    <div class="overview">
+      <div class="stack">
+        <span style="width:44.8%;background:var(--zone-button)">Button 45%</span>
+        <span style="width:30.7%;background:var(--zone-image)">Image 31%</span>
+        <span style="width:12.6%;background:var(--zone-widget)">Widget 13%</span>
+        <span style="width:12.0%;background:var(--zone-link)">Link 12%</span>
+      </div>
+      <div class="stack-key">
+        <span><span class="dot" style="background:var(--zone-button)"></span>Button <span class="muted">146 clicks</span></span>
+        <span><span class="dot" style="background:var(--zone-image)"></span>Image <span class="muted">100 clicks</span></span>
+        <span><span class="dot" style="background:var(--zone-widget)"></span>Widget <span class="muted">41 clicks</span></span>
+        <span><span class="dot" style="background:var(--zone-link)"></span>Link <span class="muted">39 clicks</span></span>
+        <span class="muted" style="margin-left:auto">326 body clicks</span>
+      </div>
+    </div>
+
+    <!-- ================= body categories ================= -->
+    <div class="cat">
+      <div class="cat-head">
+        <span class="cat-name"><span class="dot" style="background:var(--zone-button)"></span>Button</span>
+        <span class="cat-total">146 clicks (45%)</span>
+      </div>
+      <div class="rows">
+        <div class="col-head"><span></span><span>Clicks</span><span>Of sessions</span></div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:100%;background:var(--zone-button)"></div><div class="bar-label">Add to cart</div></div>
+          <div class="num">84</div><div class="num rate">28%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:36.9%;background:var(--zone-button)"></div><div class="bar-label">Buy it now</div></div>
+          <div class="num">31</div><div class="num rate">10%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:26.2%;background:var(--zone-button)"></div><div class="bar-label">Size guide</div></div>
+          <div class="num">22</div><div class="num rate">7%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:10.7%;background:var(--zone-button)"></div><div class="bar-label">Notify me when available</div></div>
+          <div class="num">9</div><div class="num rate">3%</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cat">
+      <div class="cat-head">
+        <span class="cat-name"><span class="dot" style="background:var(--zone-widget)"></span>Widget</span>
+        <span class="cat-total">41 clicks (13%)</span>
+      </div>
+      <div class="rows">
+        <div class="col-head"><span></span><span>Clicks</span><span>Of sessions</span></div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:32.1%;background:var(--zone-widget)"></div><div class="bar-label">Read all 214 reviews</div></div>
+          <div class="num">27</div><div class="num rate">9%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:16.7%;background:var(--zone-widget)"></div><div class="bar-label">4.6 out of 5 stars</div></div>
+          <div class="num">14</div><div class="num rate">5%</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cat">
+      <div class="cat-head">
+        <span class="cat-name"><span class="dot" style="background:var(--zone-link)"></span>Link</span>
+        <span class="cat-total">39 clicks (12%)</span>
+      </div>
+      <div class="rows">
+        <div class="col-head"><span></span><span>Clicks</span><span>Of sessions</span></div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:21.4%;background:var(--zone-link)"></div><div class="bar-label">Shipping &amp; returns</div></div>
+          <div class="num">18</div><div class="num rate">6%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:14.3%;background:var(--zone-link)"></div><div class="bar-label">Care instructions</div></div>
+          <div class="num">12</div><div class="num rate">4%</div>
+        </div>
+        <div class="row">
+          <div class="bar"><div class="bar-fill" style="--w-glob:10.7%;background:var(--zone-link)"></div><div class="bar-label">View full details</div></div>
+          <div class="num">9</div><div class="num rate">3%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= images ================= -->
+    <div class="img-block">
+      <div class="cat-head">
+        <span class="cat-name"><span class="dot" style="background:var(--zone-image)"></span>Image</span>
+        <span class="cat-total">100 clicks (31%)</span>
+      </div>
+
+      <div class="sheet">
+
+        <div class="thumb-card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="100" height="100" fill="#eef1f4"/>
+              <path d="M34 26h32l8 14-10 6v30H36V46l-10-6z" fill="#3b6fb5"/>
+              <path d="M34 26h32l8 14-10 6-6-10H40l-6 10-10-6z" fill="#2f5a95"/>
+            </svg>
+            <span class="thumb-count">38</span>
+            <span class="thumb-share" style="width:100%"></span>
+          </div>
+          <div class="thumb-meta">
+            <div class="thumb-pct">13% of sessions</div>
+            <div class="thumb-alt">Main gallery — blue</div>
+          </div>
+        </div>
+
+        <div class="thumb-card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="100" height="100" fill="#e7dfd2"/>
+              <circle cx="74" cy="24" r="11" fill="#f0c675"/>
+              <path d="M0 72l24-20 18 14 20-22 38 30v26H0z" fill="#8a9a6b"/>
+              <path d="M0 86l30-14 26 10 44-16v34H0z" fill="#6f7f52"/>
+            </svg>
+            <span class="thumb-count">26</span>
+            <span class="thumb-share" style="width:68%"></span>
+          </div>
+          <div class="thumb-meta">
+            <div class="thumb-pct">9% of sessions</div>
+            <div class="thumb-alt">Lifestyle shot</div>
+          </div>
+        </div>
+
+        <div class="thumb-card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="100" height="100" fill="#fafafa"/>
+              <g stroke="#c9c9c9" stroke-width="1.5">
+                <path d="M14 26h72M14 42h72M14 58h72M14 74h72"/>
+                <path d="M14 26v48M38 26v48M62 26v48M86 26v48"/>
+              </g>
+              <rect x="14" y="26" width="72" height="16" fill="#dfe6ee"/>
+              <g fill="#9aa3ab">
+                <rect x="19" y="47" width="12" height="4"/><rect x="43" y="47" width="12" height="4"/><rect x="67" y="47" width="12" height="4"/>
+                <rect x="19" y="63" width="12" height="4"/><rect x="43" y="63" width="12" height="4"/><rect x="67" y="63" width="12" height="4"/>
+              </g>
+            </svg>
+            <span class="thumb-count">19</span>
+            <span class="thumb-share" style="width:50%"></span>
+          </div>
+          <div class="thumb-meta">
+            <div class="thumb-pct">6% of sessions</div>
+            <div class="thumb-alt">Size chart</div>
+          </div>
+        </div>
+
+        <div class="thumb-card">
+          <div class="thumb">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="100" height="100" fill="#eef1f4"/>
+              <path d="M34 26h32l8 14-10 6v30H36V46l-10-6z" fill="#b5433c"/>
+              <path d="M34 26h32l8 14-10 6-6-10H40l-6 10-10-6z" fill="#93332e"/>
+            </svg>
+            <span class="thumb-count">11</span>
+            <span class="thumb-share" style="width:29%"></span>
+          </div>
+          <div class="thumb-meta">
+            <div class="thumb-pct">4% of sessions</div>
+            <div class="thumb-alt">Main gallery — red</div>
+          </div>
+        </div>
+
+        <div class="thumb-card">
+          <div class="thumb rest">+3 more</div>
+          <div class="thumb-meta">
+            <div class="thumb-pct">2% of sessions</div>
+            <div class="thumb-alt">Detail crops</div>
+          </div>
+        </div>
+
+      </div>
+
+      <p class="hint">Grouped by image file, so the same photo counts once no matter which size the theme served.</p>
+    </div>
+
+    <!-- ================= header / footer ================= -->
+    <div class="hf-row">
+      <div class="hf-box">
+        <div class="hf-head">
+          <span class="cat-name"><span class="dot" style="background:var(--zone-header)"></span>Header</span>
+          <span class="cat-total">76 clicks</span>
+        </div>
+        <div class="hf-item"><span>Search</span><span>31</span><span>10% of sessions</span></div>
+        <div class="hf-item"><span>Cart</span><span>24</span><span>8%</span></div>
+        <div class="hf-item"><span>Home</span><span>12</span><span>4%</span></div>
+        <div class="hf-item"><span>Collections</span><span>9</span><span>3%</span></div>
+      </div>
+      <div class="hf-box">
+        <div class="hf-head">
+          <span class="cat-name"><span class="dot" style="background:var(--zone-footer)"></span>Footer</span>
+          <span class="cat-total">32 clicks</span>
+        </div>
+        <div class="hf-item"><span>Contact us</span><span>14</span><span>5% of sessions</span></div>
+        <div class="hf-item"><span>Track my order</span><span>11</span><span>4%</span></div>
+        <div class="hf-item"><span>FAQ</span><span>7</span><span>2%</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
