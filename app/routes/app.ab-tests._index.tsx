@@ -31,9 +31,21 @@ import {
   getThemeTemplateOptions,
   normalizeAbTestGoal,
   normalizeAbTestPageType,
+  type SnapshotTemplateTransformation,
   type ThemeTemplateOption,
 } from "../utils/ab-tests.server";
-import { cachedValue, loaderCacheKeys } from "../utils/loader-cache.server";
+import {
+  cachedValue,
+  clearCacheKey,
+  loaderCacheKeys,
+} from "../utils/loader-cache.server";
+import { planUsagePillLabel, PremiumGateCard } from "../components/PremiumGate";
+import {
+  assertCanCreateAbTest,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+} from "../utils/billing.server";
 
 const PAGE_TYPE_OPTIONS = [
   { label: "Homepage", value: "HOMEPAGE", noun: "homepage" },
@@ -131,6 +143,7 @@ type AbTestDashboardItem = {
   totalVisitors: number;
   lift: number | null;
   liftLabel: string;
+  liftDetail: string;
   liftTone: "positive" | "negative" | "neutral";
   decisionLabel: string;
   decisionTone: "success" | "warning" | "critical" | "neutral";
@@ -146,9 +159,30 @@ const MIN_VISITORS_PER_VARIANT_FOR_SIGNAL = 20;
 
 type VariantCreateAction =
   | "duplicate-template-variant"
-  | "recommend-template-variant";
+  | "snapshot-template-variant";
 type CreateWizardStep = "setup" | "settings";
-type VariantBuildMode = "existing" | "duplicate" | "recommendation" | null;
+type VariantBuildMode = "existing" | "duplicate" | "snapshot" | null;
+type DuplicateTemplateState = "idle" | "pending" | "created";
+
+type SnapshotOption = {
+  id: string;
+  name: string;
+  number: number;
+  resourceType: string;
+  resourceTitle: string;
+  resourceHandle: string;
+  targetVisitors: number;
+  realCount: number;
+  totalSessions: number;
+  atcRate: number;
+  convRate: number;
+  revenue: number;
+  avgScrollDepth: number;
+  exitRate: number;
+  bodyCtaCtrRate: number;
+  createdAt: string;
+  completedAt: string | null;
+};
 
 type VariantCreateActionData =
   | {
@@ -157,22 +191,27 @@ type VariantCreateActionData =
       templateName: string;
       templateSuffix: string;
       message: string;
-      recommendationPlan?: TemplateRecommendationPlan | null;
+      snapshotPlan?: TemplateSnapshotPlan | null;
     }
   | {
       ok: false;
       error: string;
     };
 
-type TemplateRecommendationPlan = {
+type TemplateSnapshotPlan = {
   title: string;
   summary: string;
   sourceLabel: string;
+  snapshotId?: string | null;
+  snapshotName?: string | null;
+  snapshotResourceTitle?: string | null;
   confidence: number | null;
+  metrics?: Record<string, number | string | null>;
   focusAreas: Array<{
     label: string;
     detail: string;
   }>;
+  transformation?: SnapshotTemplateTransformation | null;
 };
 
 type ParsedTemplateOption = {
@@ -266,9 +305,17 @@ function getTestDashboardItem({
   const totalVisitors = controlVisitors + variantVisitors;
   const controlRate = controlStats?.conversionRate ?? null;
   const variantRate = variantStats?.conversionRate ?? null;
-  const lift =
+  const pointDifference =
     controlRate !== null && variantRate !== null
       ? variantRate - controlRate
+      : null;
+  const lift =
+    controlRate !== null && variantRate !== null
+      ? controlRate > 0
+        ? ((variantRate - controlRate) / controlRate) * 100
+        : variantRate === 0
+          ? 0
+          : null
       : null;
   const hasEnoughSignal =
     totalVisitors >= MIN_VISITORS_FOR_SIGNAL &&
@@ -277,18 +324,27 @@ function getTestDashboardItem({
   const progress = progressLabelForTest(test, totalVisitors);
 
   let liftLabel = "-";
+  let liftDetail = "Needs data";
   let liftTone: AbTestDashboardItem["liftTone"] = "neutral";
   let decisionLabel = "Needs data";
   let decisionTone: AbTestDashboardItem["decisionTone"] = "neutral";
 
   if (test.status === "DRAFT") {
     liftLabel = "Draft";
+    liftDetail = "Setup saved";
     decisionLabel = "Setup saved";
     decisionTone = "neutral";
   } else if (!hasEnoughSignal) {
     liftLabel = "Too early";
     decisionLabel = test.status === "ENDED" ? "Inconclusive" : "Collecting";
+    liftDetail = decisionLabel;
     decisionTone = test.status === "ENDED" ? "warning" : "neutral";
+  } else if (controlRate === 0 && variantRate !== null && variantRate > 0) {
+    liftLabel = "No baseline";
+    liftDetail = `+${variantRate.toFixed(1)} pts · B leading`;
+    liftTone = "positive";
+    decisionLabel = "B leading";
+    decisionTone = "success";
   } else if (lift !== null) {
     liftLabel = `${lift > 0 ? "+" : ""}${lift.toFixed(1)}%`;
     if (lift > 0) {
@@ -303,6 +359,9 @@ function getTestDashboardItem({
       decisionLabel = "No lift yet";
       decisionTone = "warning";
     }
+    liftDetail = `${pointDifference && pointDifference > 0 ? "+" : ""}${(
+      pointDifference || 0
+    ).toFixed(1)} pts · ${decisionLabel}`;
   }
 
   return {
@@ -315,6 +374,7 @@ function getTestDashboardItem({
     totalVisitors,
     lift,
     liftLabel,
+    liftDetail,
     liftTone,
     decisionLabel,
     decisionTone,
@@ -358,6 +418,35 @@ function parseOptionValue(value: string): ParsedTemplateOption | null {
   } catch {
     return null;
   }
+}
+
+function shopAdminStoreHandle(shop: string) {
+  return shop.replace(".myshopify.com", "");
+}
+
+function numericThemeId(themeId?: string | null) {
+  return themeId?.split("/").pop() || "";
+}
+
+function themeEditorTemplateParam(filename?: string | null) {
+  if (!filename) return "";
+  return filename
+    .replace(/^templates\//, "")
+    .replace(/\.(json|liquid)$/i, "");
+}
+
+function buildThemeEditorUrl(
+  shop: string,
+  template?: ParsedTemplateOption | null,
+) {
+  const themeId = numericThemeId(template?.themeId);
+  const templateParam = themeEditorTemplateParam(template?.templateFileName);
+  if (!shop || !themeId || !templateParam) return null;
+  const url = new URL(
+    `https://admin.shopify.com/store/${shopAdminStoreHandle(shop)}/themes/${themeId}/editor`,
+  );
+  url.searchParams.set("template", templateParam);
+  return url.toString();
 }
 
 function abPageTypeToResourceType(pageType?: string | null) {
@@ -475,90 +564,276 @@ function defaultRecommendationFocusAreas(pageType?: string | null) {
   ];
 }
 
-async function buildTemplateRecommendationPlan({
+function numberMetric(stats: any, key: string) {
+  const value = Number(stats?.[key] || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function snapshotPlanConfidence(realCount: number, signals: number) {
+  const sampleScore = Math.min(55, Math.round(realCount / 4));
+  return Math.max(35, Math.min(92, sampleScore + signals * 9));
+}
+
+function buildSnapshotTemplateTransformation({
+  pageType,
+  realCount,
+  atcRate,
+  convRate,
+  exitRate,
+  avgScrollDepth,
+  bodyCtaCtrRate,
+  resourceTitle,
+}: {
+  pageType: string;
+  realCount: number;
+  atcRate: number;
+  convRate: number;
+  exitRate: number;
+  avgScrollDepth: number;
+  bodyCtaCtrRate: number;
+  resourceTitle: string;
+}): SnapshotTemplateTransformation {
+  const interventions = [
+    {
+      id: "low_product_confidence",
+      applies: pageType === "PRODUCT" && atcRate < 4,
+      priority: 95,
+      label: "Low add-to-cart confidence",
+      reason: `${atcRate.toFixed(1)}% add-to-cart rate from ${realCount.toLocaleString()} real visitors.`,
+      sectionTitle: "Make the buying decision easier",
+      sectionBody:
+        "This variant adds purchase reassurance near the buying area so visitors see fit, shipping, returns, and support cues before they decide whether to add to cart.",
+    },
+    {
+      id: "high_exit_rate",
+      applies: exitRate > 35,
+      priority: 85,
+      label: "High exit rate",
+      reason: `${exitRate.toFixed(1)}% exit rate from the selected snapshot.`,
+      sectionTitle: "Still deciding?",
+      sectionBody:
+        "This variant adds a clearer next step and reassurance block near the top of the page to reduce early exits and give uncertain visitors a reason to continue.",
+    },
+    {
+      id: "low_scroll_depth",
+      applies: avgScrollDepth > 0 && avgScrollDepth < 55,
+      priority: 75,
+      label: "Low scroll depth",
+      reason: `${avgScrollDepth.toFixed(1)}% average scroll depth means visitors may not reach important proof or buying guidance.`,
+      sectionTitle: "Key details before you scroll",
+      sectionBody:
+        "This variant moves the most important proof and decision cues higher on the page so visitors do not need to scroll deeply before understanding the offer.",
+    },
+    {
+      id: "low_cta_clickthrough",
+      applies: bodyCtaCtrRate > 0 && bodyCtaCtrRate < 12,
+      priority: 70,
+      label: "Low CTA clickthrough",
+      reason: `${bodyCtaCtrRate.toFixed(1)}% body CTA clickthrough from the selected snapshot.`,
+      sectionTitle: "Choose your next step",
+      sectionBody:
+        "This variant adds a focused action block to reduce competing choices and make the next buying step easier to find.",
+    },
+    {
+      id: "low_conversion_rate",
+      applies: ["PRODUCT", "CART"].includes(pageType) && convRate < 2,
+      priority: 65,
+      label: "Low conversion rate",
+      reason: `${convRate.toFixed(1)}% conversion rate from the selected snapshot.`,
+      sectionTitle: "Checkout with confidence",
+      sectionBody:
+        "This variant adds conversion reassurance before checkout so visitors can resolve final concerns around value, delivery, returns, and support.",
+    },
+    {
+      id: "collection_discovery",
+      applies: pageType === "COLLECTION",
+      priority: 55,
+      label: "Collection discovery needs clearer routing",
+      reason:
+        "Collection snapshots benefit from clearer browse guidance and stronger routing into product detail pages.",
+      sectionTitle: "Find the right option faster",
+      sectionBody:
+        "This variant adds collection guidance that helps visitors compare options and move from browsing into the most relevant product page.",
+    },
+  ]
+    .filter((intervention) => intervention.applies)
+    .sort((left, right) => right.priority - left.priority);
+
+  const selected = interventions[0] || {
+    id: "baseline_snapshot_learning",
+    priority: 40,
+    label: "Snapshot-informed baseline refinement",
+    reason: `${realCount.toLocaleString()} real visitors were reviewed for ${resourceTitle}.`,
+    sectionTitle: "What shoppers need to know",
+    sectionBody:
+      "This variant adds a concise decision-support block based on the selected snapshot so the test has a clear page-level change to evaluate.",
+  };
+
+  return {
+    primaryWeakness: selected.label,
+    evidence: selected.reason,
+    intervention: {
+      id: selected.id,
+      label: selected.label,
+      reason: selected.reason,
+      sectionTitle: selected.sectionTitle,
+      sectionBody: selected.sectionBody,
+      priority: selected.priority,
+    },
+    status: "not_applicable",
+    changedFiles: [],
+    notes: [
+      "Generated before theme-file creation. The final inserted section details are added after the B template is written.",
+    ],
+  };
+}
+
+async function buildTemplateSnapshotPlan({
   shop,
   controlTemplate,
+  snapshotId,
 }: {
   shop: string;
   controlTemplate: ThemeTemplateOption;
-}): Promise<TemplateRecommendationPlan> {
-  const pagePath = pathFromPreviewUrl(controlTemplate.previewPageUrl);
-  const resourceHandle = handleFromPreviewPath(
-    controlTemplate.pageType,
-    pagePath,
-  );
+  snapshotId: string;
+}): Promise<TemplateSnapshotPlan> {
   const recommendedType = abPageTypeToResourceType(controlTemplate.pageType);
-  const baseWhere = {
-    storeSnapshot: { shop },
-    status: { in: ["OPEN", "CREATED"] as const },
-  };
-  const preciseFilters = [
-    resourceHandle ? { resourceHandle } : null,
-    pagePath ? { pagePath } : null,
-  ].filter(Boolean) as Array<Record<string, string>>;
-
-  const recommendation =
-    preciseFilters.length > 0
-      ? await prisma.storeSnapshotRecommendation.findFirst({
-          where: {
-            ...baseWhere,
-            OR: preciseFilters,
-          },
-          orderBy: [
-            { confidence: "desc" },
-            { priority: "desc" },
-            { createdAt: "desc" },
-          ],
-        })
-      : null;
-
-  const typeRecommendation =
-    recommendation || !recommendedType
-      ? null
-      : await prisma.storeSnapshotRecommendation.findFirst({
-          where: {
-            ...baseWhere,
-            recommendedType,
-          },
-          orderBy: [
-            { confidence: "desc" },
-            { priority: "desc" },
-            { createdAt: "desc" },
-          ],
-        });
-
-  const matchedRecommendation = recommendation || typeRecommendation;
-  const focusAreas = defaultRecommendationFocusAreas(controlTemplate.pageType);
-
-  if (!matchedRecommendation) {
-    return {
-      title: `Recommended ${selectedPageTypeName(controlTemplate.pageType)} variant`,
-      summary:
-        "No matching store-snapshot recommendation was found, so this copy starts with a focused best-practice edit plan for the selected template type.",
-      sourceLabel: "Template best-practice plan",
-      confidence: null,
-      focusAreas,
-    };
+  if (!recommendedType) {
+    throw new Error(
+      "Snapshot-generated variants are not available for this page type yet.",
+    );
   }
 
+  const snapshot = await prisma.snapshot.findFirst({
+    where: {
+      id: snapshotId,
+      status: "COMPLETED",
+      project: {
+        shop,
+        resourceType: recommendedType,
+      },
+    },
+    include: {
+      project: true,
+      statsCache: true,
+      _count: { select: { visits: true } },
+    },
+  });
+
+  if (!snapshot) {
+    throw new Error(
+      "Select a completed snapshot that matches this A/B test page type.",
+    );
+  }
+
+  const stats = (snapshot.statsCache?.stats || {}) as any;
+  const totalSessions =
+    numberMetric(stats, "totalSessions") || snapshot._count.visits || 0;
+  const realCount = numberMetric(stats, "realCount");
+  const addToCartCount = numberMetric(stats, "addToCartCount");
+  const conversionCount = numberMetric(stats, "conversionCount");
+  const atcRate = numberMetric(stats, "atcRate");
+  const convRate = numberMetric(stats, "convRate");
+  const exitRate = numberMetric(stats, "exitRate");
+  const avgScrollDepth = numberMetric(stats, "avgScrollDepth");
+  const bodyCtaCtrRate = numberMetric(stats, "bodyCtaCtrRate");
+  const revenue = numberMetric(stats, "totalRevenue");
+  const focusAreas = defaultRecommendationFocusAreas(controlTemplate.pageType);
+  const detected: TemplateSnapshotPlan["focusAreas"] = [];
+
+  if (realCount < 25) {
+    detected.push({
+      label: "Collect more signal before making heavy edits",
+      detail: `${realCount.toLocaleString()} real visitors were captured, so use this generated template as a cautious first variant and review it manually before launch.`,
+    });
+  }
+
+  if (atcRate < 4 && controlTemplate.pageType === "PRODUCT") {
+    detected.push({
+      label: "Improve add-to-cart confidence",
+      detail: `${addToCartCount.toLocaleString()} add-to-carts from ${realCount.toLocaleString()} real visitors (${atcRate.toFixed(1)}%). Build B around stronger CTA visibility, sizing/support reassurance, and purchase confidence near the buying area.`,
+    });
+  }
+
+  if (convRate < 2 && ["PRODUCT", "CART"].includes(controlTemplate.pageType)) {
+    detected.push({
+      label: "Reduce purchase hesitation",
+      detail: `${conversionCount.toLocaleString()} orders were attributed (${convRate.toFixed(1)}% CVR). Keep the variant focused on removing uncertainty before checkout.`,
+    });
+  }
+
+  if (bodyCtaCtrRate < 12) {
+    detected.push({
+      label: "Make the next action easier to find",
+      detail: `Body CTA CTR is ${bodyCtaCtrRate.toFixed(1)}%. Use the copied template to make primary actions more visible and reduce competing content before the next step.`,
+    });
+  }
+
+  if (exitRate > 35) {
+    detected.push({
+      label: "Lower early exits",
+      detail: `Exit rate is ${exitRate.toFixed(1)}%. Variant B should clarify the page promise and next action before visitors abandon or go idle.`,
+    });
+  }
+
+  if (avgScrollDepth < 55) {
+    detected.push({
+      label: "Move important content higher",
+      detail: `Average scroll depth is ${avgScrollDepth.toFixed(1)}%. Move proof, offer, fit, or discovery content closer to the top instead of relying on deep scroll.`,
+    });
+  }
+
+  if (controlTemplate.pageType === "COLLECTION" && atcRate < 3) {
+    detected.push({
+      label: "Improve product discovery from the listing",
+      detail:
+        "Use this collection variant to test clearer collection copy, product-card decision cues, sorting/filter defaults, or stronger product routing.",
+    });
+  }
+
+  const signals = detected.filter(
+    (area) => !area.label.toLowerCase().includes("collect more"),
+  ).length;
+  const appliedFocusAreas = [...detected, ...focusAreas].slice(0, 5);
+  const transformation = buildSnapshotTemplateTransformation({
+    pageType: controlTemplate.pageType,
+    realCount,
+    atcRate,
+    convRate,
+    exitRate,
+    avgScrollDepth,
+    bodyCtaCtrRate,
+    resourceTitle: snapshot.project.productTitle,
+  });
+  const confidence = snapshotPlanConfidence(realCount, signals);
+  const metricSummary = [
+    `${realCount.toLocaleString()} real visitors`,
+    `${atcRate.toFixed(1)}% ATC`,
+    `${convRate.toFixed(1)}% CVR`,
+    `${exitRate.toFixed(1)}% exit`,
+    `${avgScrollDepth.toFixed(1)}% scroll`,
+  ].join(" · ");
+
   return {
-    title: matchedRecommendation.title,
-    summary: matchedRecommendation.reason,
-    sourceLabel: `${matchedRecommendation.pageTitle || matchedRecommendation.pagePath} · ${matchedRecommendation.confidence}% confidence`,
-    confidence: matchedRecommendation.confidence,
-    focusAreas: [
-      {
-        label: "Start from the detected weakness",
-        detail: matchedRecommendation.reason,
-      },
-      {
-        label: "Build Variant B around one hypothesis",
-        detail:
-          matchedRecommendation.actionLabel ||
-          "Use the copied template to test one clear improvement against the original.",
-      },
-      ...focusAreas.slice(0, 2),
-    ],
+    title: `Snapshot-guided ${selectedPageTypeName(controlTemplate.pageType)} variant`,
+    summary: `${snapshot.project.productTitle} snapshot found ${metricSummary}. Variant B will apply a ${transformation.primaryWeakness.toLowerCase()} intervention so the template change can be traced back to this snapshot.`,
+    sourceLabel: `${snapshot.name || `Snapshot ${snapshot.number}`} · ${snapshot.project.productTitle}`,
+    snapshotId: snapshot.id,
+    snapshotName: snapshot.name || `Snapshot ${snapshot.number}`,
+    snapshotResourceTitle: snapshot.project.productTitle,
+    confidence,
+    metrics: {
+      realVisitors: realCount,
+      totalVisits: totalSessions,
+      addToCartRate: atcRate,
+      conversionRate: convRate,
+      revenue,
+      exitRate,
+      avgScrollDepth,
+      bodyCtaCtrRate,
+    },
+    focusAreas: appliedFocusAreas,
+    transformation,
   };
 }
 
@@ -922,40 +1197,6 @@ function TinyIcon({ type }: { type: string }) {
   );
 }
 
-function SummaryTile({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div
-      style={{
-        border: "1px solid var(--p-color-border-secondary)",
-        borderRadius: 10,
-        padding: "16px 18px",
-        background: "var(--p-color-bg-surface)",
-        minWidth: 180,
-      }}
-    >
-      <BlockStack gap="050">
-        <Text as="span" tone="subdued">
-          {label}
-        </Text>
-        <Text as="span" variant="headingLg">
-          {value}
-        </Text>
-        <Text as="span" tone="subdued">
-          {detail}
-        </Text>
-      </BlockStack>
-    </div>
-  );
-}
-
 function MiniProgressBar({
   percent,
   tone = "neutral",
@@ -1158,7 +1399,7 @@ function DashboardTestCard({
           <MetricBlock
             label="Lift"
             value={item.liftLabel}
-            detail={item.decisionLabel}
+            detail={item.liftDetail}
             tone={item.liftTone}
           />
         </div>
@@ -1250,6 +1491,7 @@ function TemplateSummaryCard({
   previewPageUrl,
   assignedLabel,
   onSwap,
+  showAction = true,
   disabled,
 }: {
   side: "A" | "B";
@@ -1261,6 +1503,7 @@ function TemplateSummaryCard({
   previewPageUrl?: string | null;
   assignedLabel?: string | null;
   onSwap: () => void;
+  showAction?: boolean;
   disabled?: boolean;
 }) {
   return (
@@ -1286,9 +1529,11 @@ function TemplateSummaryCard({
               tone={side === "A" ? "blue" : "yellow"}
             />
           </InlineStack>
-          <Button onClick={onSwap} disabled={disabled}>
-            {side === "A" ? "Swap template" : "Select template"}
-          </Button>
+          {showAction ? (
+            <Button onClick={onSwap} disabled={disabled}>
+              {side === "A" ? "Swap template" : "Select template"}
+            </Button>
+          ) : null}
         </InlineStack>
       </div>
       <TemplatePreview
@@ -1582,6 +1827,82 @@ function TemplateListOption({
   );
 }
 
+function formatPercentValue(value: number) {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+function SnapshotListOption({
+  snapshot,
+  selected,
+  onSelect,
+}: {
+  snapshot: SnapshotOption;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        borderRadius: 10,
+        border: selected ? "1.5px solid #a16b16" : "1px solid #e1e1e1",
+        background: selected ? "#fbf3e1" : "#fff",
+        padding: 14,
+        cursor: "pointer",
+      }}
+    >
+      <BlockStack gap="250">
+        <InlineStack align="space-between" gap="300" blockAlign="start">
+          <BlockStack gap="050">
+            <Text as="span" variant="headingMd">
+              {snapshot.resourceTitle}
+            </Text>
+            <Text as="span" tone="subdued">
+              {snapshot.name || `Snapshot ${snapshot.number}`} ·{" "}
+              {snapshot.realCount.toLocaleString()}/
+              {snapshot.targetVisitors.toLocaleString()} real visitors
+            </Text>
+          </BlockStack>
+          <Badge tone="success">Completed</Badge>
+        </InlineStack>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: 8,
+          }}
+        >
+          <MetricBlock
+            label="ATC"
+            value={formatPercentValue(snapshot.atcRate)}
+            detail="add-to-cart"
+          />
+          <MetricBlock
+            label="CVR"
+            value={formatPercentValue(snapshot.convRate)}
+            detail="conversion"
+          />
+          <MetricBlock
+            label="Exit"
+            value={formatPercentValue(snapshot.exitRate)}
+            detail="leaving"
+            tone={snapshot.exitRate > 35 ? "negative" : "neutral"}
+          />
+          <MetricBlock
+            label="Scroll"
+            value={formatPercentValue(snapshot.avgScrollDepth)}
+            detail="avg depth"
+          />
+        </div>
+      </BlockStack>
+    </button>
+  );
+}
+
 function ManualTemplateFields({
   side,
   pageType,
@@ -1637,7 +1958,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [tests, themeTemplates] = await Promise.all([
+  const [tests, themeTemplates, completedSnapshots, billingAccess] =
+    await Promise.all([
     prisma.abTest.findMany({
       where: { shop },
       orderBy: { createdAt: "desc" },
@@ -1651,7 +1973,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     cachedValue(loaderCacheKeys.abTestTemplates(shop), 60_000, () =>
       getThemeTemplateOptions(admin),
     ),
-  ]);
+      prisma.snapshot.findMany({
+        where: {
+          status: "COMPLETED",
+          project: { shop },
+        },
+        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+        take: 120,
+        include: {
+          project: true,
+          statsCache: true,
+          _count: { select: { visits: true } },
+        },
+      }),
+      getBillingAccess(shop),
+    ]);
   const assignmentGroups = tests.length
     ? await prisma.abTestAssignment.groupBy({
         by: ["testId", "variantId", "visitorType", "converted"],
@@ -1688,8 +2024,33 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   return json({
+    shop,
+    billingAccess,
     themeTemplates,
     rowStatsByVariant,
+    completedSnapshots: completedSnapshots.map((snapshot) => {
+      const stats = (snapshot.statsCache?.stats || {}) as any;
+      return {
+        id: snapshot.id,
+        name: snapshot.name || `Snapshot ${snapshot.number}`,
+        number: snapshot.number,
+        resourceType: snapshot.project.resourceType,
+        resourceTitle: snapshot.project.productTitle,
+        resourceHandle: snapshot.project.productHandle,
+        targetVisitors: snapshot.targetVisitors,
+        realCount: numberMetric(stats, "realCount"),
+        totalSessions:
+          numberMetric(stats, "totalSessions") || snapshot._count.visits || 0,
+        atcRate: numberMetric(stats, "atcRate"),
+        convRate: numberMetric(stats, "convRate"),
+        revenue: numberMetric(stats, "totalRevenue"),
+        avgScrollDepth: numberMetric(stats, "avgScrollDepth"),
+        exitRate: numberMetric(stats, "exitRate"),
+        bodyCtaCtrRate: numberMetric(stats, "bodyCtaCtrRate"),
+        createdAt: snapshot.createdAt.toISOString(),
+        completedAt: snapshot.completedAt?.toISOString() ?? null,
+      };
+    }),
     canWriteThemes:
       session.scope
         ?.split(",")
@@ -1718,7 +2079,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (
     actionType === "duplicate-template-variant" ||
-    actionType === "recommend-template-variant"
+    actionType === "snapshot-template-variant"
   ) {
     const controlTemplate = parsedOptionToThemeTemplate(
       parseOptionValue(String(formData.get("controlOption") || "")),
@@ -1734,29 +2095,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     try {
-      const isRecommendationAction =
-        actionType === "recommend-template-variant";
+      const isSnapshotAction = actionType === "snapshot-template-variant";
+      const snapshotId = String(formData.get("snapshotId") || "");
+      const snapshotPlan = isSnapshotAction
+        ? await buildTemplateSnapshotPlan({
+            shop,
+            controlTemplate,
+            snapshotId,
+          })
+        : null;
       const template = await createThemeTemplateVariant({
         admin,
         control: controlTemplate,
-        kind: isRecommendationAction ? "recommendation" : "duplicate",
+        kind: isSnapshotAction ? "snapshot" : "duplicate",
+        generationPlan: snapshotPlan,
       });
-      const recommendationPlan = isRecommendationAction
-        ? await buildTemplateRecommendationPlan({
-            shop,
-            controlTemplate,
-          })
-        : null;
+      const appliedSnapshotPlan =
+        snapshotPlan && template.transformation
+          ? {
+              ...snapshotPlan,
+              transformation: template.transformation,
+              summary:
+                template.transformation.status === "applied"
+                  ? `${snapshotPlan.summary} Mouse Whisperer inserted section ${template.transformation.insertedSectionId} into ${template.filename}.`
+                  : snapshotPlan.summary,
+            }
+          : snapshotPlan;
 
       return json<VariantCreateActionData>({
         ok: true,
         templateOption: serializeOption(template),
         templateName: template.templateName,
         templateSuffix: template.templateSuffix || "",
-        message: isRecommendationAction
-          ? "Recommended variant template created."
+        message: isSnapshotAction
+          ? "Snapshot-guided variant template created."
           : "Duplicate variant template created.",
-        recommendationPlan,
+        snapshotPlan: appliedSnapshotPlan,
       });
     } catch (error) {
       return json<VariantCreateActionData>(
@@ -1770,6 +2144,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (actionType === "create-template-test") {
+    try {
+      await assertCanCreateAbTest(shop);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
+
     const targetPageType = normalizeAbTestPageType(
       formData.get("targetPageType"),
     );
@@ -1783,15 +2166,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const controlOption = parseOptionValue(
       String(formData.get("controlOption") || ""),
     );
-    const variantOption = parseOptionValue(
+    let variantOption = parseOptionValue(
       String(formData.get("variantOption") || ""),
     );
+    const variantBuildMode = String(formData.get("variantBuildMode") || "");
 
     const controlTemplateSuffix =
       controlOption?.templateSuffix ||
       String(formData.get("controlTemplateSuffix") || "") ||
       null;
-    const variantTemplateSuffix =
+    let variantTemplateSuffix =
       variantOption?.templateSuffix ||
       String(formData.get("variantTemplateSuffix") || "") ||
       null;
@@ -1799,12 +2183,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       controlOption?.templateFileName ||
       String(formData.get("controlTemplateFileName") || "") ||
       null;
-    const variantTemplateFileName =
+    let variantTemplateFileName =
       variantOption?.templateFileName ||
       String(formData.get("variantTemplateFileName") || "") ||
       null;
-    const recommendationNotes =
-      String(formData.get("recommendationPlan") || "").trim() || null;
+    let variantTemplateName =
+      variantOption?.templateName ||
+      String(formData.get("variantTemplateName") || "Variant");
+
+    if (variantBuildMode === "duplicate" && !variantOption) {
+      const controlTemplate = parsedOptionToThemeTemplate(controlOption);
+      if (!controlTemplate) {
+        return json(
+          { error: "Select an original template before duplicating it." },
+          { status: 400 },
+        );
+      }
+
+      try {
+        const duplicateTemplate = await createThemeTemplateVariant({
+          admin,
+          control: controlTemplate,
+          kind: "duplicate",
+        });
+        variantOption = parseOptionValue(serializeOption(duplicateTemplate));
+        variantTemplateName = duplicateTemplate.templateName;
+        variantTemplateSuffix = duplicateTemplate.templateSuffix || null;
+        variantTemplateFileName = duplicateTemplate.filename || null;
+      } catch (error) {
+        return json(
+          { error: themeWriteErrorMessage(error) },
+          { status: 400 },
+        );
+      }
+    }
+    const snapshotPlanRaw =
+      String(formData.get("snapshotPlan") || "").trim() || null;
+    const sourceSnapshotId =
+      String(formData.get("sourceSnapshotId") || "").trim() || null;
+    const snapshotPlan = snapshotPlanRaw ? JSON.parse(snapshotPlanRaw) : null;
 
     if (
       isSameTemplateSelection({
@@ -1831,7 +2248,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       name: String(formData.get("name") || "Untitled template test"),
       targetPageType,
       goal: normalizeAbTestGoal(formData.get("goal")),
-      notes: recommendationNotes ? recommendationNotes.slice(0, 10000) : null,
+      notes: snapshotPlanRaw ? snapshotPlanRaw.slice(0, 10000) : null,
+      sourceSnapshotId,
+      sourceSnapshotKind: sourceSnapshotId ? "FOCUSED" : null,
+      generationPlan: snapshotPlan,
       themeId: controlOption?.themeId || variantOption?.themeId || null,
       themeName: controlOption?.themeName || variantOption?.themeName || null,
       themeRole: controlOption?.themeRole || variantOption?.themeRole || null,
@@ -1842,12 +2262,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       controlTemplateSuffix,
       controlTemplateFileName,
       variantTemplateName:
-        variantOption?.templateName ||
-        String(formData.get("variantTemplateName") || "Variant"),
+        variantTemplateName,
       variantTemplateSuffix,
       variantTemplateFileName,
     });
 
+    clearCacheKey(loaderCacheKeys.dashboard(shop));
     return redirect(`/app/ab-tests/${test.id}`);
   }
 
@@ -1871,6 +2291,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "LIVE", launchedAt: new Date(), pausedAt: null },
     });
+    clearCacheKey(loaderCacheKeys.dashboard(shop));
     return redirect("/app/ab-tests");
   }
 
@@ -1879,6 +2300,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "PAUSED", pausedAt: new Date() },
     });
+    clearCacheKey(loaderCacheKeys.dashboard(shop));
     return redirect("/app/ab-tests");
   }
 
@@ -1887,11 +2309,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "ENDED", endedAt: new Date() },
     });
+    clearCacheKey(loaderCacheKeys.dashboard(shop));
     return redirect("/app/ab-tests");
   }
 
   if (actionType === "delete-test") {
     await prisma.abTest.delete({ where: { id: test.id } });
+    clearCacheKey(loaderCacheKeys.dashboard(shop));
     return redirect("/app/ab-tests");
   }
 
@@ -1899,8 +2323,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function AbTestsIndex() {
-  const { tests, themeTemplates, canWriteThemes, rowStatsByVariant } =
-    useLoaderData<typeof loader>();
+  const {
+    shop,
+    tests,
+    themeTemplates,
+    canWriteThemes,
+    rowStatsByVariant,
+    completedSnapshots,
+    billingAccess,
+  } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const submit = useSubmit();
   const variantCreateFetcher = useFetcher<VariantCreateActionData>();
@@ -1925,10 +2356,13 @@ export default function AbTestsIndex() {
   const [wizardStep, setWizardStep] = useState<CreateWizardStep>("setup");
   const [variantBuildMode, setVariantBuildMode] =
     useState<VariantBuildMode>(null);
-  const [recommendationPlan, setRecommendationPlan] =
-    useState<TemplateRecommendationPlan | null>(null);
-  const [templateSearch, setTemplateSearch] = useState("");
-  const [variantTemplateSearch, setVariantTemplateSearch] = useState("");
+  const [duplicateTemplateState, setDuplicateTemplateState] =
+    useState<DuplicateTemplateState>("idle");
+  const [snapshotPlan, setSnapshotPlan] = useState<TemplateSnapshotPlan | null>(
+    null,
+  );
+  const [snapshotSearch, setSnapshotSearch] = useState("");
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState("");
   const [detailTestId, setDetailTestId] = useState<string | null>(null);
   const [loadingReportTestId, setLoadingReportTestId] = useState<string | null>(
     null,
@@ -1942,7 +2376,7 @@ export default function AbTestsIndex() {
       : null;
   const showVariantCreateError = Boolean(
     variantCreateError &&
-    (variantBuildMode === "duplicate" || variantBuildMode === "recommendation"),
+    (variantBuildMode === "duplicate" || variantBuildMode === "snapshot"),
   );
 
   const filteredTemplates = useMemo(() => {
@@ -1952,23 +2386,11 @@ export default function AbTestsIndex() {
   }, [targetPageType, themeTemplates.templates]);
 
   const searchedTemplates = useMemo(() => {
-    const query = templateSearch.trim().toLowerCase();
-    if (!query) return filteredTemplates;
-    return filteredTemplates.filter((template) => {
-      return `${template.templateName} ${template.filename}`
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [filteredTemplates, templateSearch]);
+    return filteredTemplates;
+  }, [filteredTemplates]);
   const searchedVariantTemplates = useMemo(() => {
-    const query = variantTemplateSearch.trim().toLowerCase();
-    if (!query) return filteredTemplates;
-    return filteredTemplates.filter((template) => {
-      return `${template.templateName} ${template.filename}`
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [filteredTemplates, variantTemplateSearch]);
+    return filteredTemplates;
+  }, [filteredTemplates]);
   const templateCountsByType = useMemo(() => {
     return (themeTemplates.templates || []).reduce<Record<string, number>>(
       (counts, template) => {
@@ -1978,6 +2400,17 @@ export default function AbTestsIndex() {
       {},
     );
   }, [themeTemplates.templates]);
+  const matchingSnapshots = useMemo(() => {
+    const query = snapshotSearch.trim().toLowerCase();
+    return (completedSnapshots as SnapshotOption[])
+      .filter((snapshot) => snapshot.resourceType === targetPageType)
+      .filter((snapshot) => {
+        if (!query) return true;
+        return `${snapshot.name} ${snapshot.resourceTitle} ${snapshot.resourceHandle}`
+          .toLowerCase()
+          .includes(query);
+      });
+  }, [completedSnapshots, snapshotSearch, targetPageType]);
 
   const selectedControl = parseOptionValue(controlOption);
   const selectedVariant = parseOptionValue(variantOption);
@@ -1989,7 +2422,9 @@ export default function AbTestsIndex() {
   const controlSuffix = getTemplateSuffix(controlOption, controlTemplateSuffix);
   const variantName = getTemplateName(variantOption, variantTemplateName, "");
   const variantSuffix = getTemplateSuffix(variantOption, variantTemplateSuffix);
-  const sameTemplateSelected = isSameTemplateSelection({
+  const hasPendingDuplicate =
+    variantBuildMode === "duplicate" && duplicateTemplateState === "pending";
+  const rawSameTemplateSelected = isSameTemplateSelection({
     controlOption: selectedControl,
     variantOption: selectedVariant,
     targetPageType,
@@ -1998,9 +2433,12 @@ export default function AbTestsIndex() {
     controlFilename: selectedControl?.templateFileName,
     variantFilename: selectedVariant?.templateFileName,
   });
+  const sameTemplateSelected = hasPendingDuplicate
+    ? false
+    : rawSameTemplateSelected;
   const canSave =
     Boolean(controlOption || controlTemplateName.trim()) &&
-    Boolean(variantOption || variantTemplateName.trim()) &&
+    Boolean(variantOption || variantTemplateName.trim() || hasPendingDuplicate) &&
     !sameTemplateSelected;
   const canContinueToSettings = canSave;
   const dashboardItems = useMemo(() => {
@@ -2015,35 +2453,6 @@ export default function AbTestsIndex() {
       }),
     );
   }, [rowStatsByVariant, tests, themeTemplates.templates]);
-  const dashboardSummary = useMemo(() => {
-    const liveTests = dashboardItems.filter(
-      (item) => item.test.status === "LIVE",
-    );
-    const assignedVisitors = dashboardItems.reduce(
-      (sum, item) => sum + item.totalVisitors,
-      0,
-    );
-    const signalItems = dashboardItems.filter(
-      (item) => typeof item.lift === "number" && item.liftLabel !== "Too early",
-    );
-    const bestLift =
-      signalItems.length > 0
-        ? Math.max(...signalItems.map((item) => item.lift || 0))
-        : null;
-    const needsDecision = dashboardItems.filter(
-      (item) =>
-        item.test.status === "LIVE" &&
-        item.totalVisitors >= MIN_VISITORS_FOR_SIGNAL &&
-        item.decisionLabel !== "Collecting",
-    ).length;
-
-    return {
-      liveTests: liveTests.length,
-      assignedVisitors,
-      bestLift,
-      needsDecision,
-    };
-  }, [dashboardItems]);
   const activeTests = useMemo(() => {
     const query = dashboardSearch.trim().toLowerCase();
     const filtered = dashboardItems.filter((item) => {
@@ -2093,6 +2502,10 @@ export default function AbTestsIndex() {
     PAGE_TYPE_LABELS[targetPageType] || targetPageType;
   const currentThemeName =
     themeTemplates.templates?.[0]?.themeName || "Live theme";
+  const variantEditorUrl = buildThemeEditorUrl(
+    shop,
+    parseOptionValue(variantOption),
+  );
 
   useEffect(() => {
     if (!createOpen || controlOption) return;
@@ -2125,9 +2538,13 @@ export default function AbTestsIndex() {
     setVariantOption(data.templateOption);
     setVariantTemplateName(data.templateName);
     setVariantTemplateSuffix(data.templateSuffix);
-    setRecommendationPlan(data.recommendationPlan || null);
+    setDuplicateTemplateState(
+      variantBuildMode === "duplicate" ? "created" : "idle",
+    );
+    setSnapshotPlan(data.snapshotPlan || null);
+    setSelectedSnapshotId(data.snapshotPlan?.snapshotId || selectedSnapshotId);
     setWizardStep("settings");
-  }, [variantCreateFetcher.data]);
+  }, [selectedSnapshotId, variantBuildMode, variantCreateFetcher.data]);
 
   function updateTargetPageType(value: string) {
     setTargetPageType(value);
@@ -2138,9 +2555,10 @@ export default function AbTestsIndex() {
     setVariantTemplateName("");
     setVariantTemplateSuffix("");
     setVariantBuildMode(null);
-    setRecommendationPlan(null);
-    setTemplateSearch("");
-    setVariantTemplateSearch("");
+    setDuplicateTemplateState("idle");
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
+    setSnapshotSearch("");
     setWizardStep("setup");
     setName((current) => {
       if (
@@ -2170,19 +2588,23 @@ export default function AbTestsIndex() {
       setVariantTemplateName("");
       setVariantTemplateSuffix("");
       setVariantBuildMode(null);
-      setRecommendationPlan(null);
+      setDuplicateTemplateState("idle");
+      setSnapshotPlan(null);
+      setSelectedSnapshotId("");
     }
   }
 
   function openExistingTemplatePicker() {
     setVariantBuildMode("existing");
-    setVariantTemplateSearch("");
+    setDuplicateTemplateState("idle");
   }
 
   function returnToVariantBuildOptions() {
     setVariantBuildMode(null);
-    setRecommendationPlan(null);
-    setVariantTemplateSearch("");
+    setDuplicateTemplateState("idle");
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
+    setSnapshotSearch("");
     setVariantOption("");
     setVariantTemplateName("");
     setVariantTemplateSuffix("");
@@ -2192,20 +2614,40 @@ export default function AbTestsIndex() {
     const value = serializeOption(template);
     if (isSameTemplateOption(selectedControl, parseOptionValue(value))) return;
     setVariantBuildMode("existing");
-    setRecommendationPlan(null);
+    setDuplicateTemplateState("idle");
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
     setVariantOption(value);
     setVariantTemplateName(template.templateName);
     setVariantTemplateSuffix(template.templateSuffix || "");
   }
 
+  function selectDuplicateTemplate() {
+    if (!controlOption || !canWriteThemes || isCreatingVariant) return;
+    setVariantBuildMode("duplicate");
+    setDuplicateTemplateState("pending");
+    setVariantOption("");
+    setVariantTemplateName(`${controlName} copy`);
+    setVariantTemplateSuffix("");
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
+    setWizardStep("settings");
+  }
+
   function createVariantFromControl(action: VariantCreateAction) {
     if (!controlOption || isCreatingVariant) return;
     setVariantBuildMode(
-      action === "recommend-template-variant" ? "recommendation" : "duplicate",
+      action === "snapshot-template-variant" ? "snapshot" : "duplicate",
+    );
+    setDuplicateTemplateState(
+      action === "duplicate-template-variant" ? "pending" : "idle",
     );
     const formData = new FormData();
     formData.append("action", action);
     formData.append("controlOption", controlOption);
+    if (action === "snapshot-template-variant") {
+      formData.append("snapshotId", selectedSnapshotId);
+    }
     variantCreateFetcher.submit(formData, { method: "POST" });
   }
 
@@ -2228,13 +2670,16 @@ export default function AbTestsIndex() {
         setVariantOption("");
         setVariantTemplateName("");
         setVariantTemplateSuffix("");
-        setRecommendationPlan(null);
+        setSnapshotPlan(null);
+        setSelectedSnapshotId("");
       }
     } else {
       setVariantOption("");
       setVariantTemplateName(variantTemplateName.trim() || "Manual variant");
       setVariantBuildMode("existing");
-      setRecommendationPlan(null);
+      setDuplicateTemplateState("idle");
+      setSnapshotPlan(null);
+      setSelectedSnapshotId("");
     }
   }
 
@@ -2248,12 +2693,16 @@ export default function AbTestsIndex() {
     formData.append("trafficSplit", trafficSplit);
     formData.append("controlOption", controlOption);
     formData.append("variantOption", variantOption);
+    formData.append("variantBuildMode", variantBuildMode || "");
     formData.append("controlTemplateName", controlTemplateName);
     formData.append("controlTemplateSuffix", controlTemplateSuffix);
     formData.append("variantTemplateName", variantTemplateName);
     formData.append("variantTemplateSuffix", variantTemplateSuffix);
-    if (recommendationPlan) {
-      formData.append("recommendationPlan", JSON.stringify(recommendationPlan));
+    if (snapshotPlan) {
+      formData.append("snapshotPlan", JSON.stringify(snapshotPlan));
+      if (snapshotPlan.snapshotId) {
+        formData.append("sourceSnapshotId", snapshotPlan.snapshotId);
+      }
     }
     submit(formData, { method: "POST" });
     setCreateOpen(false);
@@ -2275,15 +2724,25 @@ export default function AbTestsIndex() {
   }
 
   function openCreateWizard() {
+    if (!billingAccess.canCreateAbTest) {
+      window.location.href = "/app/upgrade";
+      return;
+    }
     setWizardStep("setup");
-    setRecommendationPlan(null);
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
+    setSnapshotSearch("");
+    setDuplicateTemplateState("idle");
     setCreateOpen(true);
   }
 
   function closeCreateWizard() {
     setCreateOpen(false);
     setWizardStep("setup");
-    setRecommendationPlan(null);
+    setSnapshotPlan(null);
+    setSelectedSnapshotId("");
+    setSnapshotSearch("");
+    setDuplicateTemplateState("idle");
   }
 
   return (
@@ -2291,8 +2750,10 @@ export default function AbTestsIndex() {
       title="A/B tests"
       subtitle="Test Shopify templates against each other and measure the winning storefront experience."
       primaryAction={{
-        content: "Create a test",
-        onAction: openCreateWizard,
+        content: billingAccess.canCreateAbTest ? "Create a test" : "Upgrade to create A/B test",
+        ...(billingAccess.canCreateAbTest
+          ? { onAction: openCreateWizard }
+          : { url: "/app/upgrade" }),
       }}
     >
       <TitleBar title="A/B tests" />
@@ -2311,38 +2772,12 @@ export default function AbTestsIndex() {
           </Banner>
         ) : null}
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: 12,
-          }}
-        >
-          <SummaryTile
-            label="Live tests"
-            value={dashboardSummary.liveTests.toLocaleString()}
-            detail="Currently assigning visitors"
+        {!billingAccess.canCreateAbTest ? (
+          <PremiumGateCard
+            title="A/B testing is available on paid plans"
+            message="Free stores can run audits and one store snapshot. Upgrade to compare Shopify templates and measure winners."
           />
-          <SummaryTile
-            label="Assigned visitors"
-            value={dashboardSummary.assignedVisitors.toLocaleString()}
-            detail="Across all A/B tests"
-          />
-          <SummaryTile
-            label="Best lift"
-            value={
-              dashboardSummary.bestLift === null
-                ? "Too early"
-                : `${dashboardSummary.bestLift > 0 ? "+" : ""}${dashboardSummary.bestLift.toFixed(1)}%`
-            }
-            detail="Only after enough data"
-          />
-          <SummaryTile
-            label="Needs decision"
-            value={dashboardSummary.needsDecision.toLocaleString()}
-            detail="Tests with enough signal"
-          />
-        </div>
+        ) : null}
 
         <Card padding="400">
           <BlockStack gap="400">
@@ -2393,6 +2828,9 @@ export default function AbTestsIndex() {
               </InlineStack>
 
               <InlineStack gap="200" blockAlign="center" wrap>
+                <Button url="/app/upgrade" size="slim">
+                  {planUsagePillLabel(billingAccess, "abTests")}
+                </Button>
                 <div style={{ width: 260 }}>
                   <TextField
                     label="Search tests"
@@ -2459,9 +2897,15 @@ export default function AbTestsIndex() {
                     Create a template test to compare the original page against
                     a different Shopify template.
                   </Text>
-                  <Button variant="primary" onClick={openCreateWizard}>
-                    Create a test
-                  </Button>
+                  {billingAccess.canCreateAbTest ? (
+                    <Button variant="primary" onClick={openCreateWizard}>
+                      Create a test
+                    </Button>
+                  ) : (
+                    <Button variant="primary" url="/app/upgrade">
+                      Upgrade to create A/B test
+                    </Button>
+                  )}
                 </BlockStack>
               </div>
             )}
@@ -2485,7 +2929,7 @@ export default function AbTestsIndex() {
         variant="max"
         onHide={closeCreateWizard}
       >
-        <TitleBar title="New A/B test" />
+        <TitleBar title="Create New A/B Test" />
         <div
           style={{
             minHeight: "calc(100vh - 72px)",
@@ -2499,9 +2943,8 @@ export default function AbTestsIndex() {
                 <BlockStack gap="100">
                   <InlineStack gap="200" blockAlign="center">
                     <Text as="h2" variant="heading2xl">
-                      New A/B test
+                      Create New A/B Test
                     </Text>
-                    <Badge>Draft</Badge>
                   </InlineStack>
                   <Text as="p" tone="subdued">
                     Pick a page type, choose the original template, then set up
@@ -2512,14 +2955,6 @@ export default function AbTestsIndex() {
                   {wizardStep === "settings" ? (
                     <Button onClick={() => setWizardStep("setup")}>Back</Button>
                   ) : null}
-                  <Button
-                    variant="primary"
-                    onClick={submitCreate}
-                    loading={isLoading}
-                    disabled={!canSave}
-                  >
-                    Save draft
-                  </Button>
                 </InlineStack>
               </InlineStack>
 
@@ -2539,25 +2974,14 @@ export default function AbTestsIndex() {
                       borderBottom: "1px solid var(--p-color-border-secondary)",
                     }}
                   >
-                    <InlineStack align="space-between" gap="400" wrap>
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingLg">
-                          What do you want to test?
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          A and B always compare templates of the same page
-                          type.
-                        </Text>
-                      </BlockStack>
-                      <div style={{ width: 360, maxWidth: "100%" }}>
-                        <TextField
-                          label="Test name"
-                          value={name}
-                          onChange={setName}
-                          autoComplete="off"
-                        />
-                      </div>
-                    </InlineStack>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingLg">
+                        What do you want to test?
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        A and B always compare templates of the same page type.
+                      </Text>
+                    </BlockStack>
                   </div>
 
                   <div
@@ -2592,14 +3016,6 @@ export default function AbTestsIndex() {
                             {selectedPageTypeLabel} templates
                           </Text>
                         </InlineStack>
-                        <TextField
-                          label="Search original templates"
-                          labelHidden
-                          value={templateSearch}
-                          onChange={setTemplateSearch}
-                          autoComplete="off"
-                          prefix="Search"
-                        />
                         <div
                           style={{
                             display: "grid",
@@ -2640,15 +3056,17 @@ export default function AbTestsIndex() {
                             </div>
                           )}
                         </div>
-                        <ManualTemplateFields
-                          side="A"
-                          pageType={targetPageType}
-                          templateName={controlTemplateName}
-                          templateSuffix={controlTemplateSuffix}
-                          setTemplateName={setControlTemplateName}
-                          setTemplateSuffix={setControlTemplateSuffix}
-                          onApply={() => applyManualTemplate("A")}
-                        />
+                        {themeTemplates.needsThemeScope ? (
+                          <ManualTemplateFields
+                            side="A"
+                            pageType={targetPageType}
+                            templateName={controlTemplateName}
+                            templateSuffix={controlTemplateSuffix}
+                            setTemplateName={setControlTemplateName}
+                            setTemplateSuffix={setControlTemplateSuffix}
+                            onApply={() => applyManualTemplate("A")}
+                          />
+                        ) : null}
                       </div>
                     </div>
 
@@ -2712,14 +3130,6 @@ export default function AbTestsIndex() {
                               </Button>
                             </InlineStack>
 
-                            <TextField
-                              label="Search variant templates"
-                              labelHidden
-                              value={variantTemplateSearch}
-                              onChange={setVariantTemplateSearch}
-                              autoComplete="off"
-                              prefix="Search"
-                            />
                             <div
                               style={{
                                 display: "grid",
@@ -2769,15 +3179,126 @@ export default function AbTestsIndex() {
                                 </div>
                               )}
                             </div>
-                            <ManualTemplateFields
-                              side="B"
-                              pageType={targetPageType}
-                              templateName={variantTemplateName}
-                              templateSuffix={variantTemplateSuffix}
-                              setTemplateName={setVariantTemplateName}
-                              setTemplateSuffix={setVariantTemplateSuffix}
-                              onApply={() => applyManualTemplate("B")}
+                            {themeTemplates.needsThemeScope ? (
+                              <ManualTemplateFields
+                                side="B"
+                                pageType={targetPageType}
+                                templateName={variantTemplateName}
+                                templateSuffix={variantTemplateSuffix}
+                                setTemplateName={setVariantTemplateName}
+                                setTemplateSuffix={setVariantTemplateSuffix}
+                                onApply={() => applyManualTemplate("B")}
+                              />
+                            ) : null}
+                          </>
+                        ) : variantBuildMode === "snapshot" ? (
+                          <>
+                            <InlineStack
+                              align="space-between"
+                              blockAlign="center"
+                              gap="300"
+                              wrap
+                            >
+                              <BlockStack gap="100">
+                                <VariantBadge
+                                  label="B · Variant"
+                                  tone="yellow"
+                                />
+                                <Text as="span" tone="subdued">
+                                  Select a completed{" "}
+                                  {selectedPageTypeLabel.toLowerCase()} snapshot
+                                  to guide the B template.
+                                </Text>
+                              </BlockStack>
+                              <Button onClick={returnToVariantBuildOptions}>
+                                Back
+                              </Button>
+                            </InlineStack>
+
+                            {showVariantCreateError ? (
+                              <Banner
+                                tone="critical"
+                                title="Could not create variant"
+                              >
+                                <Text as="p">{variantCreateError}</Text>
+                              </Banner>
+                            ) : null}
+
+                            <TextField
+                              label="Search completed snapshots"
+                              labelHidden
+                              value={snapshotSearch}
+                              onChange={setSnapshotSearch}
+                              autoComplete="off"
+                              prefix="Search"
                             />
+                            <div
+                              style={{
+                                display: "grid",
+                                gap: 12,
+                                maxHeight: 410,
+                                overflowY: "auto",
+                                paddingRight: 2,
+                              }}
+                            >
+                              {matchingSnapshots.length > 0 ? (
+                                matchingSnapshots.map((snapshot) => (
+                                  <SnapshotListOption
+                                    key={snapshot.id}
+                                    snapshot={snapshot}
+                                    selected={
+                                      selectedSnapshotId === snapshot.id
+                                    }
+                                    onSelect={() =>
+                                      setSelectedSnapshotId(snapshot.id)
+                                    }
+                                  />
+                                ))
+                              ) : (
+                                <div
+                                  style={{
+                                    border: "1px dashed var(--p-color-border)",
+                                    borderRadius: 10,
+                                    padding: 24,
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  <BlockStack gap="150" inlineAlign="center">
+                                    <Text as="p" fontWeight="semibold">
+                                      No completed snapshots found
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      Complete a{" "}
+                                      {selectedPageTypeLabel.toLowerCase()}{" "}
+                                      snapshot first, then use it to generate a
+                                      focused B template.
+                                    </Text>
+                                  </BlockStack>
+                                </div>
+                              )}
+                            </div>
+                            <InlineStack align="end" gap="200">
+                              <Button onClick={returnToVariantBuildOptions}>
+                                Cancel
+                              </Button>
+                              <Button
+                                variant="primary"
+                                onClick={() =>
+                                  createVariantFromControl(
+                                    "snapshot-template-variant",
+                                  )
+                                }
+                                loading={isCreatingVariant}
+                                disabled={
+                                  !controlOption ||
+                                  !selectedSnapshotId ||
+                                  !canWriteThemes ||
+                                  isCreatingVariant
+                                }
+                              >
+                                Create B from snapshot
+                              </Button>
+                            </InlineStack>
                           </>
                         ) : (
                           <>
@@ -2821,35 +3342,7 @@ export default function AbTestsIndex() {
                                 description="Copy the original template into a fresh variant you can edit before launch."
                                 selected={variantBuildMode === "duplicate"}
                                 accent="amber"
-                                onClick={() =>
-                                  createVariantFromControl(
-                                    "duplicate-template-variant",
-                                  )
-                                }
-                                disabled={
-                                  !controlOption ||
-                                  !canWriteThemes ||
-                                  isCreatingVariant
-                                }
-                                disabledReason={
-                                  !controlOption
-                                    ? "Choose Original (A) first."
-                                    : !canWriteThemes
-                                      ? "Requires write_themes access and Shopify theme-file approval."
-                                      : undefined
-                                }
-                              />
-                              <VariantChoiceCard
-                                icon="spark"
-                                title="Create with recommendation"
-                                description="Create a copy plus an edit plan based on snapshot findings when available."
-                                selected={variantBuildMode === "recommendation"}
-                                accent="amber"
-                                onClick={() =>
-                                  createVariantFromControl(
-                                    "recommend-template-variant",
-                                  )
-                                }
+                                onClick={selectDuplicateTemplate}
                                 disabled={
                                   !controlOption ||
                                   !canWriteThemes ||
@@ -2867,37 +3360,7 @@ export default function AbTestsIndex() {
                           </>
                         )}
 
-                        {variantOption || variantTemplateName.trim() ? (
-                          <div
-                            style={{
-                              border: sameTemplateSelected
-                                ? "1px solid #d72c0d"
-                                : "1px solid var(--p-color-border)",
-                              borderRadius: 10,
-                              padding: 14,
-                              background: sameTemplateSelected
-                                ? "#fff4f4"
-                                : "#fbfbfb",
-                            }}
-                          >
-                            <BlockStack gap="100">
-                              <Text as="span" fontWeight="semibold">
-                                Selected B: {variantName || "Manual variant"}
-                              </Text>
-                              <Text as="span" tone="subdued">
-                                {selectedVariant?.templateFileName ||
-                                  buildManualFilename(
-                                    targetPageType,
-                                    variantSuffix,
-                                  )}
-                              </Text>
-                              {sameTemplateSelected ? (
-                                <Text as="span" tone="critical">
-                                  Choose a different B template before
-                                  continuing.
-                                </Text>
-                              ) : null}
-                              {recommendationPlan ? (
+                        {snapshotPlan ? (
                                 <div
                                   style={{
                                     marginTop: 10,
@@ -2916,60 +3379,106 @@ export default function AbTestsIndex() {
                                       wrap
                                     >
                                       <Text as="span" fontWeight="semibold">
-                                        {recommendationPlan.title}
+                                        {snapshotPlan.title}
                                       </Text>
-                                      {recommendationPlan.confidence !==
-                                      null ? (
+                                      {snapshotPlan.confidence !== null ? (
                                         <Badge tone="info">
-                                          {recommendationPlan.confidence}%
-                                          confidence
+                                          {snapshotPlan.confidence}% confidence
                                         </Badge>
                                       ) : (
-                                        <Badge>Best practice</Badge>
+                                        <Badge>Snapshot plan</Badge>
                                       )}
                                     </InlineStack>
                                     <Text as="p" tone="subdued">
-                                      {recommendationPlan.summary}
+                                      {snapshotPlan.summary}
                                     </Text>
                                     <Text as="span" tone="subdued">
-                                      Source: {recommendationPlan.sourceLabel}
+                                      Source: {snapshotPlan.sourceLabel}
                                     </Text>
+                                    {snapshotPlan.transformation ? (
+                                      <div
+                                        style={{
+                                          border:
+                                            "1px solid var(--p-color-border-secondary)",
+                                          borderRadius: 8,
+                                          padding: 10,
+                                          background: "#ffffff",
+                                        }}
+                                      >
+                                        <BlockStack gap="100">
+                                          <Text as="span" fontWeight="semibold">
+                                            Applied change:{" "}
+                                            {
+                                              snapshotPlan.transformation
+                                                .primaryWeakness
+                                            }
+                                          </Text>
+                                          <Text as="span" tone="subdued">
+                                            Evidence:{" "}
+                                            {
+                                              snapshotPlan.transformation
+                                                .evidence
+                                            }
+                                          </Text>
+                                          {snapshotPlan.transformation
+                                            .insertedSectionId ? (
+                                            <Text as="span" tone="subdued">
+                                              Inserted section:{" "}
+                                              {
+                                                snapshotPlan.transformation
+                                                  .insertedSectionId
+                                              }{" "}
+                                              (
+                                              {
+                                                snapshotPlan.transformation
+                                                  .sectionType
+                                              }
+                                              )
+                                            </Text>
+                                          ) : null}
+                                          {snapshotPlan.transformation.notes
+                                            ?.length ? (
+                                            <Text as="span" tone="subdued">
+                                              {
+                                                snapshotPlan.transformation
+                                                  .notes[0]
+                                              }
+                                            </Text>
+                                          ) : null}
+                                        </BlockStack>
+                                      </div>
+                                    ) : null}
                                     <div
                                       style={{
                                         display: "grid",
                                         gap: 8,
                                       }}
                                     >
-                                      {recommendationPlan.focusAreas.map(
-                                        (area) => (
-                                          <div
-                                            key={area.label}
-                                            style={{
-                                              borderTop:
-                                                "1px solid var(--p-color-border-secondary)",
-                                              paddingTop: 8,
-                                            }}
-                                          >
-                                            <BlockStack gap="050">
-                                              <Text
-                                                as="span"
-                                                fontWeight="semibold"
-                                              >
-                                                {area.label}
-                                              </Text>
-                                              <Text as="span" tone="subdued">
-                                                {area.detail}
-                                              </Text>
-                                            </BlockStack>
-                                          </div>
-                                        ),
-                                      )}
+                                      {snapshotPlan.focusAreas.map((area) => (
+                                        <div
+                                          key={area.label}
+                                          style={{
+                                            borderTop:
+                                              "1px solid var(--p-color-border-secondary)",
+                                            paddingTop: 8,
+                                          }}
+                                        >
+                                          <BlockStack gap="050">
+                                            <Text
+                                              as="span"
+                                              fontWeight="semibold"
+                                            >
+                                              {area.label}
+                                            </Text>
+                                            <Text as="span" tone="subdued">
+                                              {area.detail}
+                                            </Text>
+                                          </BlockStack>
+                                        </div>
+                                      ))}
                                     </div>
                                   </BlockStack>
                                 </div>
-                              ) : null}
-                            </BlockStack>
-                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -2993,7 +3502,7 @@ export default function AbTestsIndex() {
                         <>
                           Select an <strong>A</strong> template to continue.
                         </>
-                      ) : !variantOption && !variantTemplateName.trim() ? (
+                      ) : !variantOption && !variantTemplateName.trim() && !hasPendingDuplicate ? (
                         <>
                           <strong>A:</strong> {controlName} · choose how to
                           build <strong>B</strong>.
@@ -3004,7 +3513,10 @@ export default function AbTestsIndex() {
                         <>
                           <strong>A:</strong> {controlName}{" "}
                           <span style={{ fontStyle: "italic" }}>vs</span>{" "}
-                          <strong>B:</strong> {variantName || "Manual variant"}
+                          <strong>B:</strong>{" "}
+                          {hasPendingDuplicate
+                            ? `${controlName} copy`
+                            : variantName || "Manual variant"}
                         </>
                       )}
                     </Text>
@@ -3015,35 +3527,45 @@ export default function AbTestsIndex() {
                       onClick={() => setWizardStep("settings")}
                       disabled={!canContinueToSettings}
                     >
-                      Next: traffic & goal
+                      Next: Traffic & Goal
                     </Button>
                   </div>
                 </div>
               ) : (
                 <BlockStack gap="500">
-                  <Card>
-                    <BlockStack gap="400">
-                      <InlineStack align="space-between" gap="400" wrap>
+                  <InlineStack align="space-between" gap="400" wrap>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingLg">
+                        Traffic & Goal
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Review the templates, name the test, then choose how to
+                        split traffic and judge the result.
+                      </Text>
+                    </BlockStack>
+                    <Button onClick={() => setWizardStep("setup")}>
+                      Change setup
+                    </Button>
+                  </InlineStack>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(420px, 1fr) minmax(360px, 0.88fr)",
+                      gap: 20,
+                      alignItems: "start",
+                    }}
+                  >
+                    <Card>
+                      <BlockStack gap="400">
                         <BlockStack gap="100">
-                          <Text as="h3" variant="headingLg">
-                            Review templates
+                          <Text as="h3" variant="headingMd">
+                            Template previews
                           </Text>
                           <Text as="p" tone="subdued">
-                            {selectedPageTypeLabel} test on {currentThemeName}
+                            {selectedPageTypeLabel} test on {currentThemeName}.
                           </Text>
                         </BlockStack>
-                        <Button onClick={() => setWizardStep("setup")}>
-                          Change setup
-                        </Button>
-                      </InlineStack>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns:
-                            "repeat(auto-fit, minmax(360px, 1fr))",
-                          gap: 24,
-                        }}
-                      >
                         <TemplateSummaryCard
                           side="A"
                           title="Original"
@@ -3057,255 +3579,336 @@ export default function AbTestsIndex() {
                           previewPageUrl={selectedControl?.previewPageUrl}
                           assignedLabel={selectedControl?.assignedLabel}
                           onSwap={() => setWizardStep("setup")}
+                          showAction={false}
                         />
                         <TemplateSummaryCard
                           side="B"
                           title="Variant"
-                          templateName={variantName || "Selected variant"}
-                          filename={
-                            selectedVariant?.templateFileName ||
-                            buildManualFilename(targetPageType, variantSuffix)
+                          templateName={
+                            hasPendingDuplicate
+                              ? `${controlName} copy`
+                              : variantName || "Selected variant"
                           }
-                          suffix={variantSuffix}
-                          previewImageUrl={selectedVariant?.previewImageUrl}
-                          previewPageUrl={selectedVariant?.previewPageUrl}
-                          assignedLabel={selectedVariant?.assignedLabel}
+                          filename={
+                            hasPendingDuplicate
+                              ? "Duplicate will be created when you save this draft."
+                              : selectedVariant?.templateFileName ||
+                                buildManualFilename(targetPageType, variantSuffix)
+                          }
+                          suffix={hasPendingDuplicate ? null : variantSuffix}
+                          previewImageUrl={
+                            hasPendingDuplicate
+                              ? selectedControl?.previewImageUrl
+                              : selectedVariant?.previewImageUrl
+                          }
+                          previewPageUrl={
+                            hasPendingDuplicate
+                              ? selectedControl?.previewPageUrl
+                              : selectedVariant?.previewPageUrl
+                          }
+                          assignedLabel={
+                            hasPendingDuplicate
+                              ? "Pending duplicate"
+                              : selectedVariant?.assignedLabel
+                          }
                           onSwap={() => setWizardStep("setup")}
+                          showAction={false}
                         />
-                      </div>
-                    </BlockStack>
-                  </Card>
-
-                  <Card>
-                    <BlockStack gap="500">
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingLg">
-                          Page targeting
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          This test will run on pages assigned to Original (A).
-                        </Text>
                       </BlockStack>
-                      <div
-                        style={{
-                          border: "1px solid var(--p-color-border)",
-                          borderRadius: 8,
-                          padding: "18px 20px",
-                          background: "var(--p-color-bg-surface-secondary)",
-                        }}
-                      >
-                        <Text as="p">
-                          {typeof controlAssignedCount === "number" ? (
-                            <>
-                              Targeting{" "}
-                              <span
-                                style={{ color: "#008060", fontWeight: 700 }}
-                              >
-                                {controlAssignedCount.toLocaleString()}{" "}
-                                {targetingNoun}
-                              </span>{" "}
-                              assigned to your <strong>Original (A)</strong>{" "}
-                              template.
-                            </>
-                          ) : (
-                            <>{targetingSummary}</>
-                          )}
-                        </Text>
-                      </div>
-                    </BlockStack>
-                  </Card>
+                    </Card>
 
-                  <Card>
-                    <BlockStack gap="500">
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingLg">
-                          Traffic split
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          Allocate traffic between Original (A) and Variant (B).
-                        </Text>
-                      </BlockStack>
+                    <BlockStack gap="400">
+                      <Card>
+                        <BlockStack gap="300">
+                          <Text as="h3" variant="headingMd">
+                            Test name
+                          </Text>
+                          <TextField
+                            label="Test name"
+                            labelHidden
+                            value={name}
+                            onChange={setName}
+                            autoComplete="off"
+                          />
+                        </BlockStack>
+                      </Card>
 
-                      <div style={{ display: "grid", gap: 18 }}>
-                        <InlineStack align="space-between" blockAlign="center">
-                          <InlineStack gap="200" blockAlign="center">
-                            <span
-                              style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 999,
-                                display: "grid",
-                                placeItems: "center",
-                                background: "#d7ebff",
-                                color: "#1f6feb",
-                                fontWeight: 800,
-                              }}
-                            >
-                              A
-                            </span>
-                            <Text as="span" fontWeight="semibold">
-                              {trafficA}% traffic
-                            </Text>
-                          </InlineStack>
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span" fontWeight="semibold">
-                              {trafficB}% traffic
-                            </Text>
-                            <span
-                              style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 999,
-                                display: "grid",
-                                placeItems: "center",
-                                background: "#2563eb",
-                                color: "#fff",
-                                fontWeight: 800,
-                              }}
-                            >
-                              B
-                            </span>
-                          </InlineStack>
-                        </InlineStack>
-
-                        <div style={{ position: "relative", height: 34 }}>
+                      <Card>
+                        <BlockStack gap="300">
+                          <Text as="h3" variant="headingMd">
+                            Page targeting
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            This test runs on pages assigned to Original (A).
+                          </Text>
                           <div
                             style={{
-                              position: "absolute",
-                              left: 0,
-                              right: 0,
-                              top: 13,
-                              height: 10,
-                              borderRadius: 999,
-                              background: `linear-gradient(to right, #b9dcff 0%, #b9dcff ${trafficA}%, #2563eb ${trafficA}%, #2563eb 100%)`,
-                            }}
-                          />
-                          <span
-                            aria-hidden="true"
-                            style={{
-                              position: "absolute",
-                              top: 1,
-                              left: `${trafficA}%`,
-                              transform: "translateX(-50%)",
-                              width: 32,
-                              height: 32,
-                              borderRadius: 999,
-                              display: "grid",
-                              placeItems: "center",
-                              background: "#fff",
                               border: "1px solid var(--p-color-border)",
-                              boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
-                              color: "#8c9196",
-                              fontWeight: 700,
+                              borderRadius: 8,
+                              padding: "14px 16px",
+                              background:
+                                "var(--p-color-bg-surface-secondary)",
                             }}
                           >
-                            ||
-                          </span>
-                          <input
-                            aria-label="A traffic percent"
-                            type="range"
-                            min={5}
-                            max={95}
-                            value={trafficA}
-                            onChange={(event) =>
-                              updateTrafficA(event.currentTarget.value)
-                            }
-                            style={{
-                              position: "absolute",
-                              inset: 0,
-                              width: "100%",
-                              opacity: 0,
-                              cursor: "pointer",
-                            }}
-                          />
-                        </div>
-
-                        <InlineStack
-                          align="space-between"
-                          blockAlign="center"
-                          gap="400"
-                        >
-                          <div style={{ width: 120 }}>
-                            <TextField
-                              label="A traffic percentage"
-                              labelHidden
-                              type="number"
-                              min={5}
-                              max={95}
-                              value={String(trafficA)}
-                              onChange={updateTrafficA}
-                              suffix="%"
-                              autoComplete="off"
-                            />
+                            <Text as="p">
+                              {typeof controlAssignedCount === "number" ? (
+                                <>
+                                  Targeting{" "}
+                                  <span
+                                    style={{
+                                      color: "#008060",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    {controlAssignedCount.toLocaleString()}{" "}
+                                    {targetingNoun}
+                                  </span>{" "}
+                                  assigned to your{" "}
+                                  <strong>Original (A)</strong> template.
+                                </>
+                              ) : (
+                                <>{targetingSummary}</>
+                              )}
+                            </Text>
                           </div>
-                          <div style={{ width: 120 }}>
-                            <TextField
-                              label="B traffic percentage"
-                              labelHidden
-                              type="number"
-                              min={5}
-                              max={95}
-                              value={String(trafficB)}
-                              onChange={updateTrafficB}
-                              suffix="%"
-                              autoComplete="off"
-                            />
-                          </div>
-                        </InlineStack>
-                      </div>
-                    </BlockStack>
-                  </Card>
+                        </BlockStack>
+                      </Card>
 
-                  <Card>
-                    <BlockStack gap="300">
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingMd">
-                          Goal
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          Choose the primary metric used to judge the winner.
-                        </Text>
-                      </BlockStack>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns:
-                            "repeat(auto-fit, minmax(220px, 1fr))",
-                          gap: 12,
-                        }}
-                      >
-                        {GOAL_OPTIONS.map((option) => {
-                          const active = goal === option.value;
-                          return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => setGoal(option.value)}
-                              style={{
-                                textAlign: "left",
-                                padding: 16,
-                                borderRadius: 8,
-                                border: active
-                                  ? "2px solid #111"
-                                  : "1px solid var(--p-color-border)",
-                                background: active ? "#f7f7f7" : "transparent",
-                                cursor: "pointer",
-                              }}
+                      <Card>
+                        <BlockStack gap="400">
+                          <BlockStack gap="100">
+                            <Text as="h3" variant="headingMd">
+                              Traffic split
+                            </Text>
+                            <Text as="p" tone="subdued">
+                              Allocate traffic between Original (A) and Variant
+                              (B).
+                            </Text>
+                          </BlockStack>
+
+                          <div style={{ display: "grid", gap: 18 }}>
+                            <InlineStack
+                              align="space-between"
+                              blockAlign="center"
                             >
-                              <BlockStack gap="100">
-                                <Text as="span" variant="headingMd">
-                                  {option.label}
+                              <InlineStack gap="200" blockAlign="center">
+                                <span
+                                  style={{
+                                    width: 34,
+                                    height: 34,
+                                    borderRadius: 999,
+                                    display: "grid",
+                                    placeItems: "center",
+                                    background: "#d7ebff",
+                                    color: "#1f6feb",
+                                    fontWeight: 800,
+                                  }}
+                                >
+                                  A
+                                </span>
+                                <Text as="span" fontWeight="semibold">
+                                  {trafficA}% traffic
                                 </Text>
-                                <Text as="span" tone="subdued">
-                                  {option.description}
+                              </InlineStack>
+                              <InlineStack gap="200" blockAlign="center">
+                                <Text as="span" fontWeight="semibold">
+                                  {trafficB}% traffic
                                 </Text>
-                              </BlockStack>
-                            </button>
-                          );
-                        })}
-                      </div>
+                                <span
+                                  style={{
+                                    width: 34,
+                                    height: 34,
+                                    borderRadius: 999,
+                                    display: "grid",
+                                    placeItems: "center",
+                                    background: "#2563eb",
+                                    color: "#fff",
+                                    fontWeight: 800,
+                                  }}
+                                >
+                                  B
+                                </span>
+                              </InlineStack>
+                            </InlineStack>
+
+                            <div style={{ position: "relative", height: 34 }}>
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  left: 0,
+                                  right: 0,
+                                  top: 13,
+                                  height: 10,
+                                  borderRadius: 999,
+                                  background: `linear-gradient(to right, #b9dcff 0%, #b9dcff ${trafficA}%, #2563eb ${trafficA}%, #2563eb 100%)`,
+                                }}
+                              />
+                              <span
+                                aria-hidden="true"
+                                style={{
+                                  position: "absolute",
+                                  top: 1,
+                                  left: `${trafficA}%`,
+                                  transform: "translateX(-50%)",
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: 999,
+                                  display: "grid",
+                                  placeItems: "center",
+                                  background: "#fff",
+                                  border: "1px solid var(--p-color-border)",
+                                  boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
+                                  color: "#8c9196",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                ||
+                              </span>
+                              <input
+                                aria-label="A traffic percent"
+                                type="range"
+                                min={5}
+                                max={95}
+                                value={trafficA}
+                                onChange={(event) =>
+                                  updateTrafficA(event.currentTarget.value)
+                                }
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  opacity: 0,
+                                  cursor: "pointer",
+                                }}
+                              />
+                            </div>
+
+                            <InlineStack
+                              align="space-between"
+                              blockAlign="center"
+                              gap="400"
+                            >
+                              <div style={{ width: 120 }}>
+                                <TextField
+                                  label="A traffic percentage"
+                                  labelHidden
+                                  type="number"
+                                  min={5}
+                                  max={95}
+                                  value={String(trafficA)}
+                                  onChange={updateTrafficA}
+                                  suffix="%"
+                                  autoComplete="off"
+                                />
+                              </div>
+                              <div style={{ width: 120 }}>
+                                <TextField
+                                  label="B traffic percentage"
+                                  labelHidden
+                                  type="number"
+                                  min={5}
+                                  max={95}
+                                  value={String(trafficB)}
+                                  onChange={updateTrafficB}
+                                  suffix="%"
+                                  autoComplete="off"
+                                />
+                              </div>
+                            </InlineStack>
+                          </div>
+                        </BlockStack>
+                      </Card>
+
+                      <Card>
+                        <BlockStack gap="300">
+                          <BlockStack gap="100">
+                            <Text as="h3" variant="headingMd">
+                              Goal
+                            </Text>
+                            <Text as="p" tone="subdued">
+                              Choose the primary metric used to judge the
+                              winner.
+                            </Text>
+                          </BlockStack>
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 10,
+                            }}
+                          >
+                            {GOAL_OPTIONS.map((option) => {
+                              const active = goal === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => setGoal(option.value)}
+                                  style={{
+                                    textAlign: "left",
+                                    padding: 14,
+                                    borderRadius: 8,
+                                    border: active
+                                      ? "2px solid #111"
+                                      : "1px solid var(--p-color-border)",
+                                    background: active
+                                      ? "#f7f7f7"
+                                      : "transparent",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <BlockStack gap="050">
+                                    <Text as="span" variant="headingMd">
+                                      {option.label}
+                                    </Text>
+                                    <Text as="span" tone="subdued">
+                                      {option.description}
+                                    </Text>
+                                  </BlockStack>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </BlockStack>
+                      </Card>
+
+                      {variantBuildMode === "duplicate" ? (
+                        <Card>
+                          <BlockStack gap="300">
+                            <Text as="h3" variant="headingMd">
+                              Duplicate editing
+                            </Text>
+                            <Text as="p" tone="subdued">
+                              The duplicate template is only created when you
+                              save the draft, unless you create it here to edit
+                              it first.
+                            </Text>
+                            {variantEditorUrl ? (
+                              <Button url={variantEditorUrl} target="_blank">
+                                Edit in Theme Customizer
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() =>
+                                  createVariantFromControl(
+                                    "duplicate-template-variant",
+                                  )
+                                }
+                                loading={isCreatingVariant}
+                                disabled={!controlOption || isCreatingVariant}
+                              >
+                                Create duplicate template
+                              </Button>
+                            )}
+                            {showVariantCreateError ? (
+                              <Text as="p" tone="critical">
+                                {variantCreateError}
+                              </Text>
+                            ) : null}
+                          </BlockStack>
+                        </Card>
+                      ) : null}
                     </BlockStack>
-                  </Card>
+                  </div>
 
                   <InlineStack align="end" gap="200">
                     <Button onClick={() => setWizardStep("setup")}>Back</Button>

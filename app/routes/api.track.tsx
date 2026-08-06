@@ -10,6 +10,7 @@ import { createNotification } from "../utils/notifications.server";
 import {
   assignTemplateAbVariant,
   attributeAbTestAddToCart,
+  attributeAbTestCheckoutStarted,
   attributeAbTestConversion,
   recordAbTestEngagement,
 } from "../utils/ab-tests.server";
@@ -17,6 +18,7 @@ import {
   normalizeResourceType,
   trackStoreSnapshotVisit,
   updateStoreSnapshotAddToCart,
+  updateStoreSnapshotCheckoutStarted,
   updateStoreSnapshotConversion,
 } from "../utils/store-snapshot.server";
 
@@ -829,7 +831,53 @@ async function handlePixelEvent(
   }
 
   if (eventType === "checkout_started") {
-    return json({ ok: true, tracked: false }, { headers });
+    const clientShop = normalizeShopDomain(data.shop);
+    const shop = getRequestShop(request) || clientShop;
+    const eventDate = timestamp ? new Date(timestamp) : new Date();
+    const visit = await prisma.visit.findFirst({
+      where: {
+        sessionId,
+        checkoutStarted: false,
+        ...(shop ? { snapshot: { project: { shop } } } : {}),
+      },
+      orderBy: { startedAt: "desc" },
+    });
+
+    if (visit) {
+      await prisma.visit.update({
+        where: { id: visit.id },
+        data: {
+          checkoutStarted: true,
+          checkoutStartedAt: eventDate,
+        },
+      });
+      await prisma.snapshotStatsCache
+        .deleteMany({ where: { snapshotId: visit.snapshotId } })
+        .catch(() => {});
+    }
+
+    const storeCheckoutStartsTracked = await updateStoreSnapshotCheckoutStarted({
+      shop,
+      sessionId,
+      timestamp,
+    });
+    const abCheckoutStartsTracked = await attributeAbTestCheckoutStarted({
+      shop,
+      sessionId,
+      timestamp,
+    });
+
+    return json(
+      {
+        ok: true,
+        tracked: !!visit || storeCheckoutStartsTracked > 0 || abCheckoutStartsTracked > 0,
+        checkoutStartsTracked:
+          (visit ? 1 : 0) + storeCheckoutStartsTracked + abCheckoutStartsTracked,
+        storeCheckoutStartsTracked,
+        abCheckoutStartsTracked,
+      },
+      { headers },
+    );
   }
 
   console.log(`[MW Pixel] Unknown event type: ${eventType}`);

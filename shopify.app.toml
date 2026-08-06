@@ -56,5 +56,10 @@ api_version = "2024-10"
   uri = "/webhooks/orders/paid"
   topics = ["orders/paid"]
 
+  # Shopify billing subscription status updates
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app_subscriptions/update"
+  topics = ["app_subscriptions/update"]
+
 [build]
 automatically_update_urls_on_dev = true

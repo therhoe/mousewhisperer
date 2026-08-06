@@ -9,7 +9,6 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import {
-  Banner,
   Badge,
   BlockStack,
   Button,
@@ -27,6 +26,18 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ensureWebPixel } from "../utils/web-pixel.server";
 import { createStoreSnapshot } from "../utils/store-snapshot.server";
+import {
+  planUsagePillLabel,
+  PremiumGateCard,
+  TargetLimitText,
+} from "../components/PremiumGate";
+import {
+  assertCanCreateStoreSnapshot,
+  assertSnapshotTargetAllowed,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+} from "../utils/billing.server";
 import {
   getStorefrontTrackerStatus,
   type StorefrontTrackerStatus,
@@ -49,7 +60,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [snapshots, trackerStatus] = await Promise.all([
+  const [snapshots, trackerStatus, billingAccess] = await Promise.all([
     prisma.storeSnapshot.findMany({
       where: { shop },
       orderBy: { startedAt: "desc" },
@@ -68,10 +79,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     }),
     getStorefrontTrackerStatus(admin, shop),
+    getBillingAccess(shop),
   ]);
 
   return json({
     trackerStatus,
+    billingAccess,
     snapshots: snapshots.map((snapshot) => ({
       ...snapshot,
       startedAt: snapshot.startedAt.toISOString(),
@@ -96,28 +109,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ? rawMode
       : "HUMAN_VISITORS";
 
+  const targetHumanVisitors = parseInt(
+    String(formData.get("targetHumanVisitors") || "1000"),
+    10,
+  );
+  const targetTotalVisits = parseInt(
+    String(formData.get("targetTotalVisits") || "2500"),
+    10,
+  );
+  const durationDays = parseInt(String(formData.get("durationDays") || "7"), 10);
+
+  try {
+    await assertCanCreateStoreSnapshot(shop);
+    if (completionMode === "HUMAN_VISITORS") {
+      await assertSnapshotTargetAllowed(shop, targetHumanVisitors);
+    }
+    if (completionMode === "TOTAL_VISITS") {
+      await assertSnapshotTargetAllowed(shop, targetTotalVisits);
+    }
+  } catch (error) {
+    if (isPlanLimitError(error)) {
+      return json(planLimitPayload(error), { status: error.status });
+    }
+    throw error;
+  }
+
   await ensureWebPixel(admin, shop);
 
   const snapshot = await createStoreSnapshot({
     shop,
     name: formData.get("name") as string | null,
     completionMode,
-    targetHumanVisitors: parseInt(
-      String(formData.get("targetHumanVisitors") || "1000"),
-      10,
-    ),
-    targetTotalVisits: parseInt(
-      String(formData.get("targetTotalVisits") || "2500"),
-      10,
-    ),
-    durationDays: parseInt(String(formData.get("durationDays") || "7"), 10),
+    targetHumanVisitors,
+    targetTotalVisits,
+    durationDays,
   });
 
   return redirect(`/app/store-snapshots/${snapshot.id}`);
 };
 
 export default function StoreSnapshotsIndex() {
-  const { snapshots, trackerStatus } = useLoaderData<typeof loader>();
+  const { snapshots, trackerStatus, billingAccess } =
+    useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -152,10 +185,16 @@ export default function StoreSnapshotsIndex() {
       primaryAction={{
         content: activeSnapshot
           ? "View active snapshot"
-          : "Start store snapshot",
+          : billingAccess.canCreateStoreSnapshot
+            ? "Start store snapshot"
+            : "Upgrade to start snapshot",
         onAction: () => {
           if (activeSnapshot) {
             navigate(`/app/store-snapshots/${activeSnapshot.id}`);
+            return;
+          }
+          if (!billingAccess.canCreateStoreSnapshot) {
+            navigate("/app/upgrade");
             return;
           }
           setIsModalOpen(true);
@@ -165,47 +204,20 @@ export default function StoreSnapshotsIndex() {
       <TitleBar title="Store snapshots" />
 
       <BlockStack gap="400">
+        <InlineStack align="end">
+          <Button url="/app/upgrade" size="slim">
+            {planUsagePillLabel(billingAccess, "storeSnapshots")}
+          </Button>
+        </InlineStack>
+
         <TrackingStatusBanner trackerStatus={trackerStatus} />
 
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="start" gap="400">
-              <BlockStack gap="150">
-                <Text as="h2" variant="headingMd">
-                  Store-wide engagement snapshot
-                </Text>
-                <Text as="p" tone="subdued">
-                  Capture traffic quality, engagement, add-to-cart behavior,
-                  orders, and revenue across the storefront before deciding
-                  which page deserves a focused snapshot.
-                </Text>
-              </BlockStack>
-              {activeSnapshot ? (
-                <Badge tone="success">Active</Badge>
-              ) : (
-                <Badge tone="info">Ready</Badge>
-              )}
-            </InlineStack>
-            <InlineStack gap="200">
-              <Button
-                variant="primary"
-                onClick={() => setIsModalOpen(true)}
-                disabled={Boolean(activeSnapshot)}
-              >
-                Start snapshot
-              </Button>
-              {activeSnapshot ? (
-                <Button
-                  onClick={() =>
-                    navigate(`/app/store-snapshots/${activeSnapshot.id}`)
-                  }
-                >
-                  Open active snapshot
-                </Button>
-              ) : null}
-            </InlineStack>
-          </BlockStack>
-        </Card>
+        {!billingAccess.canCreateStoreSnapshot && !activeSnapshot ? (
+          <PremiumGateCard
+            title="Store snapshots are limited on the free plan"
+            message="Free stores can run one store-wide snapshot. Upgrade to keep monitoring the whole storefront."
+          />
+        ) : null}
 
         <Card padding="0">
           <div
@@ -236,8 +248,8 @@ export default function StoreSnapshotsIndex() {
                     {[
                       "Snapshot",
                       "Status",
-                      "Completion",
-                      "Visits",
+                      "Sessions",
+                      "Page Views",
                       "Started",
                       "",
                     ].map((header) => (
@@ -334,13 +346,13 @@ export default function StoreSnapshotsIndex() {
               placeholder="June store engagement"
             />
             <ChoiceList
-              title="Completion"
+              title="Sessions"
               choices={[
                 {
                   label: "Count 1,000 engaged humans",
                   value: "HUMAN_VISITORS",
                 },
-                { label: "Count total visits", value: "TOTAL_VISITS" },
+                { label: "Count total sessions", value: "TOTAL_VISITS" },
                 { label: "Run for a fixed time window", value: "TIME_WINDOW" },
               ]}
               selected={[mode]}
@@ -351,6 +363,7 @@ export default function StoreSnapshotsIndex() {
                 label="Human visitors"
                 type="number"
                 min={25}
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
                 value={humanTarget}
                 onChange={setHumanTarget}
                 autoComplete="off"
@@ -358,9 +371,10 @@ export default function StoreSnapshotsIndex() {
             )}
             {mode === "TOTAL_VISITS" && (
               <TextField
-                label="Total visits"
+                label="Total sessions"
                 type="number"
                 min={25}
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
                 value={visitTarget}
                 onChange={setVisitTarget}
                 autoComplete="off"
@@ -377,6 +391,11 @@ export default function StoreSnapshotsIndex() {
                 autoComplete="off"
               />
             )}
+            {mode !== "TIME_WINDOW" ? (
+              <TargetLimitText
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
+              />
+            ) : null}
           </FormLayout>
         </Modal.Section>
       </Modal>
@@ -389,36 +408,21 @@ function TrackingStatusBanner({
 }: {
   trackerStatus: StorefrontTrackerStatus;
 }) {
-  if (trackerStatus.status === "active") {
-    return (
-      <Banner tone="success">
-        Rich storefront tracking is active on{" "}
-        {formatStorefrontHost(trackerStatus.storefrontUrl)}.
-      </Banner>
-    );
-  }
-
+  const isActive = trackerStatus.status === "active";
   return (
-    <Banner
-      title={
-        trackerStatus.status === "missing"
-          ? "Rich storefront tracking is not active"
-          : "Could not verify rich storefront tracking"
-      }
-      tone={trackerStatus.status === "missing" ? "warning" : "info"}
-    >
-      <BlockStack gap="100">
-        <Text as="p">
-          {trackerStatus.message}{" "}
-          {trackerStatus.status === "missing"
-            ? "Store snapshots will not collect storefront visits until the Mouse Whisperer theme app embed is enabled on the live theme."
-            : "If the Mouse Whisperer theme app embed is enabled on the live theme, tracking can still collect visits; otherwise no visits will be collected."}
+    <InlineStack align="space-between" blockAlign="center" gap="300">
+      <InlineStack gap="200" blockAlign="center">
+        <Text as="span" variant="bodyMd" tone="subdued">
+          Rich storefront tracking
         </Text>
-        <Text as="p" tone="subdued">
-          Checked {formatStorefrontHost(trackerStatus.storefrontUrl)}.
-        </Text>
-      </BlockStack>
-    </Banner>
+        <Badge tone={isActive ? "success" : undefined}>
+          {isActive ? "Active" : "Not active"}
+        </Badge>
+      </InlineStack>
+      <Text as="span" tone="subdued">
+        {formatStorefrontHost(trackerStatus.storefrontUrl)}
+      </Text>
+    </InlineStack>
   );
 }
 
@@ -451,7 +455,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function completionLabel(snapshot: StoreSnapshotRow) {
   if (snapshot.completionMode === "TOTAL_VISITS") {
-    return `${snapshot.targetTotalVisits?.toLocaleString() || "Total"} visits`;
+    return `${snapshot.targetTotalVisits?.toLocaleString() || "Total"} sessions`;
   }
   if (snapshot.completionMode === "TIME_WINDOW") {
     return `${snapshot.durationDays || 7} days`;

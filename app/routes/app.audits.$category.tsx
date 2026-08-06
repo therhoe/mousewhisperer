@@ -31,6 +31,15 @@ import {
   clearCacheKey,
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
+import {
+  assertCanCreateNormalSnapshots,
+  assertSnapshotTargetAllowed,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+  type BillingAccess,
+} from "../utils/billing.server";
+import { planUsagePillLabel } from "../components/PremiumGate";
 
 const CATEGORY_CONFIG: Record<
   string,
@@ -160,6 +169,7 @@ type CategorySummary = {
 type CategoryLoaderData = CategorySummary & {
   category: string;
   config: (typeof CATEGORY_CONFIG)[string];
+  billingAccess?: BillingAccess;
   summaryPending?: boolean;
 };
 
@@ -589,7 +599,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         summaryRequested,
       });
     }
-    return json({ category, config, audits, baseline, summaryPending: true });
+    const billingAccess = await getBillingAccess(shop);
+    return json({
+      category,
+      config,
+      audits,
+      baseline,
+      billingAccess,
+      summaryPending: true,
+    });
   }
 
   const { audits, baseline } = await cachedValue<CategorySummary>(
@@ -805,7 +823,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
-  return json({ category, config, audits, baseline });
+  const billingAccess = await getBillingAccess(shop);
+  return json({ category, config, audits, baseline, billingAccess });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -835,6 +854,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const targetVisitors =
       parseInt(formData.get("targetVisitors") as string) || 1000;
     const resourceType = config.resourceType;
+
+    try {
+      await assertCanCreateNormalSnapshots(shop, 1);
+      await assertSnapshotTargetAllowed(shop, targetVisitors);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
 
     await ensureWebPixel(admin, shop);
 
@@ -925,6 +954,8 @@ function DiffTag({
 export default function AuditsCategory() {
   const loaderData = useLoaderData<CategoryLoaderData>();
   const { category, config } = loaderData;
+  const billingAccess =
+    "billingAccess" in loaderData ? loaderData.billingAccess : null;
   const submit = useSubmit();
   const navigation = useNavigation();
   const resourceFetcher = useFetcher<{
@@ -987,6 +1018,11 @@ export default function AuditsCategory() {
   }, [category]);
 
   const handleOpenCreate = useCallback(async () => {
+    if (billingAccess && !billingAccess.canCreateNormalSnapshot) {
+      window.location.href = "/app/upgrade";
+      return;
+    }
+
     if (category === "homepage") {
       setSelectedResource(HOMEPAGE_RESOURCE);
       setSnapshotName("");
@@ -1031,7 +1067,7 @@ export default function AuditsCategory() {
         resourceFetcher.load(`/api/resources/${category}`);
       }
     }
-  }, [category, resourceFetcher]);
+  }, [billingAccess, category, resourceFetcher]);
 
   const handlePickResource = useCallback(
     (res: { id: string; title: string; handle: string }) => {
@@ -1092,20 +1128,36 @@ export default function AuditsCategory() {
         ))}
       <TitleBar title={config.label}>
         <button variant="primary" onClick={handleOpenCreate}>
-          + New {config.singular} Audit
+          {billingAccess && !billingAccess.canCreateNormalSnapshot
+            ? "Upgrade to create audit"
+            : `+ New ${config.singular} Audit`}
         </button>
       </TitleBar>
       <Layout>
         <Layout.Section>
+          {billingAccess ? (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+              <Button url="/app/upgrade" size="slim">
+                {planUsagePillLabel(billingAccess, "normalSnapshots")}
+              </Button>
+            </div>
+          ) : null}
+
           {audits.length === 0 ? (
             <Card>
               <BlockStack gap="300" inlineAlign="center">
                 <Text as="p" variant="bodyMd" tone="subdued">
                   No {category} audits yet.
                 </Text>
-                <Button onClick={handleOpenCreate}>
-                  Create your first {config.singular} audit
-                </Button>
+                {billingAccess && !billingAccess.canCreateNormalSnapshot ? (
+                  <Button url="/app/upgrade" variant="primary">
+                    Upgrade to create audit
+                  </Button>
+                ) : (
+                  <Button onClick={handleOpenCreate}>
+                    Create your first {config.singular} audit
+                  </Button>
+                )}
               </BlockStack>
             </Card>
           ) : (

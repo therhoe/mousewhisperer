@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -150,6 +151,29 @@ enum AbTestVariantKey {
   B
 }
 
+enum BillingPlan {
+  FREE
+  WHISPER
+  SIGNAL
+  STARTER
+  GROWTH
+  PRO
+}
+
+model ShopBilling {
+  id                    String      @id @default(cuid())
+  shop                  String      @unique
+  plan                  BillingPlan @default(FREE)
+  status                String      @default("ACTIVE")
+  shopifySubscriptionId String?
+  currentPeriodEnd      DateTime?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([plan])
+  @@index([status])
+}
+
 // Store-wide snapshot that captures behavior across all supported storefront pages.
 model StoreSnapshot {
   id                  String                      @id @default(cuid())
@@ -222,12 +246,14 @@ model StoreSnapshotVisit {
   datacenterIP   Boolean @default(false)
   botScore       Int     @default(0)
 
-  addedToCart   Boolean   @default(false)
-  addedToCartAt DateTime?
-  converted     Boolean   @default(false)
-  convertedAt   DateTime?
-  orderValue    Float?
-  currency      String?
+  addedToCart       Boolean   @default(false)
+  addedToCartAt     DateTime?
+  checkoutStarted   Boolean   @default(false)
+  checkoutStartedAt DateTime?
+  converted         Boolean   @default(false)
+  convertedAt       DateTime?
+  orderValue        Float?
+  currency          String?
 
   ctaClicks          String?
   startedAt          DateTime  @default(now())
@@ -248,6 +274,7 @@ model StoreSnapshotVisit {
   @@index([storeSnapshotId, pagePath])
   @@index([storeSnapshotId, resourceType])
   @@index([storeSnapshotId, startedAt])
+  @@index([storeSnapshotId, checkoutStarted])
   @@index([storeSnapshotId, converted])
 }
 
@@ -335,23 +362,26 @@ model StoreSnapshotRecommendation {
 }
 
 model AbTest {
-  id             String         @id @default(cuid())
-  shop           String
-  name           String
-  status         AbTestStatus   @default(DRAFT)
-  testType       AbTestType     @default(TEMPLATE)
-  targetPageType AbTestPageType
-  goal           AbTestGoal     @default(CONVERSION)
-  themeId        String?
-  themeName      String?
-  themeRole      String?
-  trafficSplit   Int            @default(50)
-  notes          String?
-  launchedAt     DateTime?
-  pausedAt       DateTime?
-  endedAt        DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id                 String         @id @default(cuid())
+  shop               String
+  name               String
+  status             AbTestStatus   @default(DRAFT)
+  testType           AbTestType     @default(TEMPLATE)
+  targetPageType     AbTestPageType
+  goal               AbTestGoal     @default(CONVERSION)
+  themeId            String?
+  themeName          String?
+  themeRole          String?
+  trafficSplit       Int            @default(50)
+  notes              String?
+  sourceSnapshotId   String?
+  sourceSnapshotKind String?
+  generationPlan     Json?
+  launchedAt         DateTime?
+  pausedAt           DateTime?
+  endedAt            DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   variants    AbTestVariant[]
   assignments AbTestAssignment[]
@@ -360,24 +390,29 @@ model AbTest {
   @@index([shop])
   @@index([shop, status])
   @@index([shop, targetPageType])
+  @@index([sourceSnapshotId])
   @@index([createdAt])
 }
 
 model AbTestVariant {
-  id               String           @id @default(cuid())
-  testId           String
-  test             AbTest           @relation(fields: [testId], references: [id], onDelete: Cascade)
-  key              AbTestVariantKey
-  name             String
-  templateName     String
-  templateSuffix   String?
-  templateFileName String?
-  previewUrl       String?
-  isControl        Boolean          @default(false)
-  trafficPercent   Int              @default(50)
-  sortOrder        Int              @default(0)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  id                 String           @id @default(cuid())
+  testId             String
+  test               AbTest           @relation(fields: [testId], references: [id], onDelete: Cascade)
+  key                AbTestVariantKey
+  name               String
+  templateName       String
+  templateSuffix     String?
+  templateFileName   String?
+  previewUrl         String?
+  generationMode     String?
+  sourceSnapshotId   String?
+  sourceSnapshotKind String?
+  generationPlan     Json?
+  isControl          Boolean          @default(false)
+  trafficPercent     Int              @default(50)
+  sortOrder          Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   assignments AbTestAssignment[]
   visits      AbTestVisit[]
@@ -388,39 +423,41 @@ model AbTestVariant {
 }
 
 model AbTestAssignment {
-  id             String        @id @default(cuid())
-  testId         String
-  test           AbTest        @relation(fields: [testId], references: [id], onDelete: Cascade)
-  variantId      String
-  variant        AbTestVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  shop           String
-  sessionId      String
-  pageViewId     String?
-  pagePath       String?
-  pageUrl        String?
-  pageTitle      String?
-  resourceType   ResourceType?
-  resourceHandle String?
-  visitorType    VisitorType   @default(PENDING)
-  source         String?
-  medium         String?
-  campaign       String?
-  referrer       String?
-  sourceCategory String?
-  timeOnPage     Int           @default(0)
-  scrollDepth    Int           @default(0)
-  addedToCart    Boolean       @default(false)
-  addedToCartAt  DateTime?
-  converted      Boolean       @default(false)
-  convertedAt    DateTime?
-  orderValue     Float?
-  currency       String?
-  ctaClicks      String?
-  assignedAt     DateTime      @default(now())
-  startedAt      DateTime?
-  endedAt        DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                String        @id @default(cuid())
+  testId            String
+  test              AbTest        @relation(fields: [testId], references: [id], onDelete: Cascade)
+  variantId         String
+  variant           AbTestVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  shop              String
+  sessionId         String
+  pageViewId        String?
+  pagePath          String?
+  pageUrl           String?
+  pageTitle         String?
+  resourceType      ResourceType?
+  resourceHandle    String?
+  visitorType       VisitorType   @default(PENDING)
+  source            String?
+  medium            String?
+  campaign          String?
+  referrer          String?
+  sourceCategory    String?
+  timeOnPage        Int           @default(0)
+  scrollDepth       Int           @default(0)
+  addedToCart       Boolean       @default(false)
+  addedToCartAt     DateTime?
+  checkoutStarted   Boolean       @default(false)
+  checkoutStartedAt DateTime?
+  converted         Boolean       @default(false)
+  convertedAt       DateTime?
+  orderValue        Float?
+  currency          String?
+  ctaClicks         String?
+  assignedAt        DateTime      @default(now())
+  startedAt         DateTime?
+  endedAt           DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   visits AbTestVisit[]
 
@@ -431,6 +468,7 @@ model AbTestAssignment {
   @@index([sessionId])
   @@index([testId, variantId])
   @@index([testId, visitorType])
+  @@index([testId, checkoutStarted])
   @@index([testId, converted])
   @@index([assignedAt])
 }
@@ -485,12 +523,14 @@ model AbTestVisit {
   datacenterIP   Boolean @default(false)
   botScore       Int     @default(0)
 
-  addedToCart   Boolean   @default(false)
-  addedToCartAt DateTime?
-  converted     Boolean   @default(false)
-  convertedAt   DateTime?
-  orderValue    Float?
-  currency      String?
+  addedToCart       Boolean   @default(false)
+  addedToCartAt     DateTime?
+  checkoutStarted   Boolean   @default(false)
+  checkoutStartedAt DateTime?
+  converted         Boolean   @default(false)
+  convertedAt       DateTime?
+  orderValue        Float?
+  currency          String?
 
   ctaClicks          String?
   startedAt          DateTime  @default(now())
@@ -518,6 +558,7 @@ model AbTestVisit {
   @@index([testId, pagePath])
   @@index([testId, resourceType])
   @@index([testId, startedAt])
+  @@index([testId, checkoutStarted])
   @@index([testId, converted])
 }
 
@@ -568,12 +609,14 @@ model Visit {
   botScore       Int     @default(0) // 0-100 bot confidence score
 
   // Conversion events
-  addedToCart   Boolean   @default(false)
-  addedToCartAt DateTime?
-  converted     Boolean   @default(false)
-  convertedAt   DateTime?
-  orderValue    Float? // Total order value in store currency
-  currency      String? // Currency code (e.g., "USD", "EUR")
+  addedToCart       Boolean   @default(false)
+  addedToCartAt     DateTime?
+  checkoutStarted   Boolean   @default(false)
+  checkoutStartedAt DateTime?
+  converted         Boolean   @default(false)
+  convertedAt       DateTime?
+  orderValue        Float? // Total order value in store currency
+  currency          String? // Currency code (e.g., "USD", "EUR")
 
   // CTA click tracking
   ctaClicks String? // JSON: {"Add to Cart": 3, "Buy Now": 1, ...}
@@ -606,6 +649,7 @@ model Visit {
   // Compound indexes for optimized queries
   @@index([snapshotId, visitorType]) // Filter by snapshot + type
   @@index([snapshotId, startedAt]) // Sort visits by time within snapshot
+  @@index([snapshotId, checkoutStarted]) // Checkout funnel lookups
   @@index([snapshotId, converted]) // Conversion lookups
 }
 

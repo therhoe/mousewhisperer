@@ -2,14 +2,24 @@ import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
+  BillingInterval,
+  BillingReplacementBehavior,
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import type { Session } from "@shopify/shopify-api";
 import type { SessionStorage } from "@shopify/shopify-app-session-storage";
 import prisma from "./db.server";
+import { SIGNAL_PLAN, WHISPER_PLAN } from "./utils/billing-plans";
 
 const SESSION_CACHE_TTL_MS = 5 * 60_000;
+
+export function isShopifyBillingTestMode() {
+  if (process.env.SHOPIFY_BILLING_TEST) {
+    return process.env.SHOPIFY_BILLING_TEST === "true";
+  }
+  return process.env.NODE_ENV !== "production";
+}
 
 class CachedSessionStorage implements SessionStorage {
   private cache = new Map<string, { expiresAt: number; value: Session }>();
@@ -81,6 +91,28 @@ const shopify = shopifyApp({
   distribution: AppDistribution.AppStore,
   future: {
     unstable_newEmbeddedAuthStrategy: true,
+  },
+  billing: {
+    [WHISPER_PLAN]: {
+      replacementBehavior: BillingReplacementBehavior.ApplyImmediately,
+      lineItems: [
+        {
+          amount: 49.99,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
+    },
+    [SIGNAL_PLAN]: {
+      replacementBehavior: BillingReplacementBehavior.ApplyImmediately,
+      lineItems: [
+        {
+          amount: 99.99,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
+    },
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }

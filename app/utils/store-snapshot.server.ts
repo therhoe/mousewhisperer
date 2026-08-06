@@ -97,7 +97,12 @@ type StoreSnapshotStats = {
     avgTimeOnPage: number;
     searchCount: number;
     clickThroughRate: number;
+    totalPageViews: number;
+    avgSessionDuration: number;
+    filterInteractionCount: number;
     addToCartRate: number;
+    checkoutReachCount: number;
+    checkoutStartedCount: number;
     conversionRate: number;
     orderCount: number;
     revenue: number;
@@ -163,11 +168,15 @@ type StoreVisitRow = {
   timeOnPage: number;
   scrollDepth: number;
   addedToCart: boolean;
+  checkoutStarted: boolean;
   converted: boolean;
   orderValue: number | null;
   ctaClicks: string | null;
   exitType: string | null;
   searchQuery: string | null;
+  filterInteractions: number;
+  startedAt: Date;
+  endedAt: Date | null;
 };
 
 export function normalizeStorePagePath(
@@ -459,6 +468,61 @@ export async function updateStoreSnapshotAddToCart({
   return true;
 }
 
+export async function updateStoreSnapshotCheckoutStarted({
+  shop,
+  sessionId,
+  timestamp,
+}: {
+  shop?: string | null;
+  sessionId: string;
+  timestamp?: number | string | Date | null;
+}) {
+  if (!sessionId) return 0;
+
+  const eventDate = timestamp ? new Date(timestamp) : new Date();
+  const thirtyDaysBeforeEvent = new Date(eventDate);
+  thirtyDaysBeforeEvent.setDate(thirtyDaysBeforeEvent.getDate() - 30);
+
+  const visits = await prisma.storeSnapshotVisit.findMany({
+    where: {
+      sessionId,
+      checkoutStarted: false,
+      startedAt: { lte: eventDate },
+      storeSnapshot: {
+        ...(shop ? { shop } : {}),
+        status: { in: ["ACTIVE", "COMPLETED"] },
+        startedAt: { gte: thirtyDaysBeforeEvent, lte: eventDate },
+      },
+    },
+    orderBy: [
+      { storeSnapshotId: "asc" },
+      { isLandingPage: "desc" },
+      { pageOrder: "asc" },
+      { startedAt: "asc" },
+    ],
+  });
+
+  const updatedSnapshotIds = new Set<string>();
+  let updated = 0;
+
+  for (const visit of visits) {
+    if (updatedSnapshotIds.has(visit.storeSnapshotId)) continue;
+
+    await prisma.storeSnapshotVisit.update({
+      where: { id: visit.id },
+      data: {
+        checkoutStarted: true,
+        checkoutStartedAt: eventDate,
+      },
+    });
+    updatedSnapshotIds.add(visit.storeSnapshotId);
+    await clearStoreSnapshotStatsCache(visit.storeSnapshotId);
+    updated++;
+  }
+
+  return updated;
+}
+
 export async function updateStoreSnapshotConversion({
   shop,
   sessionId,
@@ -645,11 +709,15 @@ async function computeStoreSnapshotStats(
       timeOnPage: true,
       scrollDepth: true,
       addedToCart: true,
+      checkoutStarted: true,
       converted: true,
       orderValue: true,
       ctaClicks: true,
       exitType: true,
       searchQuery: true,
+      filterInteractions: true,
+      startedAt: true,
+      endedAt: true,
     },
   });
 
@@ -658,14 +726,33 @@ async function computeStoreSnapshotStats(
   const bots = rows.filter((row) => row.visitorType === "BOT");
   const pending = rows.filter((row) => row.visitorType === "PENDING");
   const uniqueHumanVisitors = new Set(humans.map((row) => row.sessionId)).size;
+  const uniqueZombieVisitors = new Set(zombies.map((row) => row.sessionId))
+    .size;
+  const uniqueBotVisitors = new Set(bots.map((row) => row.sessionId)).size;
+  const uniquePendingVisitors = new Set(pending.map((row) => row.sessionId))
+    .size;
+  const totalVisitors = new Set(rows.map((row) => row.sessionId)).size;
   const clicks = humans.map((row) => parseTrackedClicks(row.ctaClicks));
-  const visitsWithAnyClick = clicks.filter((rowClicks) =>
-    rowClicks.some(isLinkOrButtonClick),
-  ).length;
-  const searchCount = humans.filter((row) => row.searchQuery).length;
-  const orderCount = humans.filter((row) => row.converted).length;
+  const sessionsWithAnyClick = uniqueSessionsWhere(humans, (_, index) =>
+    clicks[index]?.some(isLinkOrButtonClick),
+  );
+  const searchCount = uniqueSessionsWhere(humans, (row) =>
+    Boolean(row.searchQuery?.trim()),
+  );
+  const checkoutStartedCount = uniqueSessionsWhere(humans, (row) =>
+    Boolean(row.checkoutStarted),
+  );
+  const checkoutReachCount = uniqueSessionsWhere(humans, (row) =>
+    Boolean(row.checkoutStarted || row.exitType === "checkout"),
+  );
+  const addToCartCount = uniqueSessionsWhere(humans, (row) => row.addedToCart);
+  const orderCount = uniqueSessionsWhere(humans, (row) => row.converted);
   const revenue = humans.reduce(
     (sum, row) => sum + Number(row.orderValue || 0),
+    0,
+  );
+  const filterInteractionCount = humans.reduce(
+    (sum, row) => sum + (row.filterInteractions || 0),
     0,
   );
 
@@ -674,13 +761,15 @@ async function computeStoreSnapshotStats(
     avgTimeOnPage: Math.round(
       average(humans.map((row) => row.timeOnPage)) / 1000,
     ),
+    avgSessionDuration: averageSessionDurationSeconds(humans),
     searchCount,
-    clickThroughRate: percent(visitsWithAnyClick, humans.length),
-    addToCartRate: percent(
-      humans.filter((row) => row.addedToCart).length,
-      humans.length,
-    ),
-    conversionRate: percent(orderCount, humans.length),
+    clickThroughRate: percent(sessionsWithAnyClick, uniqueHumanVisitors),
+    totalPageViews: rows.length,
+    filterInteractionCount,
+    addToCartRate: percent(addToCartCount, uniqueHumanVisitors),
+    checkoutReachCount,
+    checkoutStartedCount,
+    conversionRate: percent(orderCount, uniqueHumanVisitors),
     orderCount,
     revenue,
   };
@@ -690,11 +779,11 @@ async function computeStoreSnapshotStats(
 
   return {
     visitorBreakdown: {
-      total: rows.length,
-      humans: humans.length,
-      zombies: zombies.length,
-      bots: bots.length,
-      pending: pending.length,
+      total: totalVisitors,
+      humans: uniqueHumanVisitors,
+      zombies: uniqueZombieVisitors,
+      bots: uniqueBotVisitors,
+      pending: uniquePendingVisitors,
       uniqueHumanVisitors,
     },
     progress: getProgress(snapshot, rows.length, uniqueHumanVisitors),
@@ -712,8 +801,28 @@ async function computeStoreSnapshotStats(
       clickThroughRate: previousStats
         ? metrics.clickThroughRate - previousStats.metrics.clickThroughRate
         : null,
+      totalPageViews: previousStats
+        ? metrics.totalPageViews -
+          ((previousStats.metrics as any).totalPageViews || 0)
+        : null,
+      avgSessionDuration: previousStats
+        ? metrics.avgSessionDuration -
+          ((previousStats.metrics as any).avgSessionDuration || 0)
+        : null,
+      filterInteractionCount: previousStats
+        ? metrics.filterInteractionCount -
+          ((previousStats.metrics as any).filterInteractionCount || 0)
+        : null,
       addToCartRate: previousStats
         ? metrics.addToCartRate - previousStats.metrics.addToCartRate
+        : null,
+      checkoutReachCount: previousStats
+        ? metrics.checkoutReachCount -
+          ((previousStats.metrics as any).checkoutReachCount || 0)
+        : null,
+      checkoutStartedCount: previousStats
+        ? metrics.checkoutStartedCount -
+          ((previousStats.metrics as any).checkoutStartedCount || 0)
         : null,
       conversionRate: previousStats
         ? metrics.conversionRate - previousStats.metrics.conversionRate
@@ -751,13 +860,13 @@ function buildPageAggregates(
       const uniqueHumanSessions = new Set(humans.map((row) => row.sessionId))
         .size;
       const clickRows = humans.map((row) => parseTrackedClicks(row.ctaClicks));
-      const visitsWithAnyClick = clickRows.filter((clicks) =>
-        clicks.some(isLinkOrButtonClick),
-      ).length;
-      const exits = humans.filter(
-        (row) => row.exitType && NON_INTERNAL_EXIT_TYPES.includes(row.exitType),
-      ).length;
-      const orderCount = humans.filter((row) => row.converted).length;
+      const sessionsWithAnyClick = uniqueSessionsWhere(humans, (_, index) =>
+        clickRows[index]?.some(isLinkOrButtonClick),
+      );
+      const exits = uniqueSessionsWhere(humans, (row) =>
+        Boolean(row.exitType && NON_INTERNAL_EXIT_TYPES.includes(row.exitType)),
+      );
+      const orderCount = uniqueSessionsWhere(humans, (row) => row.converted);
       const revenue = humans.reduce(
         (sum, row) => sum + Number(row.orderValue || 0),
         0,
@@ -781,15 +890,17 @@ function buildPageAggregates(
           average(humans.map((row) => row.timeOnPage)) / 1000,
         ),
         avgScrollDepth: average(humans.map((row) => row.scrollDepth)),
-        clickThroughRate: percent(visitsWithAnyClick, humans.length),
+        clickThroughRate: percent(sessionsWithAnyClick, uniqueHumanSessions),
         addToCartRate: percent(
-          humans.filter((row) => row.addedToCart).length,
-          humans.length,
+          uniqueSessionsWhere(humans, (row) => row.addedToCart),
+          uniqueHumanSessions,
         ),
-        conversionRate: percent(orderCount, humans.length),
+        conversionRate: percent(orderCount, uniqueHumanSessions),
         orderCount,
         revenue,
-        searchCount: humans.filter((row) => row.searchQuery).length,
+        searchCount: uniqueSessionsWhere(humans, (row) =>
+          Boolean(row.searchQuery?.trim()),
+        ),
         exitCount: exits,
         weaknessScore: 0,
         opportunityScore: 0,
@@ -800,7 +911,7 @@ function buildPageAggregates(
       return {
         ...scored,
         metrics: {
-          exitRate: percent(exits, humans.length),
+          exitRate: percent(exits, uniqueHumanSessions),
           zombieRate: percent(zombies.length, pageRows.length),
           botRate: percent(bots.length, pageRows.length),
         },
@@ -837,7 +948,7 @@ function recommendationForPage(
       return {
         ...recommendationBase(page, actionLabel),
         title: `Audit product page: ${title}`,
-        reason: `${page.humanVisits} human visits with ${formatPercent(page.addToCartRate)} ATC and ${formatPercent(page.conversionRate)} CVR. This product has enough traffic to diagnose product-page friction.`,
+        reason: `${page.uniqueHumanSessions} human sessions with ${formatPercent(page.addToCartRate)} ATC and ${formatPercent(page.conversionRate)} CVR. This product has enough traffic to diagnose product-page friction.`,
       };
     }
   }
@@ -850,7 +961,7 @@ function recommendationForPage(
       return {
         ...recommendationBase(page, actionLabel),
         title: `Audit collection path: ${title}`,
-        reason: `${page.humanVisits} human visits with ${formatPercent(page.clickThroughRate)} click-through. Collection traffic may need sorting, filtering, or product-card improvements.`,
+        reason: `${page.uniqueHumanSessions} human sessions with ${formatPercent(page.clickThroughRate)} click-through. Collection traffic may need sorting, filtering, or product-card improvements.`,
       };
     }
   }
@@ -868,7 +979,7 @@ function recommendationForPage(
       return {
         ...recommendationBase(page, actionLabel),
         title: `Audit content path: ${title}`,
-        reason: `${page.humanVisits} human visits with ${formatPercent(page.clickThroughRate)} CTR, ${formatPercent(page.avgScrollDepth)} scroll depth, and ${formatPercent(exitRate)} exit rate. This page may need clearer next actions.`,
+        reason: `${page.uniqueHumanSessions} human sessions with ${formatPercent(page.clickThroughRate)} CTR, ${formatPercent(page.avgScrollDepth)} scroll depth, and ${formatPercent(exitRate)} exit rate. This page may need clearer next actions.`,
       };
     }
   }
@@ -877,7 +988,7 @@ function recommendationForPage(
     return {
       ...recommendationBase(page, actionLabel),
       title: `Investigate ${title}`,
-      reason: `${page.humanVisits} human visits show weak engagement compared with its traffic level. A focused snapshot can identify the page-specific issue.`,
+      reason: `${page.uniqueHumanSessions} human sessions show weak engagement compared with its traffic level. A focused snapshot can identify the page-specific issue.`,
     };
   }
 
@@ -1126,6 +1237,50 @@ function parseTrackedClicks(raw: string | null): TrackedClick[] {
 function isLinkOrButtonClick(click: TrackedClick): boolean {
   const tag = (click.tag || "").toLowerCase();
   return tag === "a" || tag === "button" || tag === "input";
+}
+
+function uniqueSessionsWhere(
+  rows: StoreVisitRow[],
+  predicate: (row: StoreVisitRow, index: number) => boolean,
+) {
+  const sessions = new Set<string>();
+  rows.forEach((row, index) => {
+    if (predicate(row, index)) sessions.add(row.sessionId);
+  });
+  return sessions.size;
+}
+
+function averageSessionDurationSeconds(rows: StoreVisitRow[]) {
+  const sessions = new Map<
+    string,
+    { startedAt: number; endedAt: number; fallbackDuration: number }
+  >();
+
+  for (const row of rows) {
+    const startedAt = row.startedAt.getTime();
+    const endedAt = row.endedAt?.getTime() ?? startedAt + row.timeOnPage;
+    const existing = sessions.get(row.sessionId);
+
+    if (!existing) {
+      sessions.set(row.sessionId, {
+        startedAt,
+        endedAt,
+        fallbackDuration: row.timeOnPage,
+      });
+      continue;
+    }
+
+    existing.startedAt = Math.min(existing.startedAt, startedAt);
+    existing.endedAt = Math.max(existing.endedAt, endedAt);
+    existing.fallbackDuration += row.timeOnPage;
+  }
+
+  const durations = Array.from(sessions.values()).map((session) => {
+    const span = session.endedAt - session.startedAt;
+    return Math.max(span, session.fallbackDuration, 0) / 1000;
+  });
+
+  return Math.round(average(durations));
 }
 
 function percent(numerator: number, denominator: number): number {

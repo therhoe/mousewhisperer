@@ -13,6 +13,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (session) {
       await db.session.deleteMany({ where: { shop } });
     }
+    await db.shopBilling.deleteMany({ where: { shop } });
 
     return new Response();
   } catch (error) {

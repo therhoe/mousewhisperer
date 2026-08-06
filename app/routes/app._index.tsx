@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useId, useRef } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, Link, useFetcher, PrefetchPageLinks } from "@remix-run/react";
@@ -35,6 +35,20 @@ import {
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
 import { createStoreSnapshot } from "../utils/store-snapshot.server";
+import { planUsagePillLabel, TargetLimitText } from "../components/PremiumGate";
+import {
+  assertCanCreateNormalSnapshots,
+  assertCanCreateStoreSnapshot,
+  assertSnapshotTargetAllowed,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+} from "../utils/billing.server";
+import {
+  getDashboardActivity,
+  type DashboardActiveAudit,
+  type DashboardActivityCard,
+} from "../utils/dashboard-activity.server";
 
 const HOMEPAGE_RESOURCE = {
   id: "gid://shopify/Homepage/__homepage__",
@@ -43,20 +57,11 @@ const HOMEPAGE_RESOURCE = {
 };
 type AuditResourceType = "product" | "collection" | "homepage" | "page" | "blog";
 type PrismaResourceType = "PRODUCT" | "COLLECTION" | "HOMEPAGE" | "PAGE" | "BLOG";
-type ActiveAuditRow = {
-  id: string;
-  productTitle: string;
-  resourceType: PrismaResourceType;
-  targetVisitors: number;
-  realCount: number;
-};
-type ActiveAudit = ActiveAuditRow & {
-  progress: number;
-};
 type DashboardSummary = {
   setupGuideDismissed: boolean;
   completedCount: number;
-  activeAudits: ActiveAudit[];
+  activeAudits: DashboardActiveAudit[];
+  activityCards: DashboardActivityCard[];
   profile: {
     avatarEmoji: string | null;
     avatarUrl: string | null;
@@ -80,20 +85,8 @@ type StoreSnapshotListItem = {
   _count: { visits: number };
 };
 
-const DASHBOARD_CACHE_TTL_MS = 5 * 60_000;
+const DASHBOARD_CACHE_TTL_MS = 60_000;
 const DETAIL_PREFETCH_LIMIT = 12;
-
-const AUDIT_TYPE_CARDS: Array<{
-  resourceType: PrismaResourceType;
-  title: string;
-  href: string;
-}> = [
-  { resourceType: "PRODUCT", title: "Product", href: "/app/audits/products" },
-  { resourceType: "COLLECTION", title: "Collection", href: "/app/audits/collections" },
-  { resourceType: "PAGE", title: "Pages", href: "/app/audits/pages" },
-  { resourceType: "BLOG", title: "Blogs", href: "/app/audits/blogs" },
-  { resourceType: "HOMEPAGE", title: "Homepage", href: "/app/audits/homepage" },
-];
 
 function getLevel(rep: number) {
   if (rep >= 200) return { level: 10, title: "Grandmaster", next: 200, prev: 150 };
@@ -110,29 +103,14 @@ function getLevel(rep: number) {
 
 async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
   return cachedValue(loaderCacheKeys.dashboard(shop), DASHBOARD_CACHE_TTL_MS, async () => {
-    const [shopSettings, activeAuditRows, completedCount, profile] =
+    const [shopSettings, dashboardActivity, completedCount, profile] =
       await Promise.all([
         prisma.shopSettings.upsert({
           where: { shop },
           update: {},
           create: { shop },
         }),
-        prisma.$queryRaw<ActiveAuditRow[]>`
-          SELECT
-            p.id,
-            p."productTitle",
-            p."resourceType"::text AS "resourceType",
-            s."targetVisitors",
-            COALESCE((stats_cache.stats->>'realCount')::int, 0)::int AS "realCount"
-          FROM "Project" p
-          JOIN "Snapshot" s
-            ON s."projectId" = p.id
-            AND s.status = 'ACTIVE'
-          LEFT JOIN "SnapshotStatsCache" stats_cache
-            ON stats_cache."snapshotId" = s.id
-          WHERE p.shop = ${shop}
-          ORDER BY p."createdAt" DESC
-        `,
+        getDashboardActivity(shop),
         prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
         COMMUNITY_FEATURES_ENABLED
           ? prisma.insightProfile.findUnique({
@@ -144,19 +122,11 @@ async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
           : Promise.resolve(null),
       ]);
 
-    const activeAudits = activeAuditRows.map((row) => ({
-      id: row.id,
-      productTitle: row.productTitle,
-      resourceType: row.resourceType,
-      realCount: Number(row.realCount || 0),
-      targetVisitors: row.targetVisitors,
-      progress: Math.min(100, Math.round((Number(row.realCount || 0) / row.targetVisitors) * 100)),
-    }));
-
     return {
       setupGuideDismissed: shopSettings.setupGuideDismissed,
       completedCount,
-      activeAudits,
+      activeAudits: dashboardActivity.activeAudits,
+      activityCards: dashboardActivity.cards,
       profile: profile
         ? {
             avatarEmoji: profile.avatarEmoji,
@@ -186,7 +156,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [summary, storeSnapshots] = await Promise.all([
+  const [summary, storeSnapshots, billingAccess] = await Promise.all([
     getDashboardSummary(shop),
     prisma.storeSnapshot.findMany({
       where: { shop },
@@ -205,10 +175,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         _count: { select: { visits: true } },
       },
     }),
+    getBillingAccess(shop),
   ]);
 
   return json({
     ...summary,
+    billingAccess,
     storeSnapshots: storeSnapshots.map((snapshot) => ({
       ...snapshot,
       startedAt: snapshot.startedAt.toISOString(),
@@ -233,6 +205,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const resourceType = (formData.get("resourceType") as PrismaResourceType) || "PRODUCT";
     const snapshotName = formData.get("snapshotName") as string | null;
     const targetVisitors = parseInt(formData.get("targetVisitors") as string) || 1000;
+
+    try {
+      await assertCanCreateNormalSnapshots(shop, 1);
+      await assertSnapshotTargetAllowed(shop, targetVisitors);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
 
     await ensureWebPixel(admin, shop);
 
@@ -309,15 +291,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? rawMode
         : "HUMAN_VISITORS";
 
+    const targetHumanVisitors = parseInt(String(formData.get("targetHumanVisitors") || "1000"), 10);
+    const targetTotalVisits = parseInt(String(formData.get("targetTotalVisits") || "2500"), 10);
+    const durationDays = parseInt(String(formData.get("durationDays") || "7"), 10);
+
+    try {
+      await assertCanCreateStoreSnapshot(shop);
+      if (completionMode === "HUMAN_VISITORS") {
+        await assertSnapshotTargetAllowed(shop, targetHumanVisitors);
+      }
+      if (completionMode === "TOTAL_VISITS") {
+        await assertSnapshotTargetAllowed(shop, targetTotalVisits);
+      }
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
+
     await ensureWebPixel(admin, shop);
 
     const snapshot = await createStoreSnapshot({
       shop,
       name: formData.get("name") as string | null,
       completionMode,
-      targetHumanVisitors: parseInt(String(formData.get("targetHumanVisitors") || "1000"), 10),
-      targetTotalVisits: parseInt(String(formData.get("targetTotalVisits") || "2500"), 10),
-      durationDays: parseInt(String(formData.get("durationDays") || "7"), 10),
+      targetHumanVisitors,
+      targetTotalVisits,
+      durationDays,
     });
 
     return redirect(`/app/store-snapshots/${snapshot.id}`);
@@ -390,12 +391,356 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
+function chartPath(values: number[], maxValue: number) {
+  if (!values.length) return "";
+  const left = 12;
+  const width = 576;
+  const top = 10;
+  const height = 82;
+  return values
+    .map((value, index) => {
+      const x =
+        values.length === 1
+          ? left + width / 2
+          : left + (index / (values.length - 1)) * width;
+      const y = top + height - (Math.max(0, value) / maxValue) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function ComparisonAreaChart({
+  card,
+}: {
+  card: DashboardActivityCard;
+}) {
+  const gradientId = `dashboard-area-${useId().replace(/:/g, "")}`;
+  const allValues = [...card.chart.current, ...card.chart.previous];
+  const maxValue = Math.max(1, ...allValues) * 1.12;
+  const currentPath = chartPath(card.chart.current, maxValue);
+  const previousPath = chartPath(card.chart.previous, maxValue);
+  const currentArea = currentPath
+    ? `${currentPath} L588,104 L12,104 Z`
+    : "";
+
+  return (
+    <div style={{ minHeight: 88 }}>
+      {currentPath || previousPath ? (
+        <svg
+          viewBox="0 0 600 112"
+          width="100%"
+          height="72"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`${card.chart.metricLabel} comparison for ${card.chart.contextLabel}`}
+          style={{ display: "block" }}
+        >
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2c6ecb" stopOpacity="0.24" />
+              <stop offset="100%" stopColor="#2c6ecb" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {[24, 64, 104].map((y) => (
+            <line
+              key={y}
+              x1="12"
+              x2="588"
+              y1={y}
+              y2={y}
+              stroke="#e3e3e3"
+              strokeWidth="1"
+            />
+          ))}
+          {currentArea ? <path d={currentArea} fill={`url(#${gradientId})`} /> : null}
+          {previousPath ? (
+            <path
+              d={previousPath}
+              fill="none"
+              stroke="#8c9196"
+              strokeWidth="2"
+              strokeDasharray="6 6"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+          {currentPath ? (
+            <path
+              d={currentPath}
+              fill="none"
+              stroke="#2463eb"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+        </svg>
+      ) : (
+        <div
+          style={{
+            height: 72,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderTop: "1px solid var(--p-color-border-subdued)",
+            borderBottom: "1px solid var(--p-color-border-subdued)",
+          }}
+        >
+          <Text as="p" variant="bodySm" tone="subdued">
+            Comparison data will appear as visits are collected
+          </Text>
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          color: "var(--p-color-text-subdued)",
+          fontSize: 11,
+          marginTop: 2,
+        }}
+      >
+        <span>Start</span>
+        <span>{card.chart.axisLabel}</span>
+        <span>100%</span>
+      </div>
+    </div>
+  );
+}
+
+function DashboardActivityCardView({
+  card,
+}: {
+  card: DashboardActivityCard;
+}) {
+  const previewSlots = Array.from(
+    { length: 3 },
+    (_, index) => card.previews[index] || null,
+  );
+
+  return (
+    <div className="mw-dashboard-activity-card">
+      <Card padding="300">
+        <div className="mw-dashboard-card-content">
+          <BlockStack gap="200">
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <Link
+                to={card.href}
+                prefetch="render"
+                style={{ textDecoration: "none", color: "inherit", minWidth: 0 }}
+              >
+                <BlockStack gap="050">
+                  <Text as="h2" variant="headingLg" fontWeight="semibold">
+                    {card.title}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {card.scopeLabel}
+                  </Text>
+                </BlockStack>
+              </Link>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 7,
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: card.runningCount > 0 ? "#008060" : "#8c9196",
+                  }}
+                />
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {card.runningCount} {card.runningLabel}
+                </Text>
+              </div>
+            </InlineStack>
+
+            <div
+              className="mw-dashboard-kpi-grid"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                borderTop: "1px solid var(--p-color-border-subdued)",
+                borderBottom: "1px solid var(--p-color-border-subdued)",
+                padding: "8px 0",
+              }}
+            >
+              {card.kpis.map((kpi, index) => (
+                <div
+                  key={kpi.label}
+                  style={{
+                    minWidth: 0,
+                    padding: index === 0 ? "0 12px 0 0" : "0 12px",
+                    borderLeft:
+                      index === 0
+                        ? undefined
+                        : "1px solid var(--p-color-border-subdued)",
+                  }}
+                >
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {kpi.label}
+                  </Text>
+                  <div
+                    style={{
+                      fontSize: 20,
+                      lineHeight: "26px",
+                      fontWeight: 650,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {kpi.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <BlockStack gap="150">
+              <div className="mw-dashboard-chart-heading">
+                <div style={{ minWidth: 0 }}>
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                    {card.chart.metricLabel}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued" truncate>
+                    {card.chart.contextLabel}
+                  </Text>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    flexShrink: 0,
+                    fontSize: 11,
+                    color: "var(--p-color-text-subdued)",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 14, height: 2, background: "#2463eb" }} />
+                    {card.chart.currentLabel}
+                  </span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <span
+                      style={{
+                        width: 14,
+                        borderTop: "2px dashed #8c9196",
+                      }}
+                    />
+                    {card.chart.previousLabel}
+                  </span>
+                </div>
+              </div>
+              <ComparisonAreaChart card={card} />
+            </BlockStack>
+
+            <div
+              className="mw-dashboard-preview-list"
+              style={{ borderTop: "1px solid var(--p-color-border-subdued)" }}
+            >
+              {previewSlots.map((preview, index) => {
+                if (!preview) {
+                  return (
+                    <div
+                      key={`empty-${index}`}
+                      aria-hidden={index > 0 || card.previews.length > 0}
+                      className="mw-dashboard-preview-row"
+                      style={{
+                        borderTop:
+                          index === 0
+                            ? undefined
+                            : "1px solid var(--p-color-border-subdued)",
+                      }}
+                    >
+                      {index === 0 && card.previews.length === 0 ? (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {card.emptyLabel}
+                        </Text>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                const valueColor =
+                  preview.valueTone === "positive"
+                    ? "#008060"
+                    : preview.valueTone === "negative"
+                      ? "#d72c0d"
+                      : "var(--p-color-text-subdued)";
+
+                return (
+                  <Link
+                    key={preview.id}
+                    to={preview.href}
+                    prefetch="viewport"
+                    style={{ color: "inherit", textDecoration: "none" }}
+                  >
+                  <div
+                    className="mw-dashboard-preview-row"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) minmax(72px, 120px) auto",
+                      gap: 12,
+                      alignItems: "center",
+                      borderTop:
+                        index === 0
+                          ? undefined
+                          : "1px solid var(--p-color-border-subdued)",
+                    }}
+                  >
+                    <Text as="span" variant="bodySm" fontWeight="semibold" truncate>
+                      {preview.title}
+                    </Text>
+                    <div
+                      aria-label={`${preview.progress}% complete`}
+                      style={{
+                        height: 5,
+                        borderRadius: 3,
+                        background: "#e3e3e3",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${preview.progress}%`,
+                          height: "100%",
+                          background: "#2463eb",
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        color: valueColor,
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {preview.value}
+                    </span>
+                  </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </BlockStack>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Index() {
   const {
     setupGuideDismissed,
     completedCount,
     activeAudits,
+    activityCards,
     storeSnapshots,
+    billingAccess,
     profile,
     notifications: initialNotifications,
     unreadCount: initialUnreadCount,
@@ -483,9 +828,13 @@ export default function Index() {
 
   // Opens the type selection modal first
   const handleOpenPicker = useCallback(() => {
+    if (!billingAccess.canCreateNormalSnapshot) {
+      window.location.href = "/app/upgrade";
+      return;
+    }
     setResourceType("product");
     setIsTypeModalOpen(true);
-  }, []);
+  }, [billingAccess.canCreateNormalSnapshot]);
 
   // After selecting type, open the actual resource picker or manual input
   const handleSelectType = useCallback(async () => {
@@ -646,17 +995,9 @@ export default function Index() {
     HIGH_BOT_TRAFFIC: "\uD83E\uDD16",
   };
 
-  const auditCards = AUDIT_TYPE_CARDS.map((card) => {
-    const audits = (activeAudits as any[]).filter((audit) => audit.resourceType === card.resourceType);
-    return {
-      ...card,
-      runningCount: audits.length,
-      previewAudits: audits.slice(0, 3),
-    };
-  });
   const detailPrefetchPages = Array.from(
     new Set(
-      (activeAudits as ActiveAudit[])
+      (activeAudits as DashboardActiveAudit[])
         .slice(0, DETAIL_PREFETCH_LIMIT)
         .map((audit) => `/app/project/${audit.id}`),
     ),
@@ -665,13 +1006,7 @@ export default function Index() {
     (snapshot) => snapshot.status === "ACTIVE",
   );
   const latestStoreSnapshot = (storeSnapshots as StoreSnapshotListItem[])[0];
-  const storeSnapshotTargetLabel = activeStoreSnapshot
-    ? activeStoreSnapshot.completionMode === "TOTAL_VISITS"
-      ? `${activeStoreSnapshot.targetTotalVisits?.toLocaleString() || "Total"} visits`
-      : activeStoreSnapshot.completionMode === "TIME_WINDOW"
-        ? `${activeStoreSnapshot.durationDays || 7} days`
-        : `${activeStoreSnapshot.targetHumanVisitors?.toLocaleString() || "Human"} humans`
-    : null;
+  const displayedStoreSnapshot = activeStoreSnapshot || latestStoreSnapshot;
 
   const announcementMarkup = showSetupGuide ? (
     <Card>
@@ -692,129 +1027,88 @@ export default function Index() {
   ) : null;
 
   const auditTypeCardsMarkup = (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-        gap: 16,
-        alignItems: "start",
-      }}
-    >
-      {auditCards.map((card) => (
-        <Card key={card.resourceType}>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="end">
-              <Link to={card.href} prefetch="render" style={{ textDecoration: "none", color: "inherit" }}>
-                <Text as="h2" variant="headingLg" fontWeight="semibold">
-                  {card.title}
-                </Text>
-              </Link>
-              <InlineStack gap="200" blockAlign="baseline">
-                <Text as="span" variant="heading2xl" fontWeight="semibold">
-                  {card.runningCount}
-                </Text>
-                <Text as="span" variant="bodyLg" tone="subdued">
-                  running
-                </Text>
-              </InlineStack>
-            </InlineStack>
-
-            <div style={{ height: 1, background: "var(--p-color-border-subdued)" }} />
-
-            {card.previewAudits.length > 0 ? (
-              <BlockStack gap="200">
-                {card.previewAudits.map((audit: any) => (
-                  <Link key={audit.id} to={`/app/project/${audit.id}`} prefetch="viewport" style={{ color: "inherit", textDecoration: "none" }}>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: 16,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text as="span" variant="bodyLg" fontWeight="semibold" truncate>
-                        {audit.productTitle}
-                      </Text>
-                      <Text as="span" variant="bodyLg" tone="subdued">
-                        {audit.progress}%
-                      </Text>
-                    </div>
-                  </Link>
-                ))}
-              </BlockStack>
-            ) : (
-              <Text as="p" variant="bodyMd" tone="subdued">
-                No active audits
-              </Text>
-            )}
-          </BlockStack>
-        </Card>
+    <div className="mw-dashboard-card-grid">
+      {(activityCards as DashboardActivityCard[]).map((card) => (
+        <DashboardActivityCardView key={card.id} card={card} />
       ))}
     </div>
   );
 
   const storeSnapshotMarkup = (
     <Card>
-      <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="start" gap="400">
-          <BlockStack gap="150">
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="h2" variant="headingLg" fontWeight="semibold">
-                Store snapshot
-              </Text>
-              {activeStoreSnapshot ? (
-                <Badge tone="success">Running</Badge>
-              ) : latestStoreSnapshot ? (
-                <Badge>Ready</Badge>
-              ) : (
-                <Badge tone="info">Recommended</Badge>
-              )}
-            </InlineStack>
-            <Text as="p" tone="subdued">
-              Capture engagement across the whole store, find weak pages, and get recommendations for focused snapshots.
-            </Text>
-          </BlockStack>
-          {activeStoreSnapshot ? (
-            <Link to={`/app/store-snapshots/${activeStoreSnapshot.id}`} prefetch="render" style={{ textDecoration: "none" }}>
-              <Button>Open snapshot</Button>
+      <div
+        className="mw-store-snapshot-grid"
+      >
+        <BlockStack gap="100">
+          <Text as="h2" variant="headingLg" fontWeight="semibold">
+            Store snapshot
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Whole-store activity and opportunities
+          </Text>
+        </BlockStack>
+        <div>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Status
+          </Text>
+          <div style={{ marginTop: 3 }}>
+            {activeStoreSnapshot ? (
+              <Badge tone="success">1 running</Badge>
+            ) : latestStoreSnapshot ? (
+              <Badge>Latest ready</Badge>
+            ) : (
+              <Badge tone="info">Not started</Badge>
+            )}
+          </div>
+        </div>
+        <div>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Captured visits
+          </Text>
+          <Text as="p" variant="headingMd" fontWeight="semibold">
+            {(displayedStoreSnapshot?._count.visits || 0).toLocaleString()}
+          </Text>
+        </div>
+        <div>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Audit types
+          </Text>
+          <Text as="p" variant="headingMd" fontWeight="semibold">
+            5
+          </Text>
+        </div>
+        <div className="mw-store-snapshot-actions">
+          <InlineStack gap="200" blockAlign="center">
+          {displayedStoreSnapshot ? (
+            <Link
+              to={`/app/store-snapshots/${displayedStoreSnapshot.id}`}
+              prefetch="render"
+              style={{ textDecoration: "none" }}
+            >
+              <Button>{activeStoreSnapshot ? "Open snapshot" : "View latest"}</Button>
             </Link>
-          ) : latestStoreSnapshot ? (
-            <InlineStack gap="200">
-              <Link to={`/app/store-snapshots/${latestStoreSnapshot.id}`} prefetch="render" style={{ textDecoration: "none" }}>
-                <Button>View latest</Button>
-              </Link>
-              <Button variant="primary" onClick={() => setIsStoreSnapshotModalOpen(true)}>
-                Start new
-              </Button>
-            </InlineStack>
-          ) : (
-            <Button variant="primary" onClick={() => setIsStoreSnapshotModalOpen(true)}>
-              Start store snapshot
+          ) : null}
+          {!activeStoreSnapshot ? (
+        <Button
+              variant={latestStoreSnapshot ? undefined : "primary"}
+              onClick={() => {
+                if (!billingAccess.canCreateStoreSnapshot) {
+                  window.location.href = "/app/upgrade";
+                  return;
+                }
+                setIsStoreSnapshotModalOpen(true);
+              }}
+            >
+              {!billingAccess.canCreateStoreSnapshot
+                ? "Upgrade to start"
+                : latestStoreSnapshot
+                  ? "Start new"
+                  : "Start snapshot"}
             </Button>
-          )}
-        </InlineStack>
-
-        {activeStoreSnapshot ? (
-          <InlineStack gap="400" wrap>
-            <Text as="span" tone="subdued">
-              Target: {storeSnapshotTargetLabel}
-            </Text>
-            <Text as="span" tone="subdued">
-              Captured visits: {activeStoreSnapshot._count.visits.toLocaleString()}
-            </Text>
+          ) : null}
           </InlineStack>
-        ) : latestStoreSnapshot ? (
-          <InlineStack gap="400" wrap>
-            <Text as="span" tone="subdued">
-              Last snapshot: {new Date(latestStoreSnapshot.startedAt).toLocaleDateString()}
-            </Text>
-            <Text as="span" tone="subdued">
-              Captured visits: {latestStoreSnapshot._count.visits.toLocaleString()}
-            </Text>
-          </InlineStack>
-        ) : null}
-      </BlockStack>
+        </div>
+      </div>
     </Card>
   );
 
@@ -866,21 +1160,90 @@ export default function Index() {
     <Page
       title="Dashboard"
       primaryAction={{
-        content: "Create New Audit",
+        content: billingAccess.canCreateNormalSnapshot
+          ? "Create New Audit"
+          : "Upgrade to create audit",
         onAction: handleOpenPicker,
         loading: isLoading,
       }}
     >
       <TitleBar title="Dashboard">
         <button variant="primary" onClick={handleOpenPicker} disabled={isLoading}>
-          Create New Audit
+          {billingAccess.canCreateNormalSnapshot
+            ? "Create New Audit"
+            : "Upgrade to create audit"}
         </button>
       </TitleBar>
+      <style>{`
+        .mw-dashboard-card-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
+          align-items: start;
+        }
+        .mw-dashboard-activity-card {
+          min-width: 0;
+        }
+        .mw-dashboard-card-content {
+          min-height: 0;
+        }
+        .mw-dashboard-kpi-grid {
+          min-height: 62px;
+        }
+        .mw-dashboard-chart-heading {
+          min-height: 36px;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .mw-dashboard-preview-list {
+          min-height: 108px;
+        }
+        .mw-dashboard-preview-row {
+          min-height: 36px;
+          padding: 4px 0;
+          display: flex;
+          align-items: center;
+        }
+        .mw-store-snapshot-grid {
+          display: grid;
+          grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 0.7fr)) auto;
+          gap: 20px;
+          align-items: center;
+        }
+        .mw-store-snapshot-actions {
+          justify-self: end;
+        }
+        @media (max-width: 960px) {
+          .mw-dashboard-card-grid {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .mw-store-snapshot-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .mw-store-snapshot-actions {
+            grid-column: 1 / -1;
+            justify-self: start;
+          }
+        }
+        @media (max-width: 520px) {
+          .mw-store-snapshot-grid {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .mw-store-snapshot-actions {
+            grid-column: auto;
+          }
+        }
+      `}</style>
       {prefetchDetails &&
         detailPrefetchPages.map((page) => <PrefetchPageLinks key={page} page={page} />)}
 
       {/* Notification bell + Profile */}
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <Button url="/app/upgrade" size="slim">
+          {planUsagePillLabel(billingAccess, "normalSnapshots")}
+        </Button>
         {COMMUNITY_FEATURES_ENABLED && (
           <Link to="/app/challenges/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
             <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
@@ -1183,6 +1546,7 @@ export default function Index() {
                 value={storeSnapshotHumanTarget}
                 onChange={setStoreSnapshotHumanTarget}
                 min={25}
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
                 autoComplete="off"
               />
             )}
@@ -1193,6 +1557,7 @@ export default function Index() {
                 value={storeSnapshotVisitTarget}
                 onChange={setStoreSnapshotVisitTarget}
                 min={25}
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
                 autoComplete="off"
               />
             )}
@@ -1207,6 +1572,11 @@ export default function Index() {
                 autoComplete="off"
               />
             )}
+            {storeSnapshotMode !== "TIME_WINDOW" ? (
+              <TargetLimitText
+                max={billingAccess.limits.maxSnapshotTargetVisitors}
+              />
+            ) : null}
           </FormLayout>
         </Modal.Section>
       </Modal>
@@ -1220,7 +1590,10 @@ export default function Index() {
           content: "Create Audit",
           onAction: handleCreateProject,
           loading: isLoading,
-          disabled: (resourceType === "page" || resourceType === "blog") && (!manualTitle || !manualHandle),
+          disabled:
+            !billingAccess.canCreateNormalSnapshot ||
+            ((resourceType === "page" || resourceType === "blog") &&
+              (!manualTitle || !manualHandle)),
         }}
         secondaryActions={[
           {
@@ -1265,8 +1638,12 @@ export default function Index() {
               value={targetVisitors}
               onChange={setTargetVisitors}
               min={100}
+              max={billingAccess.limits.maxSnapshotTargetVisitors}
               helpText="Number of real visitors to collect before completing the snapshot"
               autoComplete="off"
+            />
+            <TargetLimitText
+              max={billingAccess.limits.maxSnapshotTargetVisitors}
             />
           </FormLayout>
         </Modal.Section>

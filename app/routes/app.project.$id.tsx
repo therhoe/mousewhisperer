@@ -45,6 +45,14 @@ import {
   clearCachePrefix,
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
+import {
+  assertCanCreateNormalSnapshots,
+  assertSnapshotTargetAllowed,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+  type BillingAccess,
+} from "../utils/billing.server";
 
 const INSIGHT_CATEGORIES = [
   { label: "Select a category", value: "" },
@@ -162,6 +170,7 @@ type ProjectLoaderData = {
   snapshotTrends: SnapshotTrend[];
   topProductsClicked: TopProductClick[];
   statsPending: boolean;
+  billingAccess: BillingAccess;
 };
 
 type ProjectStatsResponse = {
@@ -2087,6 +2096,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
+    const billingAccess = await getBillingAccess(shop);
+
     return json({
       project: {
         id: project.id,
@@ -2130,6 +2141,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       snapshotTrends: [] as SnapshotTrend[],
       topProductsClicked: [] as TopProductClick[],
       statsPending: !compareMode,
+      billingAccess,
     });
   } catch (err) {
     if (err instanceof Response) {
@@ -2190,6 +2202,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const targetVisitors =
       parseInt(formData.get("targetVisitors") as string) || 1000;
 
+    try {
+      await assertCanCreateNormalSnapshots(shop, 1);
+      await assertSnapshotTargetAllowed(shop, targetVisitors);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
+
     // Check if there's already an active snapshot
     const activeSnapshot = await prisma.snapshot.findFirst({
       where: { projectId, status: "ACTIVE" },
@@ -2228,6 +2250,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const snapshotId = formData.get("snapshotId") as string;
     const snapshotName = formData.get("snapshotName") as string | null;
     const targetVisitors = parseInt(formData.get("targetVisitors") as string);
+
+    try {
+      await assertSnapshotTargetAllowed(shop, targetVisitors);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
 
     // Get current snapshot to validate
     const snapshot = await prisma.snapshot.findUnique({
@@ -3648,6 +3679,7 @@ export default function ProjectDetails() {
     sourceFilter: activeSource,
     snapshotTrends,
     topProductsClicked,
+    billingAccess,
   } = useLoaderData<ProjectLoaderData>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -3994,11 +4026,15 @@ export default function ProjectDetails() {
   }, [selectedSnapshot]);
 
   const openNewSnapshotModal = useCallback(() => {
+    if (!billingAccess.canCreateNormalSnapshot) {
+      window.location.href = "/app/upgrade";
+      return;
+    }
     const lastTarget = snapshots[0]?.targetVisitors || 1000;
     setSnapshotName("");
     setTargetVisitors(String(lastTarget));
     setIsNewSnapshotModalOpen(true);
-  }, [snapshots]);
+  }, [billingAccess.canCreateNormalSnapshot, snapshots]);
 
   const hasActiveSnapshot = snapshots.some((s) => s.status === "ACTIVE");
 
@@ -4070,9 +4106,15 @@ export default function ProjectDetails() {
                 <Text as="p" tone="subdued">
                   Create a snapshot to start tracking visitors for this audit.
                 </Text>
-                <Button variant="primary" onClick={openNewSnapshotModal}>
-                  Create Snapshot
-                </Button>
+                {billingAccess.canCreateNormalSnapshot ? (
+                  <Button variant="primary" onClick={openNewSnapshotModal}>
+                    Create Snapshot
+                  </Button>
+                ) : (
+                  <Button variant="primary" url="/app/upgrade">
+                    Upgrade to create snapshot
+                  </Button>
+                )}
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -4086,6 +4128,7 @@ export default function ProjectDetails() {
             content: "Create",
             onAction: handleCreateSnapshot,
             loading: isLoading,
+            disabled: !billingAccess.canCreateNormalSnapshot,
           }}
           secondaryActions={[
             {
@@ -4714,7 +4757,9 @@ export default function ProjectDetails() {
                     onClick={openNewSnapshotModal}
                     disabled={hasActiveSnapshot}
                   >
-                    + New Snapshot
+                    {billingAccess.canCreateNormalSnapshot
+                      ? "+ New Snapshot"
+                      : "Upgrade to create snapshot"}
                   </Button>
                 </InlineStack>
               </InlineStack>
@@ -6024,7 +6069,7 @@ export default function ProjectDetails() {
                                 gap: 8,
                                 padding: "10px 16px",
                                 cursor: "pointer",
-                                alignItems: "center",
+                                alignItems: "start",
                                 backgroundColor: isExpanded
                                   ? "var(--p-color-bg-surface-secondary)"
                                   : "transparent",
@@ -6036,7 +6081,7 @@ export default function ProjectDetails() {
                               </Text>
                               <InlineStack
                                 gap="100"
-                                blockAlign="center"
+                                blockAlign="start"
                                 wrap={false}
                               >
                                 <Text
@@ -6052,27 +6097,29 @@ export default function ProjectDetails() {
                                   </Badge>
                                 )}
                               </InlineStack>
-                              <BlockStack gap="050">
-                                {visit.source && (
-                                  <Text
-                                    as="span"
-                                    variant="bodySm"
-                                    tone="subdued"
-                                  >
-                                    {visit.source}
-                                    {visit.medium ? ` / ${visit.medium}` : ""}
-                                  </Text>
-                                )}
-                                {visit.campaign && (
-                                  <Text
-                                    as="span"
-                                    variant="bodySm"
-                                    tone="subdued"
-                                  >
-                                    {visit.campaign}
-                                  </Text>
-                                )}
-                              </BlockStack>
+                              <div style={{ minWidth: 0 }}>
+                                <BlockStack gap="050">
+                                  {visit.source && (
+                                    <Text
+                                      as="span"
+                                      variant="bodySm"
+                                      tone="subdued"
+                                    >
+                                      {visit.source}
+                                      {visit.medium ? ` / ${visit.medium}` : ""}
+                                    </Text>
+                                  )}
+                                  {visit.campaign && (
+                                    <Text
+                                      as="span"
+                                      variant="bodySm"
+                                      tone="subdued"
+                                    >
+                                      {visit.campaign}
+                                    </Text>
+                                  )}
+                                </BlockStack>
+                              </div>
                               <Text as="span" variant="bodySm">
                                 {clickCount}
                               </Text>
@@ -6097,27 +6144,32 @@ export default function ProjectDetails() {
                                   )}
                                 </div>
                               ))}
-                              <BlockStack gap="050">
-                                <Text as="span" variant="bodySm">
-                                  {formatExitType(visit.exitType || "unknown")}
-                                </Text>
-                                {visit.exitUrl && (
-                                  <Text
-                                    as="span"
-                                    variant="bodySm"
-                                    tone="subdued"
-                                    truncate
-                                  >
-                                    {(() => {
-                                      try {
-                                        return new URL(visit.exitUrl).pathname;
-                                      } catch {
-                                        return visit.exitUrl;
-                                      }
-                                    })()}
+                              <div style={{ minWidth: 0 }}>
+                                <BlockStack gap="050">
+                                  <Text as="span" variant="bodySm">
+                                    {formatExitType(
+                                      visit.exitType || "unknown",
+                                    )}
                                   </Text>
-                                )}
-                              </BlockStack>
+                                  {visit.exitUrl && (
+                                    <Text
+                                      as="span"
+                                      variant="bodySm"
+                                      tone="subdued"
+                                      truncate
+                                    >
+                                      {(() => {
+                                        try {
+                                          return new URL(visit.exitUrl)
+                                            .pathname;
+                                        } catch {
+                                          return visit.exitUrl;
+                                        }
+                                      })()}
+                                    </Text>
+                                  )}
+                                </BlockStack>
+                              </div>
                               <Text as="span" variant="bodySm" tone="subdued">
                                 {isExpanded ? "\u25B2" : "\u25BC"}
                               </Text>
@@ -6329,6 +6381,7 @@ export default function ProjectDetails() {
           content: "Create",
           onAction: handleCreateSnapshot,
           loading: isLoading,
+          disabled: !billingAccess.canCreateNormalSnapshot,
         }}
         secondaryActions={[
           {

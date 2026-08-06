@@ -16,13 +16,16 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
+import { reconcileShopBillingFromShopify } from "../utils/billing.server";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
-  await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  await reconcileShopBillingFromShopify(admin, session.shop);
 
   if (process.env.NODE_ENV === "development") {
     console.info("[MW Perf] app layout loader", {
@@ -204,7 +207,9 @@ function AppLocalNav({ activePathname }: { activePathname: string }) {
         gap: 8,
         alignItems: "center",
         padding: "12px 24px",
-        borderBottom: "1px solid var(--p-color-border-subdued)",
+        margin: "12px 16px 0",
+        border: "1px solid var(--p-color-border-subdued)",
+        borderRadius: 8,
         background: "var(--p-color-bg-surface)",
         overflowX: "auto",
       }}

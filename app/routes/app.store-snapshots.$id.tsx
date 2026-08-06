@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import type { Prisma, ResourceType } from "@prisma/client";
 import { json, redirect } from "@remix-run/node";
@@ -18,11 +19,13 @@ import {
   Checkbox,
   InlineStack,
   Layout,
+  Modal,
   Page,
   ProgressBar,
   Select,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -40,6 +43,13 @@ import {
   getStorefrontTrackerStatus,
   type StorefrontTrackerStatus,
 } from "../utils/storefront-tracker-status.server";
+import {
+  assertCanCreateNormalSnapshots,
+  assertSnapshotTargetAllowed,
+  getBillingAccess,
+  isPlanLimitError,
+  planLimitPayload,
+} from "../utils/billing.server";
 
 const DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS = 1000;
 const MIN_FOCUSED_SNAPSHOT_TARGET_VISITORS = 25;
@@ -59,14 +69,14 @@ type PageSortKey =
 type SortDirection = "asc" | "desc";
 
 const PAGE_FILTER_OPTIONS = [
-  { label: "Human visits only", value: "human" },
+  { label: "Human sessions only", value: "human" },
   { label: "All pages", value: "all" },
 ];
 
 const PAGE_SORT_OPTIONS = [
   { label: "Page", value: "page" },
   { label: "Type", value: "type" },
-  { label: "Human visits", value: "humanVisits" },
+  { label: "Sessions", value: "humanVisits" },
   { label: "CTR", value: "clickThroughRate" },
   { label: "CVR", value: "conversionRate" },
   { label: "Revenue", value: "revenue" },
@@ -122,10 +132,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Store snapshot not found", { status: 404 });
   }
 
-  const [stats, trackerStatus, focusedSnapshots] = await Promise.all([
+  const [stats, trackerStatus, focusedSnapshots, billingAccess] = await Promise.all([
     getStoreSnapshotStats(snapshot.id),
     getStorefrontTrackerStatus(admin, shop),
     getFocusedSnapshotsCreatedFromStoreSnapshot(snapshot.id, shop),
+    getBillingAccess(shop),
   ]);
 
   return json({
@@ -144,6 +155,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     stats,
     trackerStatus,
     focusedSnapshots,
+    billingAccess,
   });
 };
 
@@ -235,6 +247,36 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
     }
 
+    const creationsNeeded = (
+      await Promise.all(
+        selectedPages.map((page) => {
+          const resource = resolveFocusedSnapshotResource({
+            pagePath: page.pagePath,
+            pageType: page.pageType,
+            resourceHandle: page.resourceHandle,
+          });
+          if (!resource) return Promise.resolve(false);
+          return findProjectWithActiveSnapshot(
+            shop,
+            resource.resourceType,
+            resource.resourceHandle,
+          ).then((existing) => !existing);
+        }),
+      )
+    ).filter(Boolean).length;
+
+    try {
+      await assertSnapshotTargetAllowed(shop, targetVisitors);
+      if (creationsNeeded > 0) {
+        await assertCanCreateNormalSnapshots(shop, creationsNeeded);
+      }
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
+
     let createdCount = 0;
     let reusedCount = 0;
     let skippedCount = selectedPageKeys.length - selectedPages.length;
@@ -303,6 +345,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return redirect(`/app/project/${existing.id}`);
     }
 
+    try {
+      await assertSnapshotTargetAllowed(
+        shop,
+        DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS,
+      );
+      await assertCanCreateNormalSnapshots(shop, 1);
+    } catch (error) {
+      if (isPlanLimitError(error)) {
+        return json(planLimitPayload(error), { status: error.status });
+      }
+      throw error;
+    }
+
     const project = await createFocusedSnapshot({
       admin,
       shop,
@@ -325,13 +380,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function StoreSnapshotDetails() {
-  const { snapshot, stats, trackerStatus, focusedSnapshots } =
+  const { snapshot, stats, trackerStatus, focusedSnapshots, billingAccess } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as
     ActionResponse | undefined;
   const submit = useSubmit();
   const navigation = useNavigation();
   const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>([]);
+  const [isCreateSnapshotsModalOpen, setIsCreateSnapshotsModalOpen] =
+    useState(false);
   const [focusedTargetVisitors, setFocusedTargetVisitors] = useState(
     String(DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS),
   );
@@ -361,10 +418,9 @@ export default function StoreSnapshotDetails() {
   const humanPct = (stats.visitorBreakdown.humans / total) * 100;
   const zombiePct = (stats.visitorBreakdown.zombies / total) * 100;
   const botPct = (stats.visitorBreakdown.bots / total) * 100;
+  const pendingPct =
+    (((stats.visitorBreakdown as any).pending || 0) / total) * 100;
   const allPages = stats.pageAggregates as StoreSnapshotPageSummary[];
-  const pagesWithHumanVisitsCount = allPages.filter(
-    (page) => page.humanVisits > 0,
-  ).length;
   const basePages =
     pageFilter === "human"
       ? allPages.filter((page) => page.humanVisits > 0)
@@ -395,6 +451,10 @@ export default function StoreSnapshotDetails() {
   const selectedPageCount = selectedPageKeys.length;
   const canSelectMorePages = selectedPageCount < MAX_BULK_SNAPSHOT_SELECTION;
   const selectedPageSet = new Set(selectedPageKeys);
+  const pageByKey = new Map(allPages.map((page) => [page.pageKey, page]));
+  const selectedPagesForModal = selectedPageKeys
+    .map((pageKey) => pageByKey.get(pageKey))
+    .filter((page): page is StoreSnapshotPageSummary => Boolean(page));
   const visibleSelectionKeys = selectablePageKeys.slice(
     0,
     MAX_BULK_SNAPSHOT_SELECTION,
@@ -463,6 +523,7 @@ export default function StoreSnapshotDetails() {
     selectedPageKeys.forEach((pageKey) => formData.append("pageKey", pageKey));
     submit(formData, { method: "POST" });
     setSelectedPageKeys([]);
+    setIsCreateSnapshotsModalOpen(false);
   };
 
   return (
@@ -536,7 +597,7 @@ export default function StoreSnapshotDetails() {
               <InlineStack align="space-between" blockAlign="start" gap="300">
                 <BlockStack gap="100">
                   <Text as="h2" variant="headingMd">
-                    Visitor breakdown
+                    Traffic Breakdown
                   </Text>
                   <Text as="p" tone="subdued">
                     Behavior captured across the storefront.
@@ -564,15 +625,14 @@ export default function StoreSnapshotDetails() {
                 <VisitorStat
                   title="Total visitors"
                   value={stats.visitorBreakdown.total}
-                  caption="Humans + zombies + bots"
+                  caption="All unique sessions"
                   color="#2c6ecb"
                 />
                 <VisitorStat
-                  title="Human visits"
+                  title="Humans"
                   value={stats.visitorBreakdown.humans}
-                  caption="Engaged real page visits"
+                  caption="Engaged real visitors"
                   color="#008060"
-                  badge="Visits"
                 />
                 <VisitorStat
                   title="Zombies"
@@ -586,6 +646,14 @@ export default function StoreSnapshotDetails() {
                   caption="Automated / non-human"
                   color="#b5371f"
                 />
+                {((stats.visitorBreakdown as any).pending || 0) > 0 && (
+                  <VisitorStat
+                    title="Pending"
+                    value={(stats.visitorBreakdown as any).pending}
+                    caption="Still classifying"
+                    color="#8c9196"
+                  />
+                )}
               </div>
               <div
                 style={{
@@ -601,11 +669,16 @@ export default function StoreSnapshotDetails() {
                   style={{ width: `${zombiePct}%`, background: "#8a6116" }}
                 />
                 <div style={{ width: `${botPct}%`, background: "#b5371f" }} />
+                {pendingPct > 0 && (
+                  <div
+                    style={{ width: `${pendingPct}%`, background: "#8c9196" }}
+                  />
+                )}
               </div>
               <InlineStack gap="400" wrap>
                 <LegendItem
                   color="#008060"
-                  label="Human visits"
+                  label="Humans"
                   value={`${stats.visitorBreakdown.humans.toLocaleString()} (${formatPercent(humanPct)})`}
                 />
                 <LegendItem
@@ -618,6 +691,13 @@ export default function StoreSnapshotDetails() {
                   label="Bots"
                   value={`${stats.visitorBreakdown.bots.toLocaleString()} (${formatPercent(botPct)})`}
                 />
+                {pendingPct > 0 && (
+                  <LegendItem
+                    color="#8c9196"
+                    label="Pending"
+                    value={`${((stats.visitorBreakdown as any).pending || 0).toLocaleString()} (${formatPercent(pendingPct)})`}
+                  />
+                )}
               </InlineStack>
               {snapshot.status === "ACTIVE" && stats.progress.target && (
                 <BlockStack gap="150">
@@ -645,69 +725,127 @@ export default function StoreSnapshotDetails() {
 
         <Layout.Section>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd" tone="subdued">
-              Engagement metrics per store snapshot
-            </Text>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
                 gap: 16,
               }}
             >
-              <MetricCard
-                title="Scroll Depth"
-                value={formatPercent(stats.metrics.avgScrollDepth)}
-                delta={stats.deltas.avgScrollDepth}
-                suffix="%"
-                caption="avg. page reach"
-              />
-              <MetricCard
-                title="Duration"
-                value={formatTime(stats.metrics.avgTimeOnPage)}
-                delta={stats.deltas.avgTimeOnPage}
-                suffix="s"
-                caption="avg. on page"
-              />
-              <MetricCard
-                title="Searches"
-                value={stats.metrics.searchCount.toLocaleString()}
-                delta={stats.deltas.searchCount}
-                caption="on-site queries"
-              />
-              <MetricCard
-                title="CTR"
-                value={formatPercent(stats.metrics.clickThroughRate)}
-                delta={stats.deltas.clickThroughRate}
-                suffix="%"
-                caption="click-through rate"
-              />
-              <MetricCard
-                title="ATC Rate"
-                value={formatPercent(stats.metrics.addToCartRate)}
-                delta={stats.deltas.addToCartRate}
-                suffix="%"
-                caption="add-to-cart rate"
-              />
-              <MetricCard
-                title="CVR"
-                value={formatPercent(stats.metrics.conversionRate)}
-                delta={stats.deltas.conversionRate}
-                suffix="%"
-                caption="conversion rate"
-              />
-              <MetricCard
-                title="Orders"
-                value={stats.metrics.orderCount.toLocaleString()}
-                delta={stats.deltas.orderCount}
-                caption="placed this snapshot"
-              />
-              <MetricCard
-                title="Revenue"
-                value={formatMoney(stats.metrics.revenue)}
-                delta={stats.deltas.revenue}
-                caption="attributed revenue"
-              />
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">
+                    Engagement
+                  </Text>
+                  <MetricGrid>
+                    <MetricTile
+                      title="Scroll"
+                      value={formatPercent(stats.metrics.avgScrollDepth)}
+                      delta={stats.deltas.avgScrollDepth}
+                      suffix="%"
+                      caption="avg. page reach"
+                      helpText="Average scroll depth across real visitor page views."
+                    />
+                    <MetricTile
+                      title="Duration"
+                      value={formatTime(
+                        (stats.metrics as any).avgSessionDuration ??
+                          stats.metrics.avgTimeOnPage,
+                      )}
+                      delta={
+                        (stats.deltas as any).avgSessionDuration ??
+                        stats.deltas.avgTimeOnPage
+                      }
+                      suffix="s"
+                      caption="avg. session"
+                      helpText="Average session duration from the first to last tracked store snapshot page view for each real visitor."
+                    />
+                    <MetricTile
+                      title="Searches"
+                      value={stats.metrics.searchCount.toLocaleString()}
+                      delta={stats.deltas.searchCount}
+                      caption="sessions"
+                      helpText="Unique real visitor sessions where an on-site search query was detected."
+                    />
+                    <MetricTile
+                      title="CTR"
+                      value={formatPercent(stats.metrics.clickThroughRate)}
+                      delta={stats.deltas.clickThroughRate}
+                      suffix="%"
+                      caption="click rate"
+                      helpText="Click-through rate: percentage of real visitor sessions with at least one link or button click."
+                    />
+                    <MetricTile
+                      title="Filters"
+                      value={Number(
+                        (stats.metrics as any).filterInteractionCount ?? 0,
+                      ).toLocaleString()}
+                      delta={(stats.deltas as any).filterInteractionCount}
+                      caption="changes"
+                      helpText="Collection filter interactions captured during real visitor sessions."
+                    />
+                    <MetricTile
+                      title="TPV"
+                      value={Number(
+                        (stats.metrics as any).totalPageViews ??
+                          stats.visitorBreakdown.total,
+                      ).toLocaleString()}
+                      delta={(stats.deltas as any).totalPageViews}
+                      caption="page views"
+                      helpText="Total Page Views: all tracked store snapshot page loads, including humans, zombies, bots, and pending visits."
+                    />
+                  </MetricGrid>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">
+                    Conversions
+                  </Text>
+                  <MetricGrid>
+                    <MetricTile
+                      title="ATC"
+                      value={formatPercent(stats.metrics.addToCartRate)}
+                      delta={stats.deltas.addToCartRate}
+                      suffix="%"
+                      caption="cart rate"
+                      helpText="Add-to-cart rate: percentage of real visitor sessions where an add-to-cart event was captured."
+                    />
+                    <MetricTile
+                      title="RCC"
+                      value={String(
+                        (stats.metrics as any).checkoutReachCount ?? 0,
+                      )}
+                      delta={(stats.deltas as any).checkoutReachCount}
+                      caption="checkout"
+                      helpText="Reached Checkout Count: unique real visitor sessions where checkout started. Older visits can also count when the only available signal is an exit toward checkout."
+                    />
+                    <MetricTile
+                      title="CVR"
+                      value={formatPercent(stats.metrics.conversionRate)}
+                      delta={stats.deltas.conversionRate}
+                      suffix="%"
+                      caption="conversion"
+                      helpText="Conversion rate: percentage of real visitor sessions attributed to an order."
+                    />
+                    <MetricTile
+                      title="Orders"
+                      value={stats.metrics.orderCount.toLocaleString()}
+                      delta={stats.deltas.orderCount}
+                      caption="placed this snapshot"
+                      helpText="Orders attributed to real visitor sessions captured during this store snapshot."
+                    />
+                    <MetricTile
+                      title="Revenue"
+                      value={formatMoney(stats.metrics.revenue)}
+                      delta={stats.deltas.revenue}
+                      caption="attributed revenue"
+                      helpText="Order revenue attributed to real visitor sessions captured during this store snapshot."
+                    />
+                  </MetricGrid>
+                </BlockStack>
+              </Card>
             </div>
           </BlockStack>
         </Layout.Section>
@@ -724,57 +862,113 @@ export default function StoreSnapshotDetails() {
                     {stats.recommendations.length} recommendations
                   </Badge>
                 </InlineStack>
-                <BlockStack gap="250">
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 14,
+                    overflowX: "auto",
+                    padding: "4px 4px 14px 0",
+                    scrollSnapType: "x mandatory",
+                  }}
+                >
                   {stats.recommendations.map((recommendation) => (
-                    <div
+                    <article
                       key={recommendation.pageKey}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: 16,
-                        alignItems: "center",
-                        padding: "12px 0",
-                        borderTop: "1px solid var(--p-color-border-subdued)",
+                        flex: "0 0 268px",
+                        scrollSnapAlign: "start",
+                        border: "1px solid #dfe3e8",
+                        borderRadius: 8,
+                        padding: 14,
+                        background: "#fff",
+                        boxShadow: "0 1px 2px rgba(0, 0, 0, 0.06)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                        minHeight: 260,
+                        overflow: "hidden",
                       }}
                     >
-                      <BlockStack gap="100">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text as="h3" variant="headingSm">
-                            {recommendation.title}
-                          </Text>
-                          <TypeBadge type={recommendation.pageType} />
-                          <Badge
-                            tone={
-                              recommendation.confidence >= 70
-                                ? "success"
-                                : "warning"
-                            }
-                          >
-                            {recommendation.confidence}% confidence
-                          </Badge>
-                        </InlineStack>
-                        <Text as="p" tone="subdued">
+                      <InlineStack align="space-between" blockAlign="start">
+                        <TypeBadge type={recommendation.pageType} />
+                        <Badge
+                          tone={
+                            recommendation.confidence >= 70
+                              ? "success"
+                              : "warning"
+                          }
+                        >
+                          {recommendation.confidence}% confidence
+                        </Badge>
+                      </InlineStack>
+                      <Text as="h3" variant="headingSm">
+                        {recommendation.pageTitle || recommendation.title}
+                      </Text>
+                      <div
+                        style={{
+                          borderTop: "1px solid var(--p-color-border-subdued)",
+                          borderBottom:
+                            "1px solid var(--p-color-border-subdued)",
+                          padding: "10px 0",
+                        }}
+                      >
+                        <RecommendationMetric
+                          label="Sessions"
+                          value={recommendationMetricValue(
+                            recommendation.pageKey,
+                            allPages,
+                            "sessions",
+                          )}
+                        />
+                        <RecommendationMetric
+                          label="CTR"
+                          value={recommendationMetricValue(
+                            recommendation.pageKey,
+                            allPages,
+                            "ctr",
+                          )}
+                        />
+                        <RecommendationMetric
+                          label="CVR"
+                          value={recommendationMetricValue(
+                            recommendation.pageKey,
+                            allPages,
+                            "cvr",
+                          )}
+                        />
+                      </div>
+                      <BlockStack gap="150">
+                        <Text as="p" variant="bodySm">
+                          <strong>{recommendation.title}</strong>
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
                           {recommendation.reason}
                         </Text>
-                        <Text as="p" tone="subdued">
-                          {recommendation.pagePath}
-                        </Text>
                       </BlockStack>
-                      {recommendation.id ? (
-                        <Button
-                          onClick={() =>
-                            submitAction("create-recommended-snapshot", {
-                              recommendationId: recommendation.id!,
-                            })
-                          }
-                          loading={isLoading}
-                        >
-                          {recommendation.actionLabel}
-                        </Button>
-                      ) : null}
-                    </div>
+                      <div style={{ marginTop: "auto" }}>
+                        {recommendation.id ? (
+                          billingAccess.canCreateNormalSnapshot ? (
+                            <Button
+                              fullWidth
+                              onClick={() =>
+                                submitAction("create-recommended-snapshot", {
+                                  recommendationId: recommendation.id!,
+                                })
+                              }
+                              loading={isLoading}
+                            >
+                              {recommendation.actionLabel}
+                            </Button>
+                          ) : (
+                            <Button fullWidth url="/app/upgrade">
+                              Upgrade to run snapshot
+                            </Button>
+                          )
+                        ) : null}
+                      </div>
+                    </article>
                   ))}
-                </BlockStack>
+                </div>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -834,50 +1028,24 @@ export default function StoreSnapshotDetails() {
             >
               <BlockStack gap="100">
                 <Text as="h2" variant="headingMd">
-                  Pages landed on and engaged with
+                  Sessions by Page
                 </Text>
-                <InlineStack gap="200" blockAlign="center" wrap>
-                  <Text as="span" tone="subdued">
-                    Select up to {MAX_BULK_SNAPSHOT_SELECTION} pages to create
-                    focused snapshots.
-                  </Text>
-                  <Badge tone={selectedPageCount > 0 ? "info" : undefined}>
-                    {selectedPageCount} selected
-                  </Badge>
-                </InlineStack>
                 <Text as="span" tone="subdued">
-                  {allPages.length.toLocaleString()} pages captured ·{" "}
-                  {pagesWithHumanVisitsCount.toLocaleString()} with human visits
-                  · each selected page snapshot will collect the target number
-                  of real visitors.
+                  Select up to {MAX_BULK_SNAPSHOT_SELECTION} pages to create
+                  focused snapshots.
                 </Text>
               </BlockStack>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "flex-end",
-                  justifyContent: "flex-end",
-                  gap: 12,
-                  flexWrap: "wrap",
-                  maxWidth: 560,
-                }}
-              >
-                <div style={{ width: 180 }}>
-                  <TextField
-                    label="Focused snapshot target"
-                    value={focusedTargetVisitors}
-                    onChange={setFocusedTargetVisitors}
-                    type="number"
-                    min={MIN_FOCUSED_SNAPSHOT_TARGET_VISITORS}
-                    max={MAX_FOCUSED_SNAPSHOT_TARGET_VISITORS}
-                    autoComplete="off"
-                    disabled={isLoading}
-                  />
-                </div>
+              <InlineStack gap="200">
                 <Button
                   variant="primary"
-                  onClick={createSelectedSnapshots}
+                  onClick={() => {
+                    if (!billingAccess.canCreateNormalSnapshot) {
+                      window.location.href = "/app/upgrade";
+                      return;
+                    }
+                    setIsCreateSnapshotsModalOpen(true);
+                  }}
                   disabled={selectedPageCount === 0}
                   loading={
                     isLoading &&
@@ -885,8 +1053,9 @@ export default function StoreSnapshotDetails() {
                       "create-page-snapshots"
                   }
                 >
-                  Create snapshots
-                  {selectedPageCount > 0 ? ` (${selectedPageCount})` : ""}
+                  {billingAccess.canCreateNormalSnapshot
+                    ? "Create snapshot"
+                    : "Upgrade to create"}
                 </Button>
                 {selectedPageCount > 0 ? (
                   <Button
@@ -896,7 +1065,7 @@ export default function StoreSnapshotDetails() {
                     Clear
                   </Button>
                 ) : null}
-              </div>
+              </InlineStack>
             </div>
 
             <div
@@ -984,7 +1153,7 @@ export default function StoreSnapshotDetails() {
                     {[
                       "Page",
                       "Type",
-                      "Human visits",
+                      "Sessions",
                       "CTR",
                       "CVR",
                       "Revenue",
@@ -1000,9 +1169,34 @@ export default function StoreSnapshotDetails() {
                             "1px solid var(--p-color-border-subdued)",
                         }}
                       >
-                        <Text as="span" tone="subdued" fontWeight="semibold">
-                          {header}
-                        </Text>
+                        {header === "Weakness" ? (
+                          <InlineStack
+                            gap="100"
+                            blockAlign="center"
+                            align="end"
+                          >
+                            <Text
+                              as="span"
+                              tone="subdued"
+                              fontWeight="semibold"
+                            >
+                              Weakness
+                            </Text>
+                            <Tooltip content="Weakness is a 0-100 score estimating page friction from engagement signals like scroll depth, clicks, exits, bot/zombie traffic, add-to-cart rate, conversion rate, and search/filter behavior. Higher means the page is a stronger candidate for a focused audit.">
+                              <button
+                                type="button"
+                                aria-label="What weakness means"
+                                style={infoButtonStyle}
+                              >
+                                ?
+                              </button>
+                            </Tooltip>
+                          </InlineStack>
+                        ) : (
+                          <Text as="span" tone="subdued" fontWeight="semibold">
+                            {header}
+                          </Text>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -1045,16 +1239,13 @@ export default function StoreSnapshotDetails() {
                             <Text as="span" fontWeight="semibold">
                               {page.pageTitle}
                             </Text>
-                            <Text as="span" tone="subdued">
-                              {page.pagePath}
-                            </Text>
                           </BlockStack>
                         </td>
                         <td style={tableNumStyle}>
                           <TypeBadge type={page.pageType} />
                         </td>
                         <td style={tableNumStyle}>
-                          {page.humanVisits.toLocaleString()}
+                          {page.uniqueHumanSessions.toLocaleString()}
                         </td>
                         <td style={tableNumStyle}>
                           {formatPercent(page.clickThroughRate)}
@@ -1130,6 +1321,80 @@ export default function StoreSnapshotDetails() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      <Modal
+        open={isCreateSnapshotsModalOpen}
+        onClose={() => setIsCreateSnapshotsModalOpen(false)}
+        title="Create focused snapshots"
+        primaryAction={{
+          content: "Create snapshots",
+          onAction: createSelectedSnapshots,
+          disabled:
+            selectedPageCount === 0 || !billingAccess.canCreateNormalSnapshot,
+          loading:
+            isLoading &&
+            navigation.formData?.get("action") === "create-page-snapshots",
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setIsCreateSnapshotsModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <BlockStack gap="200">
+              <Text as="p" tone="subdued">
+                These pages will each get a focused audit snapshot.
+              </Text>
+              <div
+                style={{
+                  border: "1px solid var(--p-color-border-subdued)",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                }}
+              >
+                {selectedPagesForModal.map((page, index) => (
+                  <div
+                    key={page.pageKey}
+                    style={{
+                      padding: "12px 14px",
+                      borderTop:
+                        index === 0
+                          ? "none"
+                          : "1px solid var(--p-color-border-subdued)",
+                    }}
+                  >
+                    <InlineStack align="space-between" blockAlign="center">
+                      <BlockStack gap="050">
+                        <Text as="span" fontWeight="semibold">
+                          {page.pageTitle}
+                        </Text>
+                        <Text as="span" tone="subdued">
+                          {page.uniqueHumanSessions.toLocaleString()} sessions
+                        </Text>
+                      </BlockStack>
+                      <TypeBadge type={page.pageType} />
+                    </InlineStack>
+                  </div>
+                ))}
+              </div>
+            </BlockStack>
+            <TextField
+              label="Target count per audit"
+              value={focusedTargetVisitors}
+              onChange={setFocusedTargetVisitors}
+              type="number"
+              min={MIN_FOCUSED_SNAPSHOT_TARGET_VISITORS}
+              max={MAX_FOCUSED_SNAPSHOT_TARGET_VISITORS}
+              helpText="Each selected focused snapshot will collect this many real visitors."
+              autoComplete="off"
+              disabled={isLoading}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -1257,36 +1522,21 @@ function TrackingStatusBanner({
 }: {
   trackerStatus: StorefrontTrackerStatus;
 }) {
-  if (trackerStatus.status === "active") {
-    return (
-      <Banner tone="success">
-        Rich storefront tracking is active on{" "}
-        {formatStorefrontHost(trackerStatus.storefrontUrl)}.
-      </Banner>
-    );
-  }
-
+  const isActive = trackerStatus.status === "active";
   return (
-    <Banner
-      title={
-        trackerStatus.status === "missing"
-          ? "Rich storefront tracking is not active"
-          : "Could not verify rich storefront tracking"
-      }
-      tone={trackerStatus.status === "missing" ? "warning" : "info"}
-    >
-      <BlockStack gap="100">
-        <Text as="p">
-          {trackerStatus.message}{" "}
-          {trackerStatus.status === "missing"
-            ? "This snapshot will not collect storefront visits until the Mouse Whisperer theme app embed is enabled on the live theme."
-            : "If the Mouse Whisperer theme app embed is enabled on the live theme, this snapshot can still collect visits; otherwise no visits will be collected."}
+    <InlineStack align="space-between" blockAlign="center" gap="300">
+      <InlineStack gap="200" blockAlign="center">
+        <Text as="span" variant="bodyMd" tone="subdued">
+          Rich storefront tracking
         </Text>
-        <Text as="p" tone="subdued">
-          Checked {formatStorefrontHost(trackerStatus.storefrontUrl)}.
-        </Text>
-      </BlockStack>
-    </Banner>
+        <Badge tone={isActive ? "success" : undefined}>
+          {isActive ? "Active" : "Not active"}
+        </Badge>
+      </InlineStack>
+      <Text as="span" tone="subdued">
+        {formatStorefrontHost(trackerStatus.storefrontUrl)}
+      </Text>
+    </InlineStack>
   );
 }
 
@@ -1305,6 +1555,19 @@ const tableNumStyle = {
   whiteSpace: "nowrap" as const,
 };
 
+const infoButtonStyle = {
+  width: 18,
+  height: 18,
+  borderRadius: "50%",
+  border: "1px solid var(--p-color-border)",
+  background: "var(--p-color-bg-surface)",
+  color: "var(--p-color-text-subdued)",
+  fontSize: 12,
+  lineHeight: "16px",
+  padding: 0,
+  cursor: "help",
+};
+
 function compareStoreSnapshotPages(
   a: StoreSnapshotPageSummary,
   b: StoreSnapshotPageSummary,
@@ -1313,7 +1576,7 @@ function compareStoreSnapshotPages(
 ) {
   const directionMultiplier = direction === "asc" ? 1 : -1;
   const numberValue = (page: StoreSnapshotPageSummary) => {
-    if (sortKey === "humanVisits") return page.humanVisits;
+    if (sortKey === "humanVisits") return page.uniqueHumanSessions;
     if (sortKey === "clickThroughRate") return page.clickThroughRate;
     if (sortKey === "conversionRate") return page.conversionRate;
     if (sortKey === "revenue") return page.revenue;
@@ -1415,29 +1678,71 @@ function LegendItem({
   );
 }
 
-function MetricCard({
+function MetricGrid({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+        gap: 12,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MetricTile({
   title,
   value,
   delta,
   suffix,
   caption,
+  helpText,
 }: {
   title: string;
   value: string;
   delta?: number | null;
   suffix?: string;
   caption: string;
+  helpText?: string;
 }) {
+  const titleNode = (
+    <Text as="span" tone="subdued" fontWeight="semibold">
+      {title}
+    </Text>
+  );
+
   return (
-    <Card>
-      <BlockStack gap="200">
-        <Text as="p" tone="subdued" fontWeight="semibold">
-          {title}
-        </Text>
-        <Text as="p" variant="heading2xl" fontWeight="semibold">
+    <div
+      style={{
+        border: "1px solid var(--p-color-border-subdued)",
+        borderRadius: 8,
+        padding: "14px 16px",
+        minHeight: 124,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "22px 44px minmax(30px, auto)",
+          rowGap: 8,
+          height: "100%",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {helpText ? (
+            <Tooltip content={helpText}>
+              <span style={{ cursor: "help" }}>{titleNode}</span>
+            </Tooltip>
+          ) : (
+            titleNode
+          )}
+        </div>
+        <Text as="p" variant="headingXl" fontWeight="semibold">
           {value}
         </Text>
-        <InlineStack gap="150" blockAlign="center">
+        <InlineStack gap="150" blockAlign="start">
           {typeof delta === "number" ? (
             <Badge tone={delta >= 0 ? "success" : "critical"}>
               {delta >= 0 ? "+" : ""}
@@ -1448,9 +1753,48 @@ function MetricCard({
             {caption}
           </Text>
         </InlineStack>
-      </BlockStack>
-    </Card>
+      </div>
+    </div>
   );
+}
+
+function RecommendationMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 12,
+        padding: "3px 0",
+      }}
+    >
+      <Text as="span" tone="subdued">
+        {label}
+      </Text>
+      <Text as="span" fontWeight="semibold">
+        {value}
+      </Text>
+    </div>
+  );
+}
+
+function recommendationMetricValue(
+  pageKey: string,
+  pages: StoreSnapshotPageSummary[],
+  metric: "sessions" | "ctr" | "cvr",
+) {
+  const page = pages.find((item) => item.pageKey === pageKey);
+  if (!page) return "-";
+  if (metric === "sessions") return page.uniqueHumanSessions.toLocaleString();
+  if (metric === "ctr") return formatPercent(page.clickThroughRate);
+  return formatPercent(page.conversionRate);
 }
 
 function TypeBadge({ type }: { type: ResourceType | null }) {

@@ -75,7 +75,33 @@ const PREVIEW_RESOURCE_LIMITS: Partial<Record<AbTestPageType, number>> = {
   BLOG: 2500,
 };
 
-type ThemeTemplateVariantKind = "duplicate" | "recommendation";
+type ThemeTemplateVariantKind = "duplicate" | "recommendation" | "snapshot";
+
+export type SnapshotTemplateIntervention = {
+  id: string;
+  label: string;
+  reason: string;
+  sectionTitle: string;
+  sectionBody: string;
+  priority: number;
+};
+
+export type SnapshotTemplateTransformation = {
+  primaryWeakness: string;
+  evidence: string;
+  intervention: SnapshotTemplateIntervention;
+  sectionType?: string | null;
+  insertedSectionId?: string | null;
+  insertionPoint?: string | null;
+  changedFiles?: string[];
+  status?: "applied" | "not_applicable";
+  notes?: string[];
+};
+
+export type SnapshotTemplateGenerationPlan = {
+  transformation?: SnapshotTemplateTransformation | null;
+  [key: string]: unknown;
+};
 
 function previewSecret() {
   return (
@@ -114,10 +140,12 @@ export async function createThemeTemplateVariant({
   admin,
   control,
   kind,
+  generationPlan,
 }: {
   admin: ShopifyAdminClient;
   control: ThemeTemplateOption;
   kind: ThemeTemplateVariantKind;
+  generationPlan?: SnapshotTemplateGenerationPlan | null;
 }) {
   if (!control.themeId || !control.filename) {
     throw new Error("Select an original template before creating a variant.");
@@ -133,8 +161,34 @@ export async function createThemeTemplateVariant({
   const sourceSuffix = control.templateSuffix || templateBase;
   const targetSuffix = buildGeneratedTemplateSuffix(kind, sourceSuffix);
   const targetFilename = `templates/${templateBase}.${targetSuffix}.${extension}`;
+  const transformation =
+    kind === "snapshot" && generationPlan?.transformation
+      ? generationPlan.transformation
+      : null;
+  const sectionType =
+    transformation && extension === "json"
+      ? await findSnapshotSectionType(admin, control.themeId)
+      : null;
+  const transformed = transformation
+    ? transformSnapshotTemplateContent({
+        content: sourceContent,
+        extension,
+        targetFilename,
+        targetSuffix,
+        pageType: control.pageType,
+        transformation: {
+          ...transformation,
+          sectionType,
+        },
+      })
+    : { content: sourceContent, transformation };
 
-  await upsertThemeFile(admin, control.themeId, targetFilename, sourceContent);
+  await upsertThemeFile(
+    admin,
+    control.themeId,
+    targetFilename,
+    transformed.content,
+  );
 
   const previewPageUrl = replacePreviewUrlSuffix(
     control.previewPageUrl,
@@ -143,7 +197,9 @@ export async function createThemeTemplateVariant({
   const templateName =
     kind === "recommendation"
       ? `Recommended ${getAbTestPageTypeLabel(control.pageType).toLowerCase()} variant`
-      : `${control.templateName} copy`;
+      : kind === "snapshot"
+        ? `Snapshot-guided ${getAbTestPageTypeLabel(control.pageType).toLowerCase()} variant`
+        : `${control.templateName} copy`;
 
   return {
     ...control,
@@ -155,7 +211,252 @@ export async function createThemeTemplateVariant({
     previewImageUrl: signedTemplatePreviewPath(previewPageUrl),
     assignedCount: 0,
     assignedLabel: "New template",
+    transformation: transformed.transformation,
   };
+}
+
+async function findSnapshotSectionType(
+  admin: ShopifyAdminClient,
+  themeId: string,
+) {
+  const candidates = [
+    "sections/custom-liquid.liquid",
+    "sections/rich-text.liquid",
+    "sections/image-with-text.liquid",
+  ];
+  const response = await admin.graphql(
+    `#graphql
+      query MouseWhispererSnapshotSectionFiles($themeId: ID!, $filenames: [String!]!) {
+        theme(id: $themeId) {
+          files(filenames: $filenames, first: 10) {
+            nodes {
+              filename
+            }
+          }
+        }
+      }
+    `,
+    { variables: { themeId, filenames: candidates } },
+  );
+  const payload = await response.json();
+  const errors = payload.errors || [];
+  if (errors.length) return null;
+  const available = new Set(
+    (payload?.data?.theme?.files?.nodes || []).map(
+      (file: { filename?: string }) => file.filename,
+    ),
+  );
+  if (available.has("sections/custom-liquid.liquid")) return "custom-liquid";
+  if (available.has("sections/rich-text.liquid")) return "rich-text";
+  if (available.has("sections/image-with-text.liquid"))
+    return "image-with-text";
+  return null;
+}
+
+function transformSnapshotTemplateContent({
+  content,
+  extension,
+  targetFilename,
+  targetSuffix,
+  pageType,
+  transformation,
+}: {
+  content: string;
+  extension: string;
+  targetFilename: string;
+  targetSuffix: string;
+  pageType: AbTestPageType;
+  transformation: SnapshotTemplateTransformation;
+}) {
+  const notes: string[] = [];
+  if (extension !== "json") {
+    return {
+      content,
+      transformation: {
+        ...transformation,
+        status: "not_applicable" as const,
+        changedFiles: [targetFilename],
+        notes: [
+          "The selected template is Liquid, so Mouse Whisperer copied the template and attached the snapshot plan without editing theme structure.",
+        ],
+      },
+    };
+  }
+
+  if (!transformation.sectionType) {
+    return {
+      content,
+      transformation: {
+        ...transformation,
+        status: "not_applicable" as const,
+        changedFiles: [targetFilename],
+        notes: [
+          "No compatible theme section file was detected for automatic insertion, so Mouse Whisperer copied the template and attached the snapshot plan.",
+        ],
+      },
+    };
+  }
+
+  let template: any;
+  try {
+    template = JSON.parse(stripShopifyJsonTemplateComment(content));
+  } catch {
+    return {
+      content,
+      transformation: {
+        ...transformation,
+        status: "not_applicable" as const,
+        changedFiles: [targetFilename],
+        notes: [
+          "The source JSON template could not be parsed, so Mouse Whisperer copied the template and attached the snapshot plan.",
+        ],
+      },
+    };
+  }
+
+  if (!template || typeof template !== "object") {
+    return {
+      content,
+      transformation: {
+        ...transformation,
+        status: "not_applicable" as const,
+        changedFiles: [targetFilename],
+        notes: ["The source template was not a Shopify JSON template object."],
+      },
+    };
+  }
+
+  template.sections = template.sections || {};
+  template.order = Array.isArray(template.order) ? template.order : [];
+  const sectionId =
+    `mw_snapshot_${targetSuffix.replace(/[^a-z0-9_]/gi, "_")}`.slice(0, 48);
+  const sourceOrder = [...template.order];
+  const insertionIndex = findSnapshotInsertionIndex(template, pageType);
+  template.sections[sectionId] = buildSnapshotSection(
+    transformation.sectionType,
+    transformation,
+  );
+  if (!template.order.includes(sectionId)) {
+    template.order.splice(insertionIndex, 0, sectionId);
+  }
+  notes.push(
+    `Inserted ${transformation.sectionType} section ${sectionId} at order position ${insertionIndex + 1}.`,
+  );
+
+  return {
+    content: `${JSON.stringify(template, null, 2)}\n`,
+    transformation: {
+      ...transformation,
+      status: "applied" as const,
+      sectionType: transformation.sectionType,
+      insertedSectionId: sectionId,
+      insertionPoint:
+        sourceOrder[insertionIndex - 1] ||
+        sourceOrder[insertionIndex] ||
+        "template-start",
+      changedFiles: [targetFilename],
+      notes,
+    },
+  };
+}
+
+function stripShopifyJsonTemplateComment(content: string) {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith("/*")) return content;
+
+  const commentEnd = trimmed.indexOf("*/");
+  if (commentEnd < 0) return content;
+
+  const afterComment = trimmed.slice(commentEnd + 2).trimStart();
+  return afterComment.startsWith("{") ? afterComment : content;
+}
+
+function findSnapshotInsertionIndex(template: any, pageType: AbTestPageType) {
+  const order = Array.isArray(template.order) ? template.order : [];
+  if (!order.length) return 0;
+  const mainIndex = order.findIndex((sectionId: string) => {
+    const type = String(
+      template.sections?.[sectionId]?.type || "",
+    ).toLowerCase();
+    if (pageType === "PRODUCT") return type.includes("main-product");
+    if (pageType === "COLLECTION") return type.includes("main-collection");
+    if (pageType === "CART") return type.includes("main-cart");
+    if (pageType === "BLOG")
+      return type.includes("main-article") || type.includes("main-blog");
+    return type.includes("main-page") || type.includes("main");
+  });
+  return mainIndex >= 0 ? mainIndex + 1 : Math.min(1, order.length);
+}
+
+function buildSnapshotSection(
+  sectionType: string,
+  transformation: SnapshotTemplateTransformation,
+) {
+  const heading =
+    transformation.intervention?.sectionTitle ||
+    transformation.primaryWeakness ||
+    "Snapshot-guided improvement";
+  const body =
+    transformation.intervention?.sectionBody ||
+    transformation.evidence ||
+    "This variant was generated from the selected Mouse Whisperer snapshot.";
+  const customLiquid = `<div class="mw-snapshot-variant" data-mw-source="snapshot">
+  <h2>${escapeHtml(heading)}</h2>
+  <p>${escapeHtml(body)}</p>
+</div>`;
+  if (sectionType === "custom-liquid") {
+    return {
+      type: "custom-liquid",
+      settings: {
+        custom_liquid: customLiquid,
+      },
+    };
+  }
+  if (sectionType === "image-with-text") {
+    return {
+      type: "image-with-text",
+      blocks: {
+        heading: {
+          type: "heading",
+          settings: { heading, heading_size: "h2" },
+        },
+        text: {
+          type: "text",
+          settings: { text: `<p>${escapeHtml(body)}</p>`, text_style: "body" },
+        },
+      },
+      block_order: ["heading", "text"],
+      settings: {
+        image_position: "left",
+        layout: "text_first",
+      },
+    };
+  }
+  return {
+    type: "rich-text",
+    blocks: {
+      heading: {
+        type: "heading",
+        settings: { heading, heading_size: "h2" },
+      },
+      text: {
+        type: "text",
+        settings: { text: `<p>${escapeHtml(body)}</p>` },
+      },
+    },
+    block_order: ["heading", "text"],
+    settings: {
+      full_width: false,
+    },
+  };
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function readThemeFileContent(
@@ -279,7 +580,8 @@ function buildGeneratedTemplateSuffix(
       .replace(/[^a-z0-9-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 34) || "template";
-  const marker = kind === "recommendation" ? "rec" : "copy";
+  const marker =
+    kind === "recommendation" ? "rec" : kind === "snapshot" ? "snap" : "copy";
   const unique = Date.now().toString(36).slice(-6);
   return `mw-${marker}-${readableSource}-${unique}`.slice(0, 64);
 }
@@ -838,6 +1140,9 @@ export async function createTemplateAbTest({
   variantTemplateSuffix,
   variantTemplateFileName,
   trafficSplit,
+  sourceSnapshotId,
+  sourceSnapshotKind,
+  generationPlan,
 }: {
   shop: string;
   name: string;
@@ -854,6 +1159,9 @@ export async function createTemplateAbTest({
   variantTemplateSuffix?: string | null;
   variantTemplateFileName?: string | null;
   trafficSplit: number;
+  sourceSnapshotId?: string | null;
+  sourceSnapshotKind?: string | null;
+  generationPlan?: unknown;
 }) {
   const split = Math.min(95, Math.max(5, Math.round(trafficSplit || 50)));
   return prisma.abTest.create({
@@ -867,6 +1175,11 @@ export async function createTemplateAbTest({
       themeName: themeName || null,
       themeRole: themeRole || null,
       trafficSplit: split,
+      sourceSnapshotId: sourceSnapshotId || null,
+      sourceSnapshotKind: sourceSnapshotKind || null,
+      generationPlan: generationPlan
+        ? (JSON.parse(JSON.stringify(generationPlan)) as any)
+        : undefined,
       variants: {
         create: [
           {
@@ -875,6 +1188,7 @@ export async function createTemplateAbTest({
             templateName: controlTemplateName || "Default",
             templateSuffix: controlTemplateSuffix || null,
             templateFileName: controlTemplateFileName || null,
+            generationMode: "ORIGINAL",
             isControl: true,
             trafficPercent: split,
             sortOrder: 0,
@@ -885,6 +1199,12 @@ export async function createTemplateAbTest({
             templateName: variantTemplateName || "Variant",
             templateSuffix: variantTemplateSuffix || null,
             templateFileName: variantTemplateFileName || null,
+            generationMode: sourceSnapshotId ? "SNAPSHOT" : "EXISTING",
+            sourceSnapshotId: sourceSnapshotId || null,
+            sourceSnapshotKind: sourceSnapshotKind || null,
+            generationPlan: generationPlan
+              ? (JSON.parse(JSON.stringify(generationPlan)) as any)
+              : undefined,
             isControl: false,
             trafficPercent: 100 - split,
             sortOrder: 1,
@@ -1369,6 +1689,68 @@ export async function attributeAbTestAddToCart({
   return result.count + visitUpdates;
 }
 
+export async function attributeAbTestCheckoutStarted({
+  shop,
+  sessionId,
+  timestamp,
+}: {
+  shop?: string | null;
+  sessionId: string;
+  timestamp?: number | string | Date | null;
+}) {
+  if (!sessionId) return 0;
+  const eventDate = timestamp ? new Date(timestamp) : new Date();
+
+  const result = await prisma.abTestAssignment.updateMany({
+    where: {
+      ...(shop ? { shop } : {}),
+      sessionId,
+      test: { status: { in: ["LIVE", "PAUSED", "ENDED"] as AbTestStatus[] } },
+      checkoutStarted: false,
+    },
+    data: {
+      checkoutStarted: true,
+      checkoutStartedAt: eventDate,
+    },
+  });
+
+  const thirtyDaysBeforeEvent = new Date(eventDate);
+  thirtyDaysBeforeEvent.setDate(thirtyDaysBeforeEvent.getDate() - 30);
+
+  const visits = await prisma.abTestVisit.findMany({
+    where: {
+      ...(shop ? { shop } : {}),
+      sessionId,
+      checkoutStarted: false,
+      startedAt: { gte: thirtyDaysBeforeEvent, lte: eventDate },
+      test: { status: { in: ["LIVE", "PAUSED", "ENDED"] as AbTestStatus[] } },
+    },
+    orderBy: [
+      { testId: "asc" },
+      { isLandingPage: "desc" },
+      { pageOrder: "asc" },
+      { startedAt: "asc" },
+    ],
+  });
+
+  const updatedTestIds = new Set<string>();
+  let visitUpdates = 0;
+  for (const visit of visits) {
+    if (updatedTestIds.has(visit.testId)) continue;
+    await prisma.abTestVisit.update({
+      where: { id: visit.id },
+      data: {
+        checkoutStarted: true,
+        checkoutStartedAt: eventDate,
+      },
+    });
+    updatedTestIds.add(visit.testId);
+    visitUpdates += 1;
+  }
+
+  return result.count + visitUpdates;
+}
+
 export async function attributeAbTestConversion({
   shop,
   sessionId,
@@ -1474,14 +1856,162 @@ export async function getAbTestStats(testId: string) {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   }
 
-  function countCtaClicks(value: string | null) {
-    if (!value) return 0;
+  type TrackedClick = {
+    label?: string;
+    tag?: string;
+    href?: string | null;
+    zone?: string;
+  };
+
+  function parseTrackedClicks(value: string | null): TrackedClick[] {
+    if (!value) return [];
     try {
       const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.length : 0;
-    } catch {
-      return 0;
+      if (Array.isArray(parsed)) return parsed;
+
+      if (parsed && typeof parsed === "object") {
+        return Object.entries(parsed).flatMap(([label, count]) => {
+          const clickCount = typeof count === "number" ? count : 0;
+          return Array.from({ length: clickCount }, () => ({
+            label,
+            tag: "button",
+            zone: "main",
+          }));
+        });
+      }
+    } catch {}
+
+    return [];
+  }
+
+  function isInteractiveClick(click: TrackedClick) {
+    const tag = (click.tag || "").toLowerCase();
+    return tag === "a" || tag === "button" || tag === "input" || tag === "img";
+  }
+
+  function clickCategory(click: TrackedClick) {
+    const zone = (click.zone || "main").toLowerCase();
+    if (zone === "header") return "Header";
+    if (zone === "footer") return "Footer";
+    if (zone === "widget") return "Widget";
+
+    const label = (click.label || "").toLowerCase();
+    const tag = (click.tag || "").toLowerCase();
+
+    if (
+      tag === "img" ||
+      /image|gallery|zoom|slide|photo|thumbnail|lightbox|carousel/i.test(label)
+    ) {
+      return "Image";
     }
+
+    if (/review|rating|star|testimonial|recommend/i.test(label)) {
+      return "Widget";
+    }
+
+    if (
+      tag === "a" &&
+      click.href &&
+      !/add to cart|buy|next|prev|previous|subscribe|more|checkout/i.test(label)
+    ) {
+      return "Link";
+    }
+
+    return "Button";
+  }
+
+  function countCtaClicks(value: string | null) {
+    return parseTrackedClicks(value).filter(isInteractiveClick).length;
+  }
+
+  function clickCategoryBreakdown(rows: Array<{ ctaClicks: string | null }>) {
+    const categoryMap = new Map<string, Map<string, number>>();
+    let totalClicks = 0;
+
+    for (const row of rows) {
+      for (const click of parseTrackedClicks(row.ctaClicks).filter(
+        isInteractiveClick,
+      )) {
+        const category = clickCategory(click);
+        const label = (click.label || category).trim() || category;
+        if (!categoryMap.has(category)) categoryMap.set(category, new Map());
+        const categoryItems = categoryMap.get(category)!;
+        categoryItems.set(label, (categoryItems.get(label) || 0) + 1);
+        totalClicks += 1;
+      }
+    }
+
+    const categoryOrder = [
+      "Image",
+      "Button",
+      "Link",
+      "Widget",
+      "Header",
+      "Footer",
+    ];
+    const categoryRank = (key: string) => {
+      const index = categoryOrder.indexOf(key);
+      return index === -1 ? categoryOrder.length : index;
+    };
+    return Array.from(categoryMap.entries())
+      .map(([category, entries]) => {
+        const items = Array.from(entries.entries())
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+        const count = items.reduce((sum, item) => sum + item.count, 0);
+        return {
+          key: category,
+          label: category,
+          count,
+          percent: totalClicks ? (count / totalClicks) * 100 : 0,
+          items,
+        };
+      })
+      .sort((a, b) => {
+        const orderDiff = categoryRank(a.key) - categoryRank(b.key);
+        if (orderDiff !== 0) return orderDiff;
+        return b.count - a.count || a.label.localeCompare(b.label);
+      });
+  }
+
+  function hasInteractiveClick(value: string | null) {
+    return parseTrackedClicks(value).some(isInteractiveClick);
+  }
+
+  function normalizeBreakdownPath(path?: string | null) {
+    if (!path) return null;
+    const cleanPath = path.split("?")[0]?.split("#")[0]?.trim();
+    if (!cleanPath) return null;
+    if (cleanPath === "/") return "/";
+    return cleanPath.replace(/\/+$/, "");
+  }
+
+  function productHandleFromPath(path?: string | null) {
+    const normalized = normalizeBreakdownPath(path);
+    if (!normalized) return null;
+    const match = normalized.match(/(?:^|\/)products\/([^/]+)$/);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  }
+
+  function canonicalPageBreakdownKey(row: {
+    pagePath?: string | null;
+    resourceType?: ResourceType | null;
+    resourceHandle?: string | null;
+    pageTitle?: string | null;
+  }) {
+    const productHandle =
+      row.resourceType === "PRODUCT"
+        ? row.resourceHandle || productHandleFromPath(row.pagePath)
+        : productHandleFromPath(row.pagePath);
+
+    if (productHandle) return `/products/${productHandle}`;
+
+    return (
+      normalizeBreakdownPath(row.pagePath) ||
+      row.resourceHandle ||
+      row.pageTitle ||
+      "Unknown page"
+    );
   }
 
   function topBreakdown<T>(
@@ -1543,6 +2073,9 @@ export async function getAbTestStats(testId: string) {
       ? assignmentHumans.length
       : new Set(visitHumans.map((visit) => visit.sessionId)).size;
     const atc = commerceRows.filter((row) => row.addedToCart).length;
+    const checkoutStarts = commerceRows.filter(
+      (row) => row.checkoutStarted,
+    ).length;
     const conversions = commerceRows.filter((row) => row.converted).length;
     const revenue = commerceRows.reduce(
       (sum, row) => sum + Number(row.orderValue || 0),
@@ -1552,9 +2085,11 @@ export async function getAbTestStats(testId: string) {
       (sum, row) => sum + countCtaClicks(row.ctaClicks),
       0,
     );
-    const ctaVisitors = metricRows.filter(
-      (row) => countCtaClicks(row.ctaClicks) > 0,
-    ).length;
+    const ctaVisitorSessions = new Set(
+      metricRows
+        .filter((row) => hasInteractiveClick(row.ctaClicks))
+        .map((row) => row.sessionId),
+    );
     const searches = visitHumans.filter((row) =>
       row.searchQuery?.trim(),
     ).length;
@@ -1573,6 +2108,7 @@ export async function getAbTestStats(testId: string) {
       assignedVisitors: assignments.length,
       visitors,
       realVisitors: visitors,
+      totalPageViews: qualityRows.length,
       humanPageViews: visitHumans.length || visitors,
       zombies: qualityRows.filter((row) => row.visitorType === "ZOMBIE").length,
       bots: qualityRows.filter((row) => row.visitorType === "BOT").length,
@@ -1580,6 +2116,7 @@ export async function getAbTestStats(testId: string) {
         .length,
       addToCarts: atc,
       addToCartRate: visitors ? (atc / visitors) * 100 : 0,
+      checkoutStarts,
       conversionRate: visitors ? (conversions / visitors) * 100 : 0,
       conversions,
       orders: conversions,
@@ -1588,7 +2125,7 @@ export async function getAbTestStats(testId: string) {
       avgTimeOnPage: average(metricRows, (row) => row.timeOnPage),
       avgScrollDepth: average(metricRows, (row) => row.scrollDepth),
       ctaClicks,
-      ctaClickRate: visitors ? (ctaVisitors / visitors) * 100 : 0,
+      ctaClickRate: visitors ? (ctaVisitorSessions.size / visitors) * 100 : 0,
       searches,
       filterInteractions,
       exits,
@@ -1599,8 +2136,7 @@ export async function getAbTestStats(testId: string) {
       ),
       pageBreakdown: topBreakdown(
         pageBreakdownRows,
-        (row) =>
-          row.pagePath || row.resourceHandle || row.pageTitle || "Unknown page",
+        (row) => canonicalPageBreakdownKey(row),
         (row) =>
           row.pageTitle || row.pagePath || row.resourceHandle || "Unknown page",
       ),
@@ -1618,6 +2154,7 @@ export async function getAbTestStats(testId: string) {
         (row) =>
           row.exitType ? row.exitType.replaceAll("_", " ") : "Unknown exit",
       ),
+      zoneBreakdown: clickCategoryBreakdown(metricRows),
     };
   });
 }

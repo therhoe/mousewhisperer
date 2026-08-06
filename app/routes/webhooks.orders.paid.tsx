@@ -6,7 +6,12 @@ import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
+<<<<<<< HEAD
     const { payload, shop, topic, admin } = await authenticate.webhook(request);
+=======
+    const { payload, shop, topic, admin } =
+      await authenticate.webhook(request);
+>>>>>>> 84e55fd (upd)
 
     console.log(`[MW Webhook] Received ${topic} for ${shop}`);
 

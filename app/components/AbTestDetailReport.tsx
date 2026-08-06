@@ -28,6 +28,15 @@ type BreakdownItem = {
   percent: number;
 };
 
+type ClickBreakdownItem = {
+  label: string;
+  count: number;
+};
+
+type ClickCategoryBreakdown = BreakdownItem & {
+  items?: ClickBreakdownItem[];
+};
+
 export type AbTestReportStatsRow = {
   variantId: string;
   key: string;
@@ -37,12 +46,14 @@ export type AbTestReportStatsRow = {
   assignedVisitors: number;
   visitors: number;
   realVisitors: number;
+  totalPageViews?: number;
   humanPageViews: number;
   zombies: number;
   bots: number;
   pending: number;
   addToCarts: number;
   addToCartRate: number;
+  checkoutStarts?: number;
   conversionRate: number;
   conversions: number;
   orders: number;
@@ -60,6 +71,7 @@ export type AbTestReportStatsRow = {
   deviceBreakdown?: BreakdownItem[];
   countryBreakdown?: BreakdownItem[];
   exitBreakdown?: BreakdownItem[];
+  zoneBreakdown?: ClickCategoryBreakdown[];
 };
 
 export type AbTestReportTest = {
@@ -94,6 +106,13 @@ function formatDuration(milliseconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function goalLabel(goal: string) {
+  return goal
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function primaryGoalMetric(row: AbTestReportStatsRow, goal: string) {
@@ -228,6 +247,70 @@ function MetricTile({
   );
 }
 
+function VisitorStat({
+  title,
+  value,
+  caption,
+  color,
+}: {
+  title: string;
+  value: number;
+  caption: string;
+  color: string;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--p-color-border-secondary)",
+        borderLeft: `4px solid ${color}`,
+        borderRadius: 8,
+        padding: 16,
+        background: "var(--p-color-bg-surface)",
+        minHeight: 112,
+      }}
+    >
+      <BlockStack gap="100">
+        <Text as="span" fontWeight="semibold">
+          {title}
+        </Text>
+        <Text as="p" variant="heading2xl">
+          {value.toLocaleString()}
+        </Text>
+        <Text as="p" tone="subdued">
+          {caption}
+        </Text>
+      </BlockStack>
+    </div>
+  );
+}
+
+function LegendItem({
+  color,
+  label,
+  value,
+}: {
+  color: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <InlineStack gap="150" blockAlign="center">
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: 3,
+          background: color,
+          display: "inline-block",
+        }}
+      />
+      <Text as="span">
+        {label} <strong>{value}</strong>
+      </Text>
+    </InlineStack>
+  );
+}
+
 function BreakdownList({
   items,
   emptyLabel,
@@ -273,6 +356,331 @@ function BreakdownList({
             />
           </div>
         </div>
+      ))}
+    </BlockStack>
+  );
+}
+
+const CLICK_CATEGORY_COLORS: Record<string, string> = {
+  Image: "#0EA5E9",
+  Button: "#F59E0B",
+  Link: "#10B981",
+  Widget: "#8B5CF6",
+  Header: "#6366F1",
+  Footer: "#64748B",
+};
+
+const CLICK_CATEGORY_ORDER = [
+  "Image",
+  "Button",
+  "Link",
+  "Widget",
+  "Header",
+  "Footer",
+];
+
+function clickCategoryRank(key: string) {
+  const index = CLICK_CATEGORY_ORDER.indexOf(key);
+  return index === -1 ? CLICK_CATEGORY_ORDER.length : index;
+}
+
+function getZoneCategory(row: AbTestReportStatsRow | undefined, key: string) {
+  return row?.zoneBreakdown?.find((item) => item.key === key);
+}
+
+function clicksPerVisitor(count: number, visitors: number) {
+  return visitors ? count / visitors : 0;
+}
+
+function formatClicksPerVisitor(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0 / visitor";
+  const absolute = Math.abs(value);
+  const formatted = absolute.toFixed(absolute >= 10 ? 1 : 2);
+  return `${value < 0 ? "-" : ""}${formatted} / visitor`;
+}
+
+function mergeClickedLabels(
+  aItems: ClickBreakdownItem[] = [],
+  bItems: ClickBreakdownItem[] = [],
+) {
+  const labels = new Map<string, { label: string; a: number; b: number }>();
+  for (const item of aItems) {
+    labels.set(item.label, {
+      label: item.label,
+      a: (labels.get(item.label)?.a || 0) + item.count,
+      b: labels.get(item.label)?.b || 0,
+    });
+  }
+  for (const item of bItems) {
+    const existing = labels.get(item.label);
+    labels.set(item.label, {
+      label: item.label,
+      a: existing?.a || 0,
+      b: (existing?.b || 0) + item.count,
+    });
+  }
+  return Array.from(labels.values())
+    .sort((a, b) => b.a + b.b - (a.a + a.b) || a.label.localeCompare(b.label))
+    .slice(0, 5);
+}
+
+function ClickLabelComparison({
+  label,
+  a,
+  b,
+  max,
+  color,
+}: {
+  label: string;
+  a: number;
+  b: number;
+  max: number;
+  color: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) 64px 64px",
+        gap: 12,
+        alignItems: "center",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          minHeight: 30,
+          borderRadius: 6,
+          background: "var(--p-color-bg-surface-secondary)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: "0 auto 0 0",
+            width: `${Math.max(((a + b) / max) * 100, a + b ? 4 : 0)}%`,
+            background: `${color}24`,
+          }}
+        />
+        <Text as="span">
+          <span
+            title={label}
+            style={{
+              position: "relative",
+              zIndex: 1,
+              display: "block",
+              overflow: "hidden",
+              padding: "4px 10px",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </span>
+        </Text>
+      </div>
+      <Text as="span" alignment="end" tone={a ? undefined : "subdued"}>
+        A {a.toLocaleString()}
+      </Text>
+      <Text as="span" alignment="end" tone={b ? undefined : "subdued"}>
+        B {b.toLocaleString()}
+      </Text>
+    </div>
+  );
+}
+
+function ZoneComparisonRow({
+  category,
+  control,
+  variant,
+}: {
+  category: string;
+  control?: AbTestReportStatsRow;
+  variant?: AbTestReportStatsRow;
+}) {
+  const controlCategory = getZoneCategory(control, category);
+  const variantCategory = getZoneCategory(variant, category);
+  const color = CLICK_CATEGORY_COLORS[category] || "#8c9196";
+  const aCount = controlCategory?.count || 0;
+  const bCount = variantCategory?.count || 0;
+  const aRate = clicksPerVisitor(aCount, control?.realVisitors || 0);
+  const bRate = clicksPerVisitor(bCount, variant?.realVisitors || 0);
+  const rateDiff = bRate - aRate;
+  const maxRate = Math.max(aRate, bRate, 0.01);
+  const labels = mergeClickedLabels(controlCategory?.items, variantCategory?.items);
+  const maxLabelCount = Math.max(...labels.map((item) => item.a + item.b), 1);
+  const diffColor =
+    Math.abs(rateDiff) < 0.005
+      ? "var(--p-color-text-subdued)"
+      : rateDiff > 0
+        ? "var(--p-color-text-success)"
+        : "var(--p-color-text-critical)";
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--p-color-border-secondary)",
+        borderRadius: 8,
+        padding: 16,
+        background: "var(--p-color-bg-surface)",
+      }}
+    >
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="start" gap="400">
+          <InlineStack gap="200" blockAlign="center">
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: color,
+                display: "inline-block",
+              }}
+            />
+            <BlockStack gap="050">
+              <Text as="h3" variant="headingMd">
+                {category}
+              </Text>
+              <Text as="p" tone="subdued">
+                {(aCount + bCount).toLocaleString()} total clicks
+              </Text>
+            </BlockStack>
+          </InlineStack>
+          <div style={{ textAlign: "right" }}>
+            <Text as="p" tone="subdued">
+              B vs A
+            </Text>
+            <Text as="p">
+              <span style={{ color: diffColor, fontWeight: 700 }}>
+                {rateDiff > 0 ? "+" : ""}
+                {formatClicksPerVisitor(rateDiff)}
+              </span>
+            </Text>
+          </div>
+        </InlineStack>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 16,
+          }}
+        >
+          {[
+            { key: "A", row: control, count: aCount, rate: aRate },
+            { key: "B", row: variant, count: bCount, rate: bRate },
+          ].map((entry) => (
+            <div key={entry.key}>
+              <InlineStack align="space-between" blockAlign="center" gap="200">
+                <Text as="span" fontWeight="semibold">
+                  {entry.key} · {entry.row?.name || "Variant"}
+                </Text>
+                <Text as="span" tone="subdued">
+                  {entry.count.toLocaleString()} clicks
+                </Text>
+              </InlineStack>
+              <div
+                style={{
+                  height: 8,
+                  marginTop: 8,
+                  borderRadius: 999,
+                  background: "var(--p-color-bg-surface-secondary)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${(entry.rate / maxRate) * 100}%`,
+                    height: "100%",
+                    borderRadius: 999,
+                    background:
+                      entry.key === "A"
+                        ? "var(--p-color-bg-fill-info)"
+                        : color,
+                  }}
+                />
+              </div>
+              <Text as="p" tone="subdued">
+                {formatClicksPerVisitor(entry.rate)} ·{" "}
+                {(entry.row?.realVisitors || 0).toLocaleString()} real visitors
+              </Text>
+            </div>
+          ))}
+        </div>
+
+        {labels.length ? (
+          <BlockStack gap="150">
+            <Text as="h4" variant="headingSm" tone="subdued">
+              Top clicked elements
+            </Text>
+            {labels.map((item) => (
+              <ClickLabelComparison
+                key={item.label}
+                label={item.label}
+                a={item.a}
+                b={item.b}
+                max={maxLabelCount}
+                color={color}
+              />
+            ))}
+          </BlockStack>
+        ) : (
+          <Text as="p" tone="subdued">
+            No clicked elements captured for this zone yet.
+          </Text>
+        )}
+      </BlockStack>
+    </div>
+  );
+}
+
+function EngagementByZoneComparison({
+  stats,
+}: {
+  stats: AbTestReportStatsRow[];
+}) {
+  const control = stats.find((row) => row.key === "A") || stats[0];
+  const variant = stats.find((row) => row.key === "B") || stats[1];
+  const categories = Array.from(
+    new Set([
+      ...CLICK_CATEGORY_ORDER,
+      ...(control?.zoneBreakdown || []).map((item) => item.key),
+      ...(variant?.zoneBreakdown || []).map((item) => item.key),
+    ]),
+  )
+    .sort((a, b) => clickCategoryRank(a) - clickCategoryRank(b))
+    .filter((category) => {
+      const a = getZoneCategory(control, category)?.count || 0;
+      const b = getZoneCategory(variant, category)?.count || 0;
+      return a + b > 0;
+    });
+
+  if (!control || !variant) {
+    return (
+      <Text as="p" tone="subdued">
+        This comparison needs both Original (A) and Variant (B) data.
+      </Text>
+    );
+  }
+
+  if (!categories.length) {
+    return (
+      <Text as="p" tone="subdued">
+        No click zone data captured yet.
+      </Text>
+    );
+  }
+
+  return (
+    <BlockStack gap="300">
+      {categories.map((category) => (
+        <ZoneComparisonRow
+          key={category}
+          category={category}
+          control={control}
+          variant={variant}
+        />
       ))}
     </BlockStack>
   );
@@ -467,6 +875,126 @@ function VariantDetailCard({ row }: { row: AbTestReportStatsRow }) {
   );
 }
 
+function VariantComparisonTable({ stats }: { stats: AbTestReportStatsRow[] }) {
+  return (
+    <Card padding="0">
+      <div style={{ padding: "16px 20px" }}>
+        <Text as="h2" variant="headingMd">
+          Variant comparison
+        </Text>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table
+          style={{
+            width: "100%",
+            minWidth: 1180,
+            borderCollapse: "collapse",
+          }}
+        >
+          <thead>
+            <tr
+              style={{
+                background: "var(--p-color-bg-surface-secondary)",
+              }}
+            >
+              {[
+                "Variant",
+                "Assigned",
+                "Real",
+                "Page views",
+                "ATC",
+                "RCC",
+                "CVR",
+                "Orders",
+                "Revenue",
+                "Scroll",
+                "Duration",
+                "CTA",
+              ].map((heading) => (
+                <th
+                  key={heading}
+                  style={{
+                    padding: "12px 20px",
+                    textAlign: heading === "Variant" ? "left" : "right",
+                    borderTop: "1px solid var(--p-color-border-secondary)",
+                    borderBottom: "1px solid var(--p-color-border-secondary)",
+                  }}
+                >
+                  <Text as="span" tone="subdued" fontWeight="semibold">
+                    {heading}
+                  </Text>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {stats.map((row) => (
+              <tr key={row.variantId}>
+                <td
+                  style={{
+                    padding: "16px 20px",
+                    borderBottom: "1px solid var(--p-color-border-secondary)",
+                  }}
+                >
+                  <BlockStack gap="050">
+                    <Text as="span" fontWeight="semibold">
+                      {row.key} · {row.name}
+                    </Text>
+                    <Text as="span" tone="subdued">
+                      {row.templateSuffix
+                        ? `${row.templateName} · ?view=${row.templateSuffix}`
+                        : row.templateName}
+                    </Text>
+                  </BlockStack>
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {row.assignedVisitors.toLocaleString()}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {row.realVisitors.toLocaleString()}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {row.humanPageViews.toLocaleString()}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatPercent(row.addToCartRate)}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {(row.checkoutStarts || 0).toLocaleString()}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatPercent(row.conversionRate)}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {row.orders.toLocaleString()}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatCurrency(row.revenue)}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatPercent(row.avgScrollDepth)}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatDuration(row.avgTimeOnPage)}
+                </td>
+                <td style={tableNumberCellStyle}>
+                  {formatPercent(row.ctaClickRate)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+const tableNumberCellStyle: CSSProperties = {
+  padding: "16px 20px",
+  textAlign: "right",
+  borderBottom: "1px solid var(--p-color-border-secondary)",
+};
+
 export function AbTestDetailReport({
   open,
   onClose,
@@ -490,10 +1018,18 @@ export function AbTestDetailReport({
       (sum, row) => sum + row.humanPageViews,
       0,
     );
+    const totalPageViews = stats.reduce(
+      (sum, row) => sum + (row.totalPageViews ?? row.humanPageViews),
+      0,
+    );
     const zombies = stats.reduce((sum, row) => sum + row.zombies, 0);
     const bots = stats.reduce((sum, row) => sum + row.bots, 0);
     const pending = stats.reduce((sum, row) => sum + row.pending, 0);
     const addToCarts = stats.reduce((sum, row) => sum + row.addToCarts, 0);
+    const checkoutStarts = stats.reduce(
+      (sum, row) => sum + (row.checkoutStarts || 0),
+      0,
+    );
     const orders = stats.reduce((sum, row) => sum + row.orders, 0);
     const revenue = stats.reduce((sum, row) => sum + row.revenue, 0);
     const ctaClicks = stats.reduce((sum, row) => sum + row.ctaClicks, 0);
@@ -515,15 +1051,23 @@ export function AbTestDetailReport({
           0,
         ) / realVisitors
       : 0;
+    const ctaClickRate = realVisitors
+      ? stats.reduce(
+          (sum, row) => sum + row.ctaClickRate * row.realVisitors,
+          0,
+        ) / realVisitors
+      : 0;
 
     return {
       assignedVisitors,
       realVisitors,
+      totalPageViews,
       humanPageViews,
       zombies,
       bots,
       pending,
       addToCarts,
+      checkoutStarts,
       orders,
       revenue,
       ctaClicks,
@@ -535,7 +1079,7 @@ export function AbTestDetailReport({
       addToCartRate: realVisitors ? (addToCarts / realVisitors) * 100 : 0,
       conversionRate: realVisitors ? (orders / realVisitors) * 100 : 0,
       revenuePerVisitor: realVisitors ? revenue / realVisitors : 0,
-      ctaClickRate: realVisitors ? (ctaClicks / realVisitors) * 100 : 0,
+      ctaClickRate,
     };
   }, [stats]);
   const summary = useMemo(() => {
@@ -689,29 +1233,14 @@ export function AbTestDetailReport({
                         <Text as="h2" variant="headingMd">
                           A/B test summary
                         </Text>
-                        <Text as="p" tone="subdued">
+                      </BlockStack>
+                      <BlockStack gap="100" align="end">
+                        <Badge tone="info">{goalLabel(test.goal)}</Badge>
+                        <Text as="span" tone="subdued">
                           Primary goal: {summary.metricLabel}
                         </Text>
                       </BlockStack>
-                      <Badge tone={summary.badgeTone}>{summary.badge}</Badge>
                     </InlineStack>
-                    <div
-                      style={{
-                        padding: 18,
-                        borderRadius: 10,
-                        background: "var(--p-color-bg-surface-secondary)",
-                        border: "1px solid var(--p-color-border-secondary)",
-                      }}
-                    >
-                      <BlockStack gap="150">
-                        <Text as="h3" variant="headingLg">
-                          {summary.title}
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          {summary.description}
-                        </Text>
-                      </BlockStack>
-                    </div>
                     <div style={metricGridStyle(190)}>
                       <SummaryStat
                         label="Original (A)"
@@ -734,291 +1263,246 @@ export function AbTestDetailReport({
                         caption={summary.sampleLabel}
                       />
                     </div>
+                    <Text as="p" tone="subdued">
+                      {summary.description}
+                    </Text>
                   </BlockStack>
                 </Card>
+
+                <VariantComparisonTable stats={stats} />
 
                 <Card>
                   <BlockStack gap="300">
-                    <Text as="h2" variant="headingMd">
-                      Visitor breakdown
-                    </Text>
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">
+                        Traffic Breakdown
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Visitor quality captured across this A/B test.
+                      </Text>
+                    </BlockStack>
                     <div style={metricGridStyle(180)}>
-                      <MetricTile
-                        label="Assigned visitors"
-                        value={totals.assignedVisitors.toLocaleString()}
-                        caption="All A/B assignments"
+                      <VisitorStat
+                        title="Total visitors"
+                        value={totals.assignedVisitors}
+                        caption="All assigned sessions"
+                        color="#2c6ecb"
                       />
-                      <MetricTile
-                        label="Real visitors"
-                        value={totals.realVisitors.toLocaleString()}
-                        caption="Human sessions counted"
+                      <VisitorStat
+                        title="Humans"
+                        value={totals.realVisitors}
+                        caption="Engaged real visitors"
+                        color="#008060"
                       />
-                      <MetricTile
-                        label="Human page views"
-                        value={totals.humanPageViews.toLocaleString()}
-                        caption="Tracked A/B page visits"
+                      <VisitorStat
+                        title="Zombies"
+                        value={totals.zombies}
+                        caption="Unengaged visitors"
+                        color="#8a6116"
                       />
-                      <MetricTile
-                        label="Zombies"
-                        value={totals.zombies.toLocaleString()}
-                        caption="Unengaged traffic"
+                      <VisitorStat
+                        title="Bots"
+                        value={totals.bots}
+                        caption="Automated / non-human"
+                        color="#b5371f"
                       />
-                      <MetricTile
-                        label="Bots"
-                        value={totals.bots.toLocaleString()}
-                        caption="Automated traffic"
-                      />
-                      <MetricTile
-                        label="Pending"
-                        value={totals.pending.toLocaleString()}
-                        caption="Still being classified"
-                      />
+                      {totals.pending > 0 ? (
+                        <VisitorStat
+                          title="Pending"
+                          value={totals.pending}
+                          caption="Still classifying"
+                          color="#8c9196"
+                        />
+                      ) : null}
                     </div>
-                  </BlockStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="300">
-                    <Text as="h2" variant="headingMd">
-                      Engagement and conversion metrics
-                    </Text>
-                    <div style={metricGridStyle(180)}>
-                      <MetricTile
-                        label="ATC rate"
-                        value={formatPercent(totals.addToCartRate)}
-                        caption={`${totals.addToCarts.toLocaleString()} add-to-carts`}
-                      />
-                      <MetricTile
-                        label="CVR"
-                        value={formatPercent(totals.conversionRate)}
-                        caption={`${totals.orders.toLocaleString()} orders`}
-                      />
-                      <MetricTile
-                        label="Revenue"
-                        value={formatCurrency(totals.revenue)}
-                        caption="Attributed order value"
-                      />
-                      <MetricTile
-                        label="RPV"
-                        value={formatCurrency(totals.revenuePerVisitor)}
-                        caption="Revenue per real visitor"
-                      />
-                      <MetricTile
-                        label="Scroll depth"
-                        value={formatPercent(totals.avgScrollDepth)}
-                        caption="Average page reach"
-                      />
-                      <MetricTile
-                        label="Duration"
-                        value={formatDuration(totals.avgTimeOnPage)}
-                        caption="Average time on A/B pages"
-                      />
-                      <MetricTile
-                        label="CTA clicks"
-                        value={totals.ctaClicks.toLocaleString()}
-                        caption={`${formatPercent(totals.ctaClickRate)} per real visitor`}
-                      />
-                      <MetricTile
-                        label="Searches"
-                        value={totals.searches.toLocaleString()}
-                        caption="Search terms captured"
-                      />
-                      <MetricTile
-                        label="Filter changes"
-                        value={totals.filterInteractions.toLocaleString()}
-                        caption="Collection filter interactions"
-                      />
-                      <MetricTile
-                        label="Exits"
-                        value={totals.exits.toLocaleString()}
-                        caption="Exit behavior captured"
-                      />
-                    </div>
-                  </BlockStack>
-                </Card>
-
-                <Card padding="0">
-                  <div style={{ padding: "16px 20px" }}>
-                    <Text as="h2" variant="headingMd">
-                      Variant comparison
-                    </Text>
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table
+                    <div
                       style={{
-                        width: "100%",
-                        minWidth: 1180,
-                        borderCollapse: "collapse",
+                        height: 10,
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        display: "flex",
+                        background: "#e4e5e7",
                       }}
                     >
-                      <thead>
-                        <tr
+                      <div
+                        style={{
+                          width: `${
+                            totals.assignedVisitors
+                              ? (totals.realVisitors / totals.assignedVisitors) *
+                                100
+                              : 0
+                          }%`,
+                          background: "#008060",
+                        }}
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            totals.assignedVisitors
+                              ? (totals.zombies / totals.assignedVisitors) * 100
+                              : 0
+                          }%`,
+                          background: "#8a6116",
+                        }}
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            totals.assignedVisitors
+                              ? (totals.bots / totals.assignedVisitors) * 100
+                              : 0
+                          }%`,
+                          background: "#b5371f",
+                        }}
+                      />
+                      {totals.pending > 0 ? (
+                        <div
                           style={{
-                            background: "var(--p-color-bg-surface-secondary)",
+                            width: `${
+                              totals.assignedVisitors
+                                ? (totals.pending / totals.assignedVisitors) *
+                                  100
+                                : 0
+                            }%`,
+                            background: "#8c9196",
                           }}
-                        >
-                          {[
-                            "Variant",
-                            "Assigned",
-                            "Real",
-                            "Page views",
-                            "ATC",
-                            "CVR",
-                            "Orders",
-                            "Revenue",
-                            "Scroll",
-                            "Duration",
-                            "CTA",
-                          ].map((heading) => (
-                            <th
-                              key={heading}
-                              style={{
-                                padding: "12px 20px",
-                                textAlign:
-                                  heading === "Variant" ? "left" : "right",
-                                borderTop:
-                                  "1px solid var(--p-color-border-secondary)",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              <Text
-                                as="span"
-                                tone="subdued"
-                                fontWeight="semibold"
-                              >
-                                {heading}
-                              </Text>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {stats.map((row) => (
-                          <tr key={row.variantId}>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              <BlockStack gap="050">
-                                <Text as="span" fontWeight="semibold">
-                                  {row.key} · {row.name}
-                                </Text>
-                                <Text as="span" tone="subdued">
-                                  {row.templateSuffix
-                                    ? `${row.templateName} · ?view=${row.templateSuffix}`
-                                    : row.templateName}
-                                </Text>
-                              </BlockStack>
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {row.assignedVisitors.toLocaleString()}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {row.realVisitors.toLocaleString()}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {row.humanPageViews.toLocaleString()}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatPercent(row.addToCartRate)}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatPercent(row.conversionRate)}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {row.orders.toLocaleString()}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatCurrency(row.revenue)}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatPercent(row.avgScrollDepth)}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatDuration(row.avgTimeOnPage)}
-                            </td>
-                            <td
-                              style={{
-                                padding: "16px 20px",
-                                textAlign: "right",
-                                borderBottom:
-                                  "1px solid var(--p-color-border-secondary)",
-                              }}
-                            >
-                              {formatPercent(row.ctaClickRate)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        />
+                      ) : null}
+                    </div>
+                    <InlineStack gap="400" wrap>
+                      <LegendItem
+                        color="#008060"
+                        label="Humans"
+                        value={`${totals.realVisitors.toLocaleString()} (${formatPercent(
+                          totals.assignedVisitors
+                            ? (totals.realVisitors / totals.assignedVisitors) *
+                                100
+                            : 0,
+                        )})`}
+                      />
+                      <LegendItem
+                        color="#8a6116"
+                        label="Zombies"
+                        value={`${totals.zombies.toLocaleString()} (${formatPercent(
+                          totals.assignedVisitors
+                            ? (totals.zombies / totals.assignedVisitors) * 100
+                            : 0,
+                        )})`}
+                      />
+                      <LegendItem
+                        color="#b5371f"
+                        label="Bots"
+                        value={`${totals.bots.toLocaleString()} (${formatPercent(
+                          totals.assignedVisitors
+                            ? (totals.bots / totals.assignedVisitors) * 100
+                            : 0,
+                        )})`}
+                      />
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                    gap: 16,
+                  }}
+                >
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h2" variant="headingMd">
+                        Engagement
+                      </Text>
+                      <div style={metricGridStyle(150)}>
+                        <MetricTile
+                          label="Scroll"
+                          value={formatPercent(totals.avgScrollDepth)}
+                          caption="avg. page reach"
+                        />
+                        <MetricTile
+                          label="Duration"
+                          value={formatDuration(totals.avgTimeOnPage)}
+                          caption="avg. on page"
+                        />
+                        <MetricTile
+                          label="Searches"
+                          value={totals.searches.toLocaleString()}
+                          caption="sessions"
+                        />
+                        <MetricTile
+                          label="CTR"
+                          value={formatPercent(totals.ctaClickRate)}
+                          caption="click rate"
+                        />
+                        <MetricTile
+                          label="Filters"
+                          value={totals.filterInteractions.toLocaleString()}
+                          caption="changes"
+                        />
+                        <MetricTile
+                          label="TPV"
+                          value={totals.totalPageViews.toLocaleString()}
+                          caption="page views"
+                        />
+                      </div>
+                    </BlockStack>
+                  </Card>
+
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h2" variant="headingMd">
+                        Conversions
+                      </Text>
+                      <div style={metricGridStyle(150)}>
+                        <MetricTile
+                          label="ATC"
+                          value={formatPercent(totals.addToCartRate)}
+                          caption="cart rate"
+                        />
+                        <MetricTile
+                          label="RCC"
+                          value={totals.checkoutStarts.toLocaleString()}
+                          caption="checkout"
+                        />
+                        <MetricTile
+                          label="CVR"
+                          value={formatPercent(totals.conversionRate)}
+                          caption="conversion"
+                        />
+                        <MetricTile
+                          label="Orders"
+                          value={totals.orders.toLocaleString()}
+                          caption="placed this test"
+                        />
+                        <MetricTile
+                          label="Revenue"
+                          value={formatCurrency(totals.revenue)}
+                          caption="attributed revenue"
+                        />
+                        <MetricTile
+                          label="RPV"
+                          value={formatCurrency(totals.revenuePerVisitor)}
+                          caption="per real visitor"
+                        />
+                      </div>
+                    </BlockStack>
+                  </Card>
+                </div>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">
+                        Engagement by zone
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Compares where visitors interacted in A vs B. Rates are
+                        normalized by each variant&apos;s real visitors.
+                      </Text>
+                    </BlockStack>
+                    <EngagementByZoneComparison stats={stats} />
+                  </BlockStack>
                 </Card>
 
                 <div
