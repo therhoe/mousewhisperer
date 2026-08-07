@@ -431,6 +431,7 @@ async function getSnapshotStats(snapshotId: string) {
     avgTime: stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
     avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
     atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
+    conversions: stats.conversions,
     convRate: stats.real > 0 ? Math.min(Math.round((stats.conversions / stats.real) * 100), 100) : 0,
     productClickRate: stats.real > 0 ? Math.round((stats.productClicks / stats.real) * 100) : 0,
     linkClicks: stats.linkClicks,

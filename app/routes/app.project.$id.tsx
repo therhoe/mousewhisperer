@@ -451,6 +451,18 @@ async function getPersistedSnapshotStats(
 
     if (cached?.stats) {
       const value = cached.stats as unknown as SnapshotStatsFast;
+      const sourceStats = Array.isArray(value.sourceStats)
+        ? value.sourceStats
+        : [];
+      const hasCurrentSourceStats = sourceStats.every(
+        (source) => typeof source.conversions === "number",
+      );
+      const hasCurrentImageEngagement = Array.isArray(value.imageEngagement);
+
+      if (!hasCurrentSourceStats || !hasCurrentImageEngagement) {
+        return refreshPersistedSnapshotStats(snapshotId);
+      }
+
       if (
         cached.recomputedAt.getTime() <=
         Date.now() - PERSISTED_SNAPSHOT_STATS_CACHE_TTL_MS
@@ -827,6 +839,7 @@ async function getSnapshotStatsFast(snapshotId: string) {
         stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
       avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
       atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
+      conversions: stats.conversions,
       convRate:
         stats.real > 0
           ? Math.min(Math.round((stats.conversions / stats.real) * 100), 100)
@@ -1697,6 +1710,7 @@ async function getSnapshotStatsFromDBSlow(
         stats.real > 0 ? Math.round(stats.avgTime / stats.real / 1000) : 0,
       avgScroll: stats.real > 0 ? Math.round(stats.avgScroll / stats.real) : 0,
       atcRate: stats.real > 0 ? Math.round((stats.atc / stats.real) * 100) : 0,
+      conversions: stats.conversions,
       convRate:
         stats.real > 0
           ? Math.min(Math.round((stats.conversions / stats.real) * 100), 100)
@@ -3748,7 +3762,7 @@ function getSourceMetricDefs(resourceType: string): SourceMetricDef[] {
 
   return [
     { key: "atcRate", label: "ATC %", format: formatPercent },
-    { key: "convRate", label: "Conv %", format: formatPercent },
+    { key: "convRate", label: "Conversions", format: formatPercent },
   ];
 }
 
@@ -3924,6 +3938,7 @@ export default function ProjectDetails() {
 
   // Source filter (clicking Traffic by Source rows filters Recent Visits)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [showSourcePercentages, setShowSourcePercentages] = useState(false);
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(0);
   const graphMetricDefs = useMemo(
@@ -4262,14 +4277,28 @@ export default function ProjectDetails() {
       </IndexTable.Cell>
       <IndexTable.Cell>{source.sessions}</IndexTable.Cell>
       <IndexTable.Cell>
-        <Text as="span" tone="success">
-          {source.real}
-        </Text>
+        <InlineStack gap="100" wrap={false} blockAlign="center">
+          <Text as="span" tone="success">
+            {formatCount(source.real)}
+          </Text>
+          {showSourcePercentages && (
+            <Text as="span" tone="subdued" variant="bodySm">
+              {formatPercent(percent(source.real, source.sessions))}
+            </Text>
+          )}
+        </InlineStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <Text as="span" tone="caution">
-          {source.zombie}
-        </Text>
+        <InlineStack gap="100" wrap={false} blockAlign="center">
+          <Text as="span" tone="caution">
+            {formatCount(source.zombie)}
+          </Text>
+          {showSourcePercentages && (
+            <Text as="span" tone="subdued" variant="bodySm">
+              {formatPercent(percent(source.zombie, source.sessions))}
+            </Text>
+          )}
+        </InlineStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Text as="span" tone="critical">
@@ -4280,7 +4309,18 @@ export default function ProjectDetails() {
       <IndexTable.Cell>{source.avgScroll}%</IndexTable.Cell>
       {sourceMetricDefs.map((metric) => (
         <IndexTable.Cell key={metric.key}>
-          {metric.format(source[metric.key] || 0)}
+          {metric.key === "convRate" ? (
+            <InlineStack gap="100" wrap={false} blockAlign="center">
+              <Text as="span">{formatCount(source.conversions || 0)}</Text>
+              {showSourcePercentages && (
+                <Text as="span" tone="subdued" variant="bodySm">
+                  {formatPercent(source.convRate || 0)}
+                </Text>
+              )}
+            </InlineStack>
+          ) : (
+            metric.format(source[metric.key] || 0)
+          )}
         </IndexTable.Cell>
       ))}
     </IndexTable.Row>
@@ -5340,9 +5380,27 @@ export default function ProjectDetails() {
                 </Box>
                 <Divider />
                 <Box padding="400" paddingBlockEnd="200">
-                  <Text as="h3" variant="headingSm" tone="subdued">
-                    Traffic Quality by Source
-                  </Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h3" variant="headingSm" tone="subdued">
+                      Traffic Quality by Source
+                    </Text>
+                    <Button
+                      variant="plain"
+                      pressed={showSourcePercentages}
+                      onClick={() =>
+                        setShowSourcePercentages((visible) => !visible)
+                      }
+                      accessibilityLabel={
+                        showSourcePercentages
+                          ? "Hide traffic source percentages"
+                          : "Show traffic source percentages"
+                      }
+                    >
+                      {showSourcePercentages
+                        ? "Hide percentages"
+                        : "Show percentages"}
+                    </Button>
+                  </InlineStack>
                 </Box>
                 <IndexTable
                   resourceName={{ singular: "source", plural: "sources" }}
