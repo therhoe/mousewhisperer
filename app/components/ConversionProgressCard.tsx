@@ -21,10 +21,10 @@ import type {
 } from "../types/conversion-progress";
 
 const PERIOD_OPTIONS: Array<{ label: string; value: ConversionPeriod }> = [
-  { label: "WTD", value: "week" },
-  { label: "MTD", value: "month" },
-  { label: "QTD", value: "quarter" },
-  { label: "YTD", value: "year" },
+  { label: "Week to date", value: "week" },
+  { label: "Month to date", value: "month" },
+  { label: "Quarter to date", value: "quarter" },
+  { label: "Year to date", value: "year" },
 ];
 
 const CATEGORY_OPTIONS = [
@@ -45,8 +45,32 @@ function formatRate(value: number) {
 }
 
 function formatDelta(value: number) {
-  const prefix = value > 0 ? "+" : "";
-  return `${prefix}${value.toFixed(2)} pp`;
+  const amount = Math.abs(value);
+  return `${amount.toFixed(2)} percentage point${amount === 1 ? "" : "s"}`;
+}
+
+function formatComparison(currentRate: number, previousRate: number) {
+  const delta = currentRate - previousRate;
+  if (Math.abs(delta) < 0.005) {
+    return `No change from ${formatRate(previousRate)}`;
+  }
+  return `${delta > 0 ? "↑ Up" : "↓ Down"} ${formatDelta(delta)} (${formatRate(previousRate)} → ${formatRate(currentRate)})`;
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function compactText(value: string, limit: number) {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
+}
+
+function readableCategory(value: string | null) {
+  if (!value) return "Optimization";
+  return value
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/(^|\s)\S/g, (letter) => letter.toUpperCase());
 }
 
 function formatEventDate(value: string) {
@@ -122,6 +146,7 @@ function eventColor(kind: ProgressTimelineEvent["kind"]) {
 
 function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
   const { progress, events } = data;
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
   const left = 58;
   const right = 952;
   const top = 22;
@@ -172,6 +197,19 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
   };
   const ticks = chartDateTicks(progress.rangeStart, progress.rangeEnd);
   const hasSeries = Boolean(currentPath || previousPath);
+  const loggedEvents = events.filter((event) => event.kind === "OPTIMIZATION");
+  const hoveredEvent = loggedEvents.find(
+    (event) => event.id === hoveredEventId,
+  );
+  const hoveredX = hoveredEvent ? eventX(hoveredEvent.start) : 0;
+  const hoveredY = hoveredEvent ? nearestPointY(hoveredEvent.start) : 0;
+  const tooltipWidth = 250;
+  const tooltipHeight = hoveredEvent?.description ? 82 : 64;
+  const tooltipX = Math.max(
+    left,
+    Math.min(right - tooltipWidth, hoveredX - tooltipWidth / 2),
+  );
+  const tooltipY = Math.max(top + 4, hoveredY - tooltipHeight - 14);
 
   return (
     <div style={{ overflowX: "auto" }}>
@@ -184,26 +222,6 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
           aria-label={`${progress.periodLabel} Shopify conversion rate compared with the prior period`}
           style={{ display: "block" }}
         >
-          {events
-            .filter((event) => event.kind === "AB_TEST")
-            .map((event) => {
-              const startX = eventX(event.start);
-              const endX = event.end ? eventX(event.end) : right;
-              return (
-                <g key={event.id}>
-                  <rect
-                    x={startX}
-                    y={top}
-                    width={Math.max(3, endX - startX)}
-                    height={height}
-                    fill="#7c3aed"
-                    opacity="0.07"
-                  />
-                  <title>{`${event.title}: experiment period`}</title>
-                </g>
-              );
-            })}
-
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const y = bottom - ratio * height;
             return (
@@ -254,50 +272,100 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
           ) : null}
 
           {hasSeries
-            ? events
-                .filter((event) => event.kind !== "AB_TEST")
-                .map((event) => {
-                  const x = eventX(event.start);
-                  const y = nearestPointY(event.start);
-                  const color = eventColor(event.kind);
-                  return (
-                    <g key={event.id}>
-                      <line
-                        x1={x}
-                        x2={x}
-                        y1={top}
-                        y2={bottom}
-                        stroke={color}
-                        strokeWidth="1"
-                        strokeDasharray={
-                          event.kind === "OPTIMIZATION" ? "3 4" : "2 6"
-                        }
-                        opacity={event.kind === "OPTIMIZATION" ? 0.72 : 0.38}
-                      />
-                      {event.kind === "OPTIMIZATION" ? (
-                        <circle
-                          cx={x}
-                          cy={y}
-                          r="6"
-                          fill={color}
-                          stroke="#fff"
-                          strokeWidth="2"
-                        />
-                      ) : (
-                        <rect
-                          x={x - 4}
-                          y={bottom - 4}
-                          width="8"
-                          height="8"
-                          fill={color}
-                          transform={`rotate(45 ${x} ${bottom})`}
-                        />
-                      )}
-                      <title>{`${event.title} · ${formatEventDate(event.start)}`}</title>
-                    </g>
-                  );
-                })
+            ? loggedEvents.map((event) => {
+                const x = eventX(event.start);
+                const y = nearestPointY(event.start);
+                const color = "#008060";
+                const details = [
+                  event.title,
+                  formatEventDate(event.start),
+                  event.description,
+                ]
+                  .filter(Boolean)
+                  .join(". ");
+                return (
+                  <g
+                    key={event.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={details}
+                    onMouseEnter={() => setHoveredEventId(event.id)}
+                    onMouseLeave={() => setHoveredEventId(null)}
+                    onFocus={() => setHoveredEventId(event.id)}
+                    onBlur={() => setHoveredEventId(null)}
+                    onClick={() =>
+                      setHoveredEventId((current) =>
+                        current === event.id ? null : event.id,
+                      )
+                    }
+                    style={{ cursor: "pointer", outline: "none" }}
+                  >
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={top}
+                      y2={bottom}
+                      stroke={color}
+                      strokeWidth="1"
+                      strokeDasharray="3 4"
+                      opacity="0.72"
+                    />
+                    <circle cx={x} cy={y} r="14" fill="transparent" />
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={hoveredEventId === event.id ? 7 : 6}
+                      fill={color}
+                      stroke="#fff"
+                      strokeWidth="2"
+                    />
+                    <title>{details}</title>
+                  </g>
+                );
+              })
             : null}
+
+          {hoveredEvent ? (
+            <g pointerEvents="none" aria-hidden="true">
+              <rect
+                x={tooltipX}
+                y={tooltipY}
+                width={tooltipWidth}
+                height={tooltipHeight}
+                rx="9"
+                fill="#202223"
+                opacity="0.97"
+              />
+              <text
+                x={tooltipX + 12}
+                y={tooltipY + 20}
+                fill="#ffffff"
+                fontSize="12"
+                fontWeight="700"
+              >
+                {compactText(hoveredEvent.title, 36)}
+              </text>
+              <text
+                x={tooltipX + 12}
+                y={tooltipY + 39}
+                fill="#d2d5d8"
+                fontSize="11"
+              >
+                {formatEventDate(hoveredEvent.start)} ·{" "}
+                {readableCategory(hoveredEvent.category)}
+              </text>
+              {hoveredEvent.description ? (
+                <text
+                  x={tooltipX + 12}
+                  y={tooltipY + 60}
+                  fill="#ffffff"
+                  fontSize="11"
+                >
+                  {compactText(hoveredEvent.description, 43)}
+                </text>
+              ) : null}
+            </g>
+          ) : null}
 
           {!hasSeries ? (
             <text
@@ -348,26 +416,22 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
           >
             <span
               style={{
-                width: 9,
-                height: 9,
-                borderRadius: "50%",
-                background: "#149ed5",
+                width: 24,
+                borderTop: "3px solid #149ed5",
               }}
             />
-            {progress.currentLabel}
+            Current: {progress.currentLabel}
           </span>
           <span
             style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
           >
             <span
               style={{
-                width: 9,
-                height: 9,
-                borderRadius: "50%",
-                background: "#78c1df",
+                width: 24,
+                borderTop: "3px dashed #78c1df",
               }}
             />
-            {progress.previousLabel}
+            Previous: {progress.previousLabel}
           </span>
         </div>
       </div>
@@ -569,25 +633,17 @@ export function ConversionProgressCard({
           <InlineStack gap="200" blockAlign="center" wrap>
             <div
               style={{
-                display: "inline-flex",
-                gap: 2,
-                padding: 2,
-                borderRadius: 8,
-                background: "var(--p-color-bg-surface-secondary)",
+                width: 190,
               }}
             >
-              {PERIOD_OPTIONS.map((option) => (
-                <Button
-                  key={option.value}
-                  size="slim"
-                  variant={period === option.value ? "primary" : "plain"}
-                  pressed={period === option.value}
-                  onClick={() => changePeriod(option.value)}
-                  loading={isLoading && period === option.value}
-                >
-                  {option.label}
-                </Button>
-              ))}
+              <Select
+                label="Date range"
+                labelHidden
+                options={PERIOD_OPTIONS}
+                value={period}
+                disabled={isLoading}
+                onChange={(value) => changePeriod(value as ConversionPeriod)}
+              />
             </div>
             <Button variant="primary" onClick={openCreate}>
               Log optimization
@@ -620,19 +676,61 @@ export function ConversionProgressCard({
                       as="p"
                       variant="bodyMd"
                       fontWeight="semibold"
-                      tone={progress.deltaPoints >= 0 ? "success" : "critical"}
+                      tone={
+                        progress.deltaPoints > 0
+                          ? "success"
+                          : progress.deltaPoints < 0
+                            ? "critical"
+                            : "subdued"
+                      }
                     >
-                      {progress.deltaPoints >= 0 ? "↗ " : "↘ "}
-                      {formatDelta(progress.deltaPoints)}
+                      {formatComparison(
+                        progress.currentRate,
+                        progress.previousRate,
+                      )}
                     </Text>
                   ) : null}
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {progress.periodLabel} · compared with the prior period
+                  {progress.periodLabel} · {progress.currentLabel}
                 </Text>
               </BlockStack>
               <Badge tone="info">Shopify Analytics</Badge>
             </InlineStack>
+
+            {progress.status === "ready" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                  gap: 12,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  background: "rgba(255, 255, 255, 0.68)",
+                  border: "1px solid #d8e7f2",
+                }}
+              >
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">
+                    What this rate means
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {progress.currentSessions > 0
+                      ? `${formatCount(progress.currentCompletedCheckouts)} checkout-completing sessions from ${formatCount(progress.currentSessions)} human online-store sessions.`
+                      : "No human online-store sessions were recorded in this period."}
+                  </Text>
+                </BlockStack>
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">
+                    Previous comparison: {formatRate(progress.previousRate)}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Same elapsed length in the prior period ·{" "}
+                    {progress.previousLabel}
+                  </Text>
+                </BlockStack>
+              </div>
+            ) : null}
 
             {progress.status !== "ready" ? (
               <div
@@ -681,7 +779,7 @@ export function ConversionProgressCard({
             <ConversionChart data={data} />
 
             {progress.status === "ready" && data.events.length ? (
-              <InlineStack gap="300" blockAlign="center" wrap>
+              <InlineStack gap="150" blockAlign="center" wrap>
                 <span
                   style={{
                     display: "inline-flex",
@@ -699,26 +797,7 @@ export function ConversionProgressCard({
                       background: "#008060",
                     }}
                   />
-                  Optimization
-                </span>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    color: "#596b78",
-                    fontSize: 12,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 14,
-                      height: 9,
-                      background: "#7c3aed",
-                      opacity: 0.25,
-                    }}
-                  />
-                  A/B test period
+                  Logged optimization — hover or focus the dot for details
                 </span>
               </InlineStack>
             ) : null}
@@ -727,12 +806,16 @@ export function ConversionProgressCard({
 
         <BlockStack gap="100">
           <InlineStack align="space-between" blockAlign="center">
-            <Text as="h3" variant="headingMd">
-              Optimization timeline
-            </Text>
+            <BlockStack gap="050">
+              <Text as="h3" variant="headingMd">
+                Optimization timeline
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Only optimizations explicitly logged by your team appear here.
+              </Text>
+            </BlockStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              {data.events.length} event{data.events.length === 1 ? "" : "s"} in
-              this period
+              {data.events.length} logged in this period
             </Text>
           </InlineStack>
           {data.events.length ? (
@@ -752,8 +835,8 @@ export function ConversionProgressCard({
               }}
             >
               <Text as="p" variant="bodySm" tone="subdued">
-                No optimizations, experiments, or completed snapshots in this
-                period yet.
+                No optimizations have been logged in this period. Use “Log
+                optimization” to add a change and place its marker on the graph.
               </Text>
             </div>
           )}

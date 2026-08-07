@@ -19,6 +19,10 @@ export type ConversionProgress = {
   previousRangeEnd: string;
   currentRate: number;
   previousRate: number;
+  currentSessions: number;
+  currentCompletedCheckouts: number;
+  previousSessions: number;
+  previousCompletedCheckouts: number;
   deltaPoints: number;
   deltaPercent: number | null;
   currentSeries: ConversionPoint[];

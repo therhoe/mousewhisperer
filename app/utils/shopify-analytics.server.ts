@@ -178,6 +178,10 @@ function emptyProgress(
     previousRangeEnd: range.previousEnd,
     currentRate: 0,
     previousRate: 0,
+    currentSessions: 0,
+    currentCompletedCheckouts: 0,
+    previousSessions: 0,
+    previousCompletedCheckouts: 0,
     deltaPoints: 0,
     deltaPercent: null,
     currentSeries: [],
@@ -219,11 +223,15 @@ function parseRows(rows: unknown, grain: "day" | "week"): ConversionPoint[] {
 
 function summarize(points: ConversionPoint[]) {
   const sessions = points.reduce((sum, point) => sum + point.sessions, 0);
-  const completed = points.reduce(
+  const completedCheckouts = points.reduce(
     (sum, point) => sum + point.completedCheckouts,
     0,
   );
-  return sessions > 0 ? (completed / sessions) * 100 : 0;
+  return {
+    sessions,
+    completedCheckouts,
+    conversionRate: sessions > 0 ? (completedCheckouts / sessions) * 100 : 0,
+  };
 }
 
 async function getShopTimeZone(admin: ShopifyAdminClient) {
@@ -340,8 +348,10 @@ export async function getShopifyConversionProgress({
             range.grain,
           ),
         ]);
-        const currentRate = summarize(currentSeries);
-        const previousRate = summarize(previousSeries);
+        const currentSummary = summarize(currentSeries);
+        const previousSummary = summarize(previousSeries);
+        const currentRate = currentSummary.conversionRate;
+        const previousRate = previousSummary.conversionRate;
         const deltaPoints = currentRate - previousRate;
 
         return {
@@ -349,6 +359,10 @@ export async function getShopifyConversionProgress({
           status: "ready",
           currentRate,
           previousRate,
+          currentSessions: currentSummary.sessions,
+          currentCompletedCheckouts: currentSummary.completedCheckouts,
+          previousSessions: previousSummary.sessions,
+          previousCompletedCheckouts: previousSummary.completedCheckouts,
           deltaPoints,
           deltaPercent:
             previousRate > 0 ? (deltaPoints / previousRate) * 100 : null,
