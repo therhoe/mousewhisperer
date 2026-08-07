@@ -103,12 +103,16 @@
   /* ---------- images ---------- */
   .img-block { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
   .sheet {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    display: flex;
     gap: 14px;
     padding-left: 18px;
+    padding-bottom: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
   }
-  .thumb-card { min-width: 0; }
+  .thumb-card { flex: 0 0 160px; width: 160px; min-width: 0; scroll-snap-align: start; }
   .thumb {
     position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
     background: var(--bg-surface-secondary); border: 1px solid var(--border);
@@ -250,7 +254,7 @@
               <path d="M34 26h32l8 14-10 6-6-10H40l-6 10-10-6z" fill="#2f5a95"/>
             </svg>
             <span class="thumb-count">38</span>
-            <span class="thumb-share" style="width:100%"></span>
+            <span class="thumb-share" style="width:45.2%"></span>
           </div>
           <div class="thumb-meta">
             <div class="thumb-pct">13% of sessions</div>
@@ -267,7 +271,7 @@
               <path d="M0 86l30-14 26 10 44-16v34H0z" fill="#6f7f52"/>
             </svg>
             <span class="thumb-count">26</span>
-            <span class="thumb-share" style="width:68%"></span>
+            <span class="thumb-share" style="width:31%"></span>
           </div>
           <div class="thumb-meta">
             <div class="thumb-pct">9% of sessions</div>
@@ -290,7 +294,7 @@
               </g>
             </svg>
             <span class="thumb-count">19</span>
-            <span class="thumb-share" style="width:50%"></span>
+            <span class="thumb-share" style="width:22.6%"></span>
           </div>
           <div class="thumb-meta">
             <div class="thumb-pct">6% of sessions</div>
@@ -306,7 +310,7 @@
               <path d="M34 26h32l8 14-10 6-6-10H40l-6 10-10-6z" fill="#93332e"/>
             </svg>
             <span class="thumb-count">11</span>
-            <span class="thumb-share" style="width:29%"></span>
+            <span class="thumb-share" style="width:13.1%"></span>
           </div>
           <div class="thumb-meta">
             <div class="thumb-pct">4% of sessions</div>

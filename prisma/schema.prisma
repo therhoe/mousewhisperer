@@ -805,3 +805,26 @@ model ShopSettings {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
+
+// Store changes that merchants want to compare against Shopify conversion progress.
+model OptimizationEvent {
+  id                  String    @id @default(cuid())
+  shop                String
+  title               String
+  description         String?
+  category            String    @default("OTHER")
+  status              String    @default("IMPLEMENTED")
+  scope               String    @default("STORE")
+  pagePath            String?
+  sourceType          String    @default("MANUAL")
+  sourceId            String?
+  implementedAt       DateTime
+  endedAt             DateTime?
+  shopifyAnnotationId String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([shop, implementedAt])
+  @@index([shop, status])
+  @@index([shop, sourceType])
+}

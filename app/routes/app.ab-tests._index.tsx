@@ -40,6 +40,8 @@ import {
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
 import { planUsagePillLabel, PremiumGateCard } from "../components/PremiumGate";
+import { ResourceActivityChart } from "../components/ResourceActivityChart";
+import { getDashboardAbTestActivity } from "../utils/dashboard-activity.server";
 import {
   assertCanCreateAbTest,
   getBillingAccess,
@@ -460,31 +462,6 @@ function abPageTypeToResourceType(pageType?: string | null) {
     return pageType;
   }
   return null;
-}
-
-function pathFromPreviewUrl(value?: string | null) {
-  if (!value) return null;
-  try {
-    return new URL(value).pathname || null;
-  } catch {
-    return null;
-  }
-}
-
-function handleFromPreviewPath(
-  pageType?: string | null,
-  pagePath?: string | null,
-) {
-  if (!pagePath) return null;
-  const patterns: Partial<Record<string, RegExp>> = {
-    PRODUCT: /^\/products\/([^/?#]+)/,
-    COLLECTION: /^\/collections\/([^/?#]+)/,
-    PAGE: /^\/pages\/([^/?#]+)/,
-    BLOG: /^\/blogs\/([^/?#]+)(?:\/([^/?#]+))?/,
-  };
-  const match = pagePath.match(patterns[pageType || ""] || /$a/);
-  if (!match) return null;
-  return match[2] || match[1] || null;
 }
 
 function defaultRecommendationFocusAreas(pageType?: string | null) {
@@ -1958,7 +1935,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [tests, themeTemplates, completedSnapshots, billingAccess] =
+  const [tests, themeTemplates, completedSnapshots, billingAccess, activityCard] =
     await Promise.all([
     prisma.abTest.findMany({
       where: { shop },
@@ -1987,6 +1964,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         },
       }),
       getBillingAccess(shop),
+      getDashboardAbTestActivity(shop),
     ]);
   const assignmentGroups = tests.length
     ? await prisma.abTestAssignment.groupBy({
@@ -2025,6 +2003,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     shop,
+    activityCard,
     billingAccess,
     themeTemplates,
     rowStatsByVariant,
@@ -2331,6 +2310,7 @@ export default function AbTestsIndex() {
     rowStatsByVariant,
     completedSnapshots,
     billingAccess,
+    activityCard,
   } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -2758,6 +2738,7 @@ export default function AbTestsIndex() {
     >
       <TitleBar title="A/B tests" />
       <BlockStack gap="500">
+        <ResourceActivityChart card={activityCard} />
         {themeTemplates.needsThemeScope ? (
           <Banner
             tone="warning"

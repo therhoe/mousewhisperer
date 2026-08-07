@@ -16,7 +16,6 @@ import {
   Card,
   Text,
   BlockStack,
-  InlineStack,
   Button,
   Modal,
   TextField,
@@ -40,6 +39,11 @@ import {
   type BillingAccess,
 } from "../utils/billing.server";
 import { planUsagePillLabel } from "../components/PremiumGate";
+import { ResourceActivityChart } from "../components/ResourceActivityChart";
+import {
+  getDashboardResourceActivity,
+  type DashboardActivityCard,
+} from "../utils/dashboard-activity.server";
 
 const CATEGORY_CONFIG: Record<
   string,
@@ -169,6 +173,7 @@ type CategorySummary = {
 type CategoryLoaderData = CategorySummary & {
   category: string;
   config: (typeof CATEGORY_CONFIG)[string];
+  activityCard: DashboardActivityCard;
   billingAccess?: BillingAccess;
   summaryPending?: boolean;
 };
@@ -586,11 +591,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     new URL(request.url).searchParams.get("_summary") === "1";
 
   if (!summaryRequested) {
-    const { audits, baseline } = await getFastCategorySummary(
-      shop,
-      category,
-      config,
-    );
+    const [{ audits, baseline }, billingAccess, activityCard] =
+      await Promise.all([
+        getFastCategorySummary(shop, category, config),
+        getBillingAccess(shop),
+        getDashboardResourceActivity(shop, config.resourceType),
+      ]);
     if (process.env.NODE_ENV === "development") {
       console.info("[MW Perf] category loader", {
         authMs,
@@ -599,12 +605,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         summaryRequested,
       });
     }
-    const billingAccess = await getBillingAccess(shop);
     return json({
       category,
       config,
       audits,
       baseline,
+      activityCard,
       billingAccess,
       summaryPending: true,
     });
@@ -823,8 +829,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
-  const billingAccess = await getBillingAccess(shop);
-  return json({ category, config, audits, baseline, billingAccess });
+  const [billingAccess, activityCard] = await Promise.all([
+    getBillingAccess(shop),
+    getDashboardResourceActivity(shop, config.resourceType),
+  ]);
+  return json({
+    category,
+    config,
+    audits,
+    baseline,
+    activityCard,
+    billingAccess,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -1121,6 +1137,13 @@ export default function AuditsCategory() {
           : "Audit baselines and per-page comparison"
       }
       backAction={{ content: "Dashboard", url: "/app" }}
+      primaryAction={
+        billingAccess ? (
+          <Button url="/app/upgrade" size="slim">
+            {planUsagePillLabel(billingAccess, "normalSnapshots")}
+          </Button>
+        ) : undefined
+      }
     >
       {prefetchDetails &&
         detailPrefetchPages.map((page) => (
@@ -1135,15 +1158,10 @@ export default function AuditsCategory() {
       </TitleBar>
       <Layout>
         <Layout.Section>
-          {billingAccess ? (
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-              <Button url="/app/upgrade" size="slim">
-                {planUsagePillLabel(billingAccess, "normalSnapshots")}
-              </Button>
-            </div>
-          ) : null}
-
-          {audits.length === 0 ? (
+          <ResourceActivityChart card={loaderData.activityCard} />
+        </Layout.Section>
+        {audits.length === 0 ? (
+          <Layout.Section>
             <Card>
               <BlockStack gap="300" inlineAlign="center">
                 <Text as="p" variant="bodyMd" tone="subdued">
@@ -1160,45 +1178,8 @@ export default function AuditsCategory() {
                 )}
               </BlockStack>
             </Card>
-          ) : (
-            <Card>
-              <BlockStack gap="200">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    {config.label} baseline
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Average across {baseline.count} audit
-                    {baseline.count === 1 ? "" : "s"}
-                  </Text>
-                </InlineStack>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 32,
-                    flexWrap: "wrap",
-                    marginTop: 8,
-                  }}
-                >
-                  {metricDefs.map((metric) => (
-                    <div key={metric.key} style={{ flex: 1, minWidth: 140 }}>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {metric.baselineLabel}
-                      </Text>
-                      <Text as="p" variant="headingLg" fontWeight="semibold">
-                        {metric.format(
-                          (baseline.metricValues as Record<string, number>)[
-                            metric.key
-                          ] || 0,
-                        )}
-                      </Text>
-                    </div>
-                  ))}
-                </div>
-              </BlockStack>
-            </Card>
-          )}
-        </Layout.Section>
+          </Layout.Section>
+        ) : null}
 
         {audits.length > 0 && (
           <Layout.Section>

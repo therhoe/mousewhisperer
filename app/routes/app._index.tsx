@@ -1,7 +1,13 @@
-import { useCallback, useState, useEffect, useId, useRef } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, Link, useFetcher, PrefetchPageLinks } from "@remix-run/react";
+import {
+  useLoaderData,
+  useSubmit,
+  useNavigation,
+  Link,
+  useFetcher,
+} from "@remix-run/react";
 import {
   Page,
   Card,
@@ -36,6 +42,7 @@ import {
 } from "../utils/loader-cache.server";
 import { createStoreSnapshot } from "../utils/store-snapshot.server";
 import { planUsagePillLabel, TargetLimitText } from "../components/PremiumGate";
+import { ConversionProgressCard } from "../components/ConversionProgressCard";
 import {
   assertCanCreateNormalSnapshots,
   assertCanCreateStoreSnapshot,
@@ -44,24 +51,29 @@ import {
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
-import {
-  getDashboardActivity,
-  type DashboardActiveAudit,
-  type DashboardActivityCard,
-} from "../utils/dashboard-activity.server";
+import { getOptimizationTimeline } from "../utils/optimization-timeline.server";
+import { getShopifyConversionProgress } from "../utils/shopify-analytics.server";
 
 const HOMEPAGE_RESOURCE = {
   id: "gid://shopify/Homepage/__homepage__",
   title: "Homepage",
   handle: "__homepage__",
 };
-type AuditResourceType = "product" | "collection" | "homepage" | "page" | "blog";
-type PrismaResourceType = "PRODUCT" | "COLLECTION" | "HOMEPAGE" | "PAGE" | "BLOG";
+type AuditResourceType =
+  | "product"
+  | "collection"
+  | "homepage"
+  | "page"
+  | "blog";
+type PrismaResourceType =
+  | "PRODUCT"
+  | "COLLECTION"
+  | "HOMEPAGE"
+  | "PAGE"
+  | "BLOG";
 type DashboardSummary = {
   setupGuideDismissed: boolean;
   completedCount: number;
-  activeAudits: DashboardActiveAudit[];
-  activityCards: DashboardActivityCard[];
   profile: {
     avatarEmoji: string | null;
     avatarUrl: string | null;
@@ -86,10 +98,10 @@ type StoreSnapshotListItem = {
 };
 
 const DASHBOARD_CACHE_TTL_MS = 60_000;
-const DETAIL_PREFETCH_LIMIT = 12;
 
 function getLevel(rep: number) {
-  if (rep >= 200) return { level: 10, title: "Grandmaster", next: 200, prev: 150 };
+  if (rep >= 200)
+    return { level: 10, title: "Grandmaster", next: 200, prev: 150 };
   if (rep >= 150) return { level: 9, title: "Master", next: 200, prev: 150 };
   if (rep >= 100) return { level: 8, title: "Expert", next: 150, prev: 100 };
   if (rep >= 75) return { level: 7, title: "Veteran", next: 100, prev: 75 };
@@ -102,16 +114,19 @@ function getLevel(rep: number) {
 }
 
 async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
-  return cachedValue(loaderCacheKeys.dashboard(shop), DASHBOARD_CACHE_TTL_MS, async () => {
-    const [shopSettings, dashboardActivity, completedCount, profile] =
-      await Promise.all([
+  return cachedValue(
+    loaderCacheKeys.dashboard(shop),
+    DASHBOARD_CACHE_TTL_MS,
+    async () => {
+      const [shopSettings, completedCount, profile] = await Promise.all([
         prisma.shopSettings.upsert({
           where: { shop },
           update: {},
           create: { shop },
         }),
-        getDashboardActivity(shop),
-        prisma.snapshot.count({ where: { project: { shop }, status: "COMPLETED" } }),
+        prisma.snapshot.count({
+          where: { project: { shop }, status: "COMPLETED" },
+        }),
         COMMUNITY_FEATURES_ENABLED
           ? prisma.insightProfile.findUnique({
               where: { shop },
@@ -122,24 +137,23 @@ async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
           : Promise.resolve(null),
       ]);
 
-    return {
-      setupGuideDismissed: shopSettings.setupGuideDismissed,
-      completedCount,
-      activeAudits: dashboardActivity.activeAudits,
-      activityCards: dashboardActivity.cards,
-      profile: profile
-        ? {
-            avatarEmoji: profile.avatarEmoji,
-            avatarUrl: profile.avatarUrl,
-            bio: profile.bio,
-            displayName: profile.displayName,
-            reputation: profile.reputation,
-            answersCount: profile._count.answers,
-            insightsCount: profile._count.insights,
-          }
-        : null,
-    };
-  });
+      return {
+        setupGuideDismissed: shopSettings.setupGuideDismissed,
+        completedCount,
+        profile: profile
+          ? {
+              avatarEmoji: profile.avatarEmoji,
+              avatarUrl: profile.avatarUrl,
+              bio: profile.bio,
+              displayName: profile.displayName,
+              reputation: profile.reputation,
+              answersCount: profile._count.answers,
+              insightsCount: profile._count.insights,
+            }
+          : null,
+      };
+    },
+  );
 }
 
 function clearDashboardCache(shop: string) {
@@ -153,33 +167,50 @@ function clearAuditListCaches(shop: string) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [summary, storeSnapshots, billingAccess] = await Promise.all([
-    getDashboardSummary(shop),
-    prisma.storeSnapshot.findMany({
-      where: { shop },
-      orderBy: { startedAt: "desc" },
-      take: 5,
-      select: {
-        id: true,
-        name: true,
-        status: true,
-        completionMode: true,
-        targetHumanVisitors: true,
-        targetTotalVisits: true,
-        durationDays: true,
-        startedAt: true,
-        completedAt: true,
-        _count: { select: { visits: true } },
-      },
-    }),
-    getBillingAccess(shop),
-  ]);
+  const [summary, storeSnapshots, billingAccess, conversionProgress] =
+    await Promise.all([
+      getDashboardSummary(shop),
+      prisma.storeSnapshot.findMany({
+        where: { shop },
+        orderBy: { startedAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          completionMode: true,
+          targetHumanVisitors: true,
+          targetTotalVisits: true,
+          durationDays: true,
+          startedAt: true,
+          completedAt: true,
+          _count: { select: { visits: true } },
+        },
+      }),
+      getBillingAccess(shop),
+      getShopifyConversionProgress({
+        admin,
+        shop,
+        sessionScope: session.scope,
+        period: "month",
+      }),
+    ]);
+  const conversionEvents = await getOptimizationTimeline(
+    shop,
+    conversionProgress.rangeStart,
+    conversionProgress.rangeEnd,
+  );
 
   return json({
     ...summary,
+    shop,
+    conversionDashboard: {
+      progress: conversionProgress,
+      events: conversionEvents,
+    },
     billingAccess,
     storeSnapshots: storeSnapshots.map((snapshot) => ({
       ...snapshot,
@@ -202,9 +233,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = formData.get("productId") as string;
     const productTitle = formData.get("productTitle") as string;
     const productHandle = formData.get("productHandle") as string;
-    const resourceType = (formData.get("resourceType") as PrismaResourceType) || "PRODUCT";
+    const resourceType =
+      (formData.get("resourceType") as PrismaResourceType) || "PRODUCT";
     const snapshotName = formData.get("snapshotName") as string | null;
-    const targetVisitors = parseInt(formData.get("targetVisitors") as string) || 1000;
+    const targetVisitors =
+      parseInt(formData.get("targetVisitors") as string) || 1000;
 
     try {
       await assertCanCreateNormalSnapshots(shop, 1);
@@ -234,12 +267,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (existing) {
       const resourceLabel =
-        resourceType === "COLLECTION" ? "collection" :
-        resourceType === "HOMEPAGE" ? "homepage" :
-        resourceType === "PAGE" ? "page" :
-        resourceType === "BLOG" ? "blog" :
-        "product";
-      return json({ error: `An active audit already exists for this ${resourceLabel}` }, { status: 400 });
+        resourceType === "COLLECTION"
+          ? "collection"
+          : resourceType === "HOMEPAGE"
+            ? "homepage"
+            : resourceType === "PAGE"
+              ? "page"
+              : resourceType === "BLOG"
+                ? "blog"
+                : "product";
+      return json(
+        { error: `An active audit already exists for this ${resourceLabel}` },
+        { status: 400 },
+      );
     }
 
     // Check if project exists (but no active snapshot)
@@ -291,9 +331,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? rawMode
         : "HUMAN_VISITORS";
 
-    const targetHumanVisitors = parseInt(String(formData.get("targetHumanVisitors") || "1000"), 10);
-    const targetTotalVisits = parseInt(String(formData.get("targetTotalVisits") || "2500"), 10);
-    const durationDays = parseInt(String(formData.get("durationDays") || "7"), 10);
+    const targetHumanVisitors = parseInt(
+      String(formData.get("targetHumanVisitors") || "1000"),
+      10,
+    );
+    const targetTotalVisits = parseInt(
+      String(formData.get("targetTotalVisits") || "2500"),
+      10,
+    );
+    const durationDays = parseInt(
+      String(formData.get("durationDays") || "7"),
+      10,
+    );
 
     try {
       await assertCanCreateStoreSnapshot(shop);
@@ -391,359 +440,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
-function chartPath(values: number[], maxValue: number) {
-  if (!values.length) return "";
-  const left = 12;
-  const width = 576;
-  const top = 10;
-  const height = 82;
-  return values
-    .map((value, index) => {
-      const x =
-        values.length === 1
-          ? left + width / 2
-          : left + (index / (values.length - 1)) * width;
-      const y = top + height - (Math.max(0, value) / maxValue) * height;
-      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-function ComparisonAreaChart({
-  card,
-}: {
-  card: DashboardActivityCard;
-}) {
-  const gradientId = `dashboard-area-${useId().replace(/:/g, "")}`;
-  const allValues = [...card.chart.current, ...card.chart.previous];
-  const maxValue = Math.max(1, ...allValues) * 1.12;
-  const currentPath = chartPath(card.chart.current, maxValue);
-  const previousPath = chartPath(card.chart.previous, maxValue);
-  const currentArea = currentPath
-    ? `${currentPath} L588,104 L12,104 Z`
-    : "";
-
-  return (
-    <div style={{ minHeight: 88 }}>
-      {currentPath || previousPath ? (
-        <svg
-          viewBox="0 0 600 112"
-          width="100%"
-          height="72"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label={`${card.chart.metricLabel} comparison for ${card.chart.contextLabel}`}
-          style={{ display: "block" }}
-        >
-          <defs>
-            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#2c6ecb" stopOpacity="0.24" />
-              <stop offset="100%" stopColor="#2c6ecb" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {[24, 64, 104].map((y) => (
-            <line
-              key={y}
-              x1="12"
-              x2="588"
-              y1={y}
-              y2={y}
-              stroke="#e3e3e3"
-              strokeWidth="1"
-            />
-          ))}
-          {currentArea ? <path d={currentArea} fill={`url(#${gradientId})`} /> : null}
-          {previousPath ? (
-            <path
-              d={previousPath}
-              fill="none"
-              stroke="#8c9196"
-              strokeWidth="2"
-              strokeDasharray="6 6"
-              vectorEffect="non-scaling-stroke"
-            />
-          ) : null}
-          {currentPath ? (
-            <path
-              d={currentPath}
-              fill="none"
-              stroke="#2463eb"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          ) : null}
-        </svg>
-      ) : (
-        <div
-          style={{
-            height: 72,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderTop: "1px solid var(--p-color-border-subdued)",
-            borderBottom: "1px solid var(--p-color-border-subdued)",
-          }}
-        >
-          <Text as="p" variant="bodySm" tone="subdued">
-            Comparison data will appear as visits are collected
-          </Text>
-        </div>
-      )}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          color: "var(--p-color-text-subdued)",
-          fontSize: 11,
-          marginTop: 2,
-        }}
-      >
-        <span>Start</span>
-        <span>{card.chart.axisLabel}</span>
-        <span>100%</span>
-      </div>
-    </div>
-  );
-}
-
-function DashboardActivityCardView({
-  card,
-}: {
-  card: DashboardActivityCard;
-}) {
-  const previewSlots = Array.from(
-    { length: 3 },
-    (_, index) => card.previews[index] || null,
-  );
-
-  return (
-    <div className="mw-dashboard-activity-card">
-      <Card padding="300">
-        <div className="mw-dashboard-card-content">
-          <BlockStack gap="200">
-            <InlineStack align="space-between" blockAlign="center" gap="300">
-              <Link
-                to={card.href}
-                prefetch="render"
-                style={{ textDecoration: "none", color: "inherit", minWidth: 0 }}
-              >
-                <BlockStack gap="050">
-                  <Text as="h2" variant="headingLg" fontWeight="semibold">
-                    {card.title}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {card.scopeLabel}
-                  </Text>
-                </BlockStack>
-              </Link>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 7,
-                  alignItems: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-                    background: card.runningCount > 0 ? "#008060" : "#8c9196",
-                  }}
-                />
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {card.runningCount} {card.runningLabel}
-                </Text>
-              </div>
-            </InlineStack>
-
-            <div
-              className="mw-dashboard-kpi-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                borderTop: "1px solid var(--p-color-border-subdued)",
-                borderBottom: "1px solid var(--p-color-border-subdued)",
-                padding: "8px 0",
-              }}
-            >
-              {card.kpis.map((kpi, index) => (
-                <div
-                  key={kpi.label}
-                  style={{
-                    minWidth: 0,
-                    padding: index === 0 ? "0 12px 0 0" : "0 12px",
-                    borderLeft:
-                      index === 0
-                        ? undefined
-                        : "1px solid var(--p-color-border-subdued)",
-                  }}
-                >
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {kpi.label}
-                  </Text>
-                  <div
-                    style={{
-                      fontSize: 20,
-                      lineHeight: "26px",
-                      fontWeight: 650,
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {kpi.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <BlockStack gap="150">
-              <div className="mw-dashboard-chart-heading">
-                <div style={{ minWidth: 0 }}>
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {card.chart.metricLabel}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued" truncate>
-                    {card.chart.contextLabel}
-                  </Text>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    flexShrink: 0,
-                    fontSize: 11,
-                    color: "var(--p-color-text-subdued)",
-                  }}
-                >
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 14, height: 2, background: "#2463eb" }} />
-                    {card.chart.currentLabel}
-                  </span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <span
-                      style={{
-                        width: 14,
-                        borderTop: "2px dashed #8c9196",
-                      }}
-                    />
-                    {card.chart.previousLabel}
-                  </span>
-                </div>
-              </div>
-              <ComparisonAreaChart card={card} />
-            </BlockStack>
-
-            <div
-              className="mw-dashboard-preview-list"
-              style={{ borderTop: "1px solid var(--p-color-border-subdued)" }}
-            >
-              {previewSlots.map((preview, index) => {
-                if (!preview) {
-                  return (
-                    <div
-                      key={`empty-${index}`}
-                      aria-hidden={index > 0 || card.previews.length > 0}
-                      className="mw-dashboard-preview-row"
-                      style={{
-                        borderTop:
-                          index === 0
-                            ? undefined
-                            : "1px solid var(--p-color-border-subdued)",
-                      }}
-                    >
-                      {index === 0 && card.previews.length === 0 ? (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {card.emptyLabel}
-                        </Text>
-                      ) : null}
-                    </div>
-                  );
-                }
-
-                const valueColor =
-                  preview.valueTone === "positive"
-                    ? "#008060"
-                    : preview.valueTone === "negative"
-                      ? "#d72c0d"
-                      : "var(--p-color-text-subdued)";
-
-                return (
-                  <Link
-                    key={preview.id}
-                    to={preview.href}
-                    prefetch="viewport"
-                    style={{ color: "inherit", textDecoration: "none" }}
-                  >
-                  <div
-                    className="mw-dashboard-preview-row"
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 1fr) minmax(72px, 120px) auto",
-                      gap: 12,
-                      alignItems: "center",
-                      borderTop:
-                        index === 0
-                          ? undefined
-                          : "1px solid var(--p-color-border-subdued)",
-                    }}
-                  >
-                    <Text as="span" variant="bodySm" fontWeight="semibold" truncate>
-                      {preview.title}
-                    </Text>
-                    <div
-                      aria-label={`${preview.progress}% complete`}
-                      style={{
-                        height: 5,
-                        borderRadius: 3,
-                        background: "#e3e3e3",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${preview.progress}%`,
-                          height: "100%",
-                          background: "#2463eb",
-                        }}
-                      />
-                    </div>
-                    <span
-                      style={{
-                        color: valueColor,
-                        fontSize: 12,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {preview.value}
-                    </span>
-                  </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </BlockStack>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 export default function Index() {
   const {
     setupGuideDismissed,
     completedCount,
-    activeAudits,
-    activityCards,
     storeSnapshots,
     billingAccess,
     profile,
     notifications: initialNotifications,
     unreadCount: initialUnreadCount,
+    conversionDashboard,
+    shop,
   } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -751,13 +458,15 @@ export default function Index() {
   const notificationsLoadStarted = useRef(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
-  const [isStoreSnapshotModalOpen, setIsStoreSnapshotModalOpen] = useState(false);
+  const [isStoreSnapshotModalOpen, setIsStoreSnapshotModalOpen] =
+    useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const [notifPage, setNotifPage] = useState(0);
-  const [hasMoreNotifs, setHasMoreNotifs] = useState(initialNotifications.length === 10);
-  const [prefetchDetails, setPrefetchDetails] = useState(false);
+  const [hasMoreNotifs, setHasMoreNotifs] = useState(
+    initialNotifications.length === 10,
+  );
 
   useEffect(() => {
     if (initialNotifications.length === 0 && initialUnreadCount === 0) return;
@@ -780,14 +489,6 @@ export default function Index() {
   }, [notifFetcher]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setPrefetchDetails(true);
-    }, 500);
-
-    return () => window.clearTimeout(timeoutId);
-  }, []);
-
-  useEffect(() => {
     if (notifFetcher.data?.notifications) {
       const more = notifFetcher.data.notifications;
       if (typeof notifFetcher.data.unreadCount === "number") {
@@ -800,7 +501,8 @@ export default function Index() {
       setHasMoreNotifs(more.length === 10);
     }
   }, [notifFetcher.data]);
-  const [resourceType, setResourceType] = useState<AuditResourceType>("product");
+  const [resourceType, setResourceType] =
+    useState<AuditResourceType>("product");
   const [selectedProduct, setSelectedProduct] = useState<{
     id: string;
     title: string;
@@ -812,9 +514,12 @@ export default function Index() {
   const [manualHandle, setManualHandle] = useState("");
   const [storeSnapshotName, setStoreSnapshotName] = useState("");
   const [storeSnapshotMode, setStoreSnapshotMode] = useState("HUMAN_VISITORS");
-  const [storeSnapshotHumanTarget, setStoreSnapshotHumanTarget] = useState("1000");
-  const [storeSnapshotVisitTarget, setStoreSnapshotVisitTarget] = useState("2500");
-  const [storeSnapshotDurationDays, setStoreSnapshotDurationDays] = useState("7");
+  const [storeSnapshotHumanTarget, setStoreSnapshotHumanTarget] =
+    useState("1000");
+  const [storeSnapshotVisitTarget, setStoreSnapshotVisitTarget] =
+    useState("2500");
+  const [storeSnapshotDurationDays, setStoreSnapshotDurationDays] =
+    useState("7");
 
   const isLoading = navigation.state !== "idle";
 
@@ -858,11 +563,14 @@ export default function Index() {
     }
 
     try {
-      const pickerType = resourceType === "collection" ? "collection" : "product";
+      const pickerType =
+        resourceType === "collection" ? "collection" : "product";
       const selected = await shopify.resourcePicker({
         type: pickerType,
         multiple: false,
-        ...(pickerType === "product" ? { filter: { variants: false, draft: false } } : {}),
+        ...(pickerType === "product"
+          ? { filter: { variants: false, draft: false } }
+          : {}),
       });
 
       if (selected && selected.length > 0) {
@@ -907,7 +615,15 @@ export default function Index() {
     setSelectedProduct(null);
     setManualTitle("");
     setManualHandle("");
-  }, [selectedProduct, resourceType, snapshotName, targetVisitors, submit, manualTitle, manualHandle]);
+  }, [
+    selectedProduct,
+    resourceType,
+    snapshotName,
+    targetVisitors,
+    submit,
+    manualTitle,
+    manualHandle,
+  ]);
 
   const handleCreateStoreSnapshot = useCallback(() => {
     const formData = new FormData();
@@ -957,7 +673,9 @@ export default function Index() {
   );
 
   const handleMarkAllRead = useCallback(() => {
-    setNotifications((prev: any[]) => prev.map((n: any) => ({ ...n, isRead: true })));
+    setNotifications((prev: any[]) =>
+      prev.map((n: any) => ({ ...n, isRead: true })),
+    );
     setUnreadCount(0);
     const fd = new FormData();
     fd.append("action", "mark-all-read");
@@ -974,7 +692,9 @@ export default function Index() {
   }, [notifPage, notifFetcher]);
 
   function notifTimeAgo(dateStr: string): string {
-    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    const seconds = Math.floor(
+      (Date.now() - new Date(dateStr).getTime()) / 1000,
+    );
     if (seconds < 60) return "just now";
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
@@ -995,13 +715,6 @@ export default function Index() {
     HIGH_BOT_TRAFFIC: "\uD83E\uDD16",
   };
 
-  const detailPrefetchPages = Array.from(
-    new Set(
-      (activeAudits as DashboardActiveAudit[])
-        .slice(0, DETAIL_PREFETCH_LIMIT)
-        .map((audit) => `/app/project/${audit.id}`),
-    ),
-  );
   const activeStoreSnapshot = (storeSnapshots as StoreSnapshotListItem[]).find(
     (snapshot) => snapshot.status === "ACTIVE",
   );
@@ -1010,13 +723,22 @@ export default function Index() {
 
   const announcementMarkup = showSetupGuide ? (
     <Card>
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", justifyContent: "space-between" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+        }}
+      >
         <BlockStack gap="300">
           <Text variant="headingLg" as="h2">
             Getting Started
           </Text>
           <Text as="p" tone="subdued">
-            Create an audit for any supported storefront page and Mouse Whisperer will track active visitors, classify traffic quality, and surface the page metrics that matter for that audit type.
+            Create an audit for any supported storefront page and Mouse
+            Whisperer will track active visitors, classify traffic quality, and
+            surface the page metrics that matter for that audit type.
           </Text>
         </BlockStack>
         <Button variant="plain" onClick={handleDismissSetup}>
@@ -1026,19 +748,9 @@ export default function Index() {
     </Card>
   ) : null;
 
-  const auditTypeCardsMarkup = (
-    <div className="mw-dashboard-card-grid">
-      {(activityCards as DashboardActivityCard[]).map((card) => (
-        <DashboardActivityCardView key={card.id} card={card} />
-      ))}
-    </div>
-  );
-
   const storeSnapshotMarkup = (
     <Card>
-      <div
-        className="mw-store-snapshot-grid"
-      >
+      <div className="mw-store-snapshot-grid">
         <BlockStack gap="100">
           <Text as="h2" variant="headingLg" fontWeight="semibold">
             Store snapshot
@@ -1079,33 +791,35 @@ export default function Index() {
         </div>
         <div className="mw-store-snapshot-actions">
           <InlineStack gap="200" blockAlign="center">
-          {displayedStoreSnapshot ? (
-            <Link
-              to={`/app/store-snapshots/${displayedStoreSnapshot.id}`}
-              prefetch="render"
-              style={{ textDecoration: "none" }}
-            >
-              <Button>{activeStoreSnapshot ? "Open snapshot" : "View latest"}</Button>
-            </Link>
-          ) : null}
-          {!activeStoreSnapshot ? (
-        <Button
-              variant={latestStoreSnapshot ? undefined : "primary"}
-              onClick={() => {
-                if (!billingAccess.canCreateStoreSnapshot) {
-                  window.location.href = "/app/upgrade";
-                  return;
-                }
-                setIsStoreSnapshotModalOpen(true);
-              }}
-            >
-              {!billingAccess.canCreateStoreSnapshot
-                ? "Upgrade to start"
-                : latestStoreSnapshot
-                  ? "Start new"
-                  : "Start snapshot"}
-            </Button>
-          ) : null}
+            {displayedStoreSnapshot ? (
+              <Link
+                to={`/app/store-snapshots/${displayedStoreSnapshot.id}`}
+                prefetch="render"
+                style={{ textDecoration: "none" }}
+              >
+                <Button>
+                  {activeStoreSnapshot ? "Open snapshot" : "View latest"}
+                </Button>
+              </Link>
+            ) : null}
+            {!activeStoreSnapshot ? (
+              <Button
+                variant={latestStoreSnapshot ? undefined : "primary"}
+                onClick={() => {
+                  if (!billingAccess.canCreateStoreSnapshot) {
+                    window.location.href = "/app/upgrade";
+                    return;
+                  }
+                  setIsStoreSnapshotModalOpen(true);
+                }}
+              >
+                {!billingAccess.canCreateStoreSnapshot
+                  ? "Upgrade to start"
+                  : latestStoreSnapshot
+                    ? "Start new"
+                    : "Start snapshot"}
+              </Button>
+            ) : null}
           </InlineStack>
         </div>
       </div>
@@ -1114,12 +828,23 @@ export default function Index() {
 
   const bellActivator = (
     <div
-      style={{ position: "relative", display: "inline-flex", cursor: "pointer", padding: 8 }}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        cursor: "pointer",
+        padding: 8,
+      }}
       onClick={() => setBellOpen((o) => !o)}
       role="button"
       tabIndex={0}
     >
-      <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
+      <svg
+        viewBox="0 0 20 20"
+        width="24"
+        height="24"
+        fill="currentColor"
+        style={{ color: "var(--p-color-icon)" }}
+      >
         <path d="M10 18a2 2 0 0 1-2-2h4a2 2 0 0 1-2 2zm7-3H3v-1l2-2V8a5 5 0 0 1 4-4.9V3a1 1 0 1 1 2 0v.1A5 5 0 0 1 15 8v4l2 2v1z" />
       </svg>
       {unreadCount > 0 && (
@@ -1156,9 +881,188 @@ export default function Index() {
     </div>
   );
 
+  const dashboardHeaderActions = (
+    <InlineStack gap="200" blockAlign="center" wrap={false}>
+      <Button url="/app/upgrade" size="slim">
+        {planUsagePillLabel(billingAccess, "normalSnapshots")}
+      </Button>
+      {COMMUNITY_FEATURES_ENABLED && (
+        <Link
+          to="/app/challenges/profile?returnTo=/app"
+          style={{
+            display: "inline-flex",
+            padding: 8,
+            cursor: "pointer",
+            textDecoration: "none",
+          }}
+        >
+          <svg
+            viewBox="0 0 20 20"
+            width="24"
+            height="24"
+            fill="currentColor"
+            style={{ color: "var(--p-color-icon)" }}
+          >
+            <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
+          </svg>
+        </Link>
+      )}
+      <Popover
+        active={bellOpen}
+        activator={bellActivator}
+        onClose={() => setBellOpen(false)}
+        preferredAlignment="right"
+        fluidContent
+      >
+        <div
+          style={{
+            width: 360,
+            maxHeight: 480,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "12px 16px",
+              borderBottom: "1px solid var(--p-color-border-subdued)",
+            }}
+          >
+            <Text as="h3" variant="headingSm">
+              Notifications
+            </Text>
+            {unreadCount > 0 && (
+              <Button variant="plain" onClick={handleMarkAllRead}>
+                Mark all as read
+              </Button>
+            )}
+          </div>
+
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {notifications.length === 0 ? (
+              <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  No notifications yet
+                </Text>
+              </div>
+            ) : (
+              notifications.map((notif: any) => (
+                <div
+                  key={notif.id}
+                  onClick={() =>
+                    notif.linkUrl
+                      ? handleMarkRead(notif.id, notif.linkUrl)
+                      : undefined
+                  }
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    padding: "10px 16px",
+                    cursor: notif.linkUrl ? "pointer" : "default",
+                    background: notif.isRead
+                      ? "transparent"
+                      : "var(--p-color-bg-surface-secondary)",
+                    borderBottom: "1px solid var(--p-color-border-subdued)",
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={(event) => {
+                    if (notif.linkUrl) {
+                      event.currentTarget.style.background =
+                        "var(--p-color-bg-surface-hover)";
+                    }
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.background = notif.isRead
+                      ? "transparent"
+                      : "var(--p-color-bg-surface-secondary)";
+                  }}
+                >
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>
+                    {notifEmoji[notif.type] || "\uD83D\uDD14"}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      as="p"
+                      variant="bodySm"
+                      fontWeight={notif.isRead ? "regular" : "semibold"}
+                    >
+                      {notif.title}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {notif.message}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {notifTimeAgo(notif.createdAt)}
+                    </Text>
+                  </div>
+                  {!notif.isRead && (
+                    <button
+                      title="Mark as read"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleMarkRead(notif.id);
+                      }}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 10,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                        flexShrink: 0,
+                        marginTop: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          background: "#2c6ecb",
+                          display: "block",
+                          transition: "transform 0.15s",
+                        }}
+                      />
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {hasMoreNotifs && notifications.length > 0 && (
+            <div
+              style={{
+                padding: "10px 16px",
+                textAlign: "center",
+                borderTop: "1px solid var(--p-color-border-subdued)",
+              }}
+            >
+              <Button
+                variant="plain"
+                onClick={handleLoadMoreNotifs}
+                loading={notifFetcher.state !== "idle"}
+              >
+                Load more
+              </Button>
+            </div>
+          )}
+        </div>
+      </Popover>
+    </InlineStack>
+  );
+
   return (
     <Page
       title="Dashboard"
+      secondaryActions={dashboardHeaderActions}
       primaryAction={{
         content: billingAccess.canCreateNormalSnapshot
           ? "Create New Audit"
@@ -1168,7 +1072,11 @@ export default function Index() {
       }}
     >
       <TitleBar title="Dashboard">
-        <button variant="primary" onClick={handleOpenPicker} disabled={isLoading}>
+        <button
+          variant="primary"
+          onClick={handleOpenPicker}
+          disabled={isLoading}
+        >
           {billingAccess.canCreateNormalSnapshot
             ? "Create New Audit"
             : "Upgrade to create audit"}
@@ -1236,208 +1144,140 @@ export default function Index() {
           }
         }
       `}</style>
-      {prefetchDetails &&
-        detailPrefetchPages.map((page) => <PrefetchPageLinks key={page} page={page} />)}
+      <BlockStack gap="400">
+        <ConversionProgressCard initialData={conversionDashboard} shop={shop} />
+        {announcementMarkup}
+        {storeSnapshotMarkup}
 
-      {/* Notification bell + Profile */}
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <Button url="/app/upgrade" size="slim">
-          {planUsagePillLabel(billingAccess, "normalSnapshots")}
-        </Button>
-        {COMMUNITY_FEATURES_ENABLED && (
-          <Link to="/app/challenges/profile?returnTo=/app" style={{ display: "inline-flex", padding: 8, cursor: "pointer", textDecoration: "none" }}>
-            <svg viewBox="0 0 20 20" width="24" height="24" fill="currentColor" style={{ color: "var(--p-color-icon)" }}>
-              <path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 13H4a1 1 0 0 1-1-1v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1a1 1 0 0 1-1 1zm-1-2a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3h10z" />
-            </svg>
-          </Link>
-        )}
-        <Popover
-          active={bellOpen}
-          activator={bellActivator}
-          onClose={() => setBellOpen(false)}
-          preferredAlignment="right"
-          fluidContent
-        >
-          <div style={{ width: 360, maxHeight: 480, display: "flex", flexDirection: "column" }}>
-            {/* Header */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "12px 16px",
-                borderBottom: "1px solid var(--p-color-border-subdued)",
-              }}
-            >
-              <Text as="h3" variant="headingSm">Notifications</Text>
-              {unreadCount > 0 && (
-                <Button variant="plain" onClick={handleMarkAllRead}>
-                  Mark all as read
-                </Button>
-              )}
-            </div>
-
-            {/* List */}
-            <div style={{ overflowY: "auto", flex: 1 }}>
-              {notifications.length === 0 ? (
-                <div style={{ padding: "24px 16px", textAlign: "center" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    No notifications yet
-                  </Text>
-                </div>
-              ) : (
-                notifications.map((notif: any) => (
+        {/* Profile Card — horizontal full-width */}
+        {COMMUNITY_FEATURES_ENABLED &&
+          (profile ? (
+            (() => {
+              const lvl = getLevel(profile.reputation);
+              const badges: {
+                label: string;
+                emoji: string;
+                tone: "success" | "info" | "warning";
+              }[] = [];
+              if (profile.answersCount >= 5)
+                badges.push({
+                  label: "Top Contributor",
+                  emoji: "\uD83C\uDF1F",
+                  tone: "success",
+                });
+              if (profile.insightsCount >= 3)
+                badges.push({
+                  label: "Challenge Pioneer",
+                  emoji: "\uD83D\uDCA1",
+                  tone: "info",
+                });
+              if (completedCount >= 10)
+                badges.push({
+                  label: `${completedCount} Audits`,
+                  emoji: "\uD83D\uDD25",
+                  tone: "warning",
+                });
+              return (
+                <Card>
                   <div
-                    key={notif.id}
-                    onClick={() => notif.linkUrl ? handleMarkRead(notif.id, notif.linkUrl) : undefined}
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      padding: "10px 16px",
-                      cursor: notif.linkUrl ? "pointer" : "default",
-                      background: notif.isRead ? "transparent" : "var(--p-color-bg-surface-secondary)",
-                      borderBottom: "1px solid var(--p-color-border-subdued)",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (notif.linkUrl) e.currentTarget.style.background = "var(--p-color-bg-surface-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = notif.isRead
-                        ? "transparent"
-                        : "var(--p-color-bg-surface-secondary)";
-                    }}
+                    style={{ display: "flex", gap: 20, alignItems: "center" }}
                   >
-                    <span style={{ fontSize: 20, flexShrink: 0 }}>
-                      {notifEmoji[notif.type] || "\uD83D\uDD14"}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <Text as="p" variant="bodySm" fontWeight={notif.isRead ? "regular" : "semibold"}>
-                        {notif.title}
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {notif.message}
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {notifTimeAgo(notif.createdAt)}
-                      </Text>
-                    </div>
-                    {!notif.isRead && (
-                      <button
-                        title="Mark as read"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMarkRead(notif.id);
-                        }}
+                    <Link
+                      to="/app/challenges/profile?returnTo=/app"
+                      style={{ textDecoration: "none" }}
+                    >
+                      <div
                         style={{
-                          width: 20,
-                          height: 20,
-                          borderRadius: 10,
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 0,
+                          width: 96,
+                          height: 96,
+                          borderRadius: 12,
+                          background: "#f6f6f7",
+                          overflow: "hidden",
                           flexShrink: 0,
-                          marginTop: 4,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                         }}
                       >
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: 4,
-                            background: "#2c6ecb",
-                            display: "block",
-                            transition: "transform 0.15s",
-                          }}
-                        />
-                      </button>
-                    )}
+                        {profile.avatarUrl ? (
+                          <img
+                            src={profile.avatarUrl}
+                            alt="Avatar"
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              imageRendering: "pixelated",
+                            }}
+                          />
+                        ) : (
+                          <span style={{ fontSize: "3rem" }}>
+                            {profile.avatarEmoji || "\uD83D\uDC2D"}
+                          </span>
+                        )}
+                      </div>
+                    </Link>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <BlockStack gap="100">
+                        <Text as="p" variant="headingLg" fontWeight="bold">
+                          {profile.displayName}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {lvl.title}
+                        </Text>
+                        {profile.bio && (
+                          <Text as="p" variant="bodySm">
+                            {profile.bio}
+                          </Text>
+                        )}
+                        {badges.length > 0 && (
+                          <InlineStack gap="100" wrap>
+                            {badges.map((b) => (
+                              <Badge
+                                key={b.label}
+                                tone={b.tone}
+                              >{`${b.emoji} ${b.label}`}</Badge>
+                            ))}
+                          </InlineStack>
+                        )}
+                      </BlockStack>
+                    </div>
+                    <div style={{ flexShrink: 0, textAlign: "right" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Reputation
+                      </Text>
+                      <Text as="p" variant="headingLg" fontWeight="semibold">
+                        {profile.reputation} pts
+                      </Text>
+                      <div style={{ marginTop: 4 }}>
+                        <Badge tone="info">{`LVL ${lvl.level}`}</Badge>
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {lvl.next - profile.reputation} pts to LVL{" "}
+                          {lvl.level + 1}
+                        </Text>
+                      </div>
+                    </div>
                   </div>
-                ))
-              )}
-            </div>
-
-            {/* Load more */}
-            {hasMoreNotifs && notifications.length > 0 && (
-              <div
-                style={{
-                  padding: "10px 16px",
-                  textAlign: "center",
-                  borderTop: "1px solid var(--p-color-border-subdued)",
-                }}
-              >
-                <Button
-                  variant="plain"
-                  onClick={handleLoadMoreNotifs}
-                  loading={notifFetcher.state !== "idle"}
-                >
-                  Load more
-                </Button>
-              </div>
-            )}
-          </div>
-        </Popover>
-      </div>
-
-      <BlockStack gap="400">
-        {announcementMarkup}
-        {storeSnapshotMarkup}
-
-        {/* Profile Card — horizontal full-width */}
-        {COMMUNITY_FEATURES_ENABLED && (profile ? (() => {
-          const lvl = getLevel(profile.reputation);
-          const badges: { label: string; emoji: string; tone: "success" | "info" | "warning" }[] = [];
-          if (profile.answersCount >= 5) badges.push({ label: "Top Contributor", emoji: "\uD83C\uDF1F", tone: "success" });
-          if (profile.insightsCount >= 3) badges.push({ label: "Challenge Pioneer", emoji: "\uD83D\uDCA1", tone: "info" });
-          if (completedCount >= 10) badges.push({ label: `${completedCount} Audits`, emoji: "\uD83D\uDD25", tone: "warning" });
-          return (
-            <Card>
-              <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-                <Link to="/app/challenges/profile?returnTo=/app" style={{ textDecoration: "none" }}>
-                  <div style={{ width: 96, height: 96, borderRadius: 12, background: "#f6f6f7", overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {profile.avatarUrl ? (
-                      <img src={profile.avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", imageRendering: "pixelated" }} />
-                    ) : (
-                      <span style={{ fontSize: "3rem" }}>{profile.avatarEmoji || "\uD83D\uDC2D"}</span>
-                    )}
-                  </div>
-                </Link>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <BlockStack gap="100">
-                    <Text as="p" variant="headingLg" fontWeight="bold">{profile.displayName}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">{lvl.title}</Text>
-                    {profile.bio && <Text as="p" variant="bodySm">{profile.bio}</Text>}
-                    {badges.length > 0 && (
-                      <InlineStack gap="100" wrap>
-                        {badges.map((b) => <Badge key={b.label} tone={b.tone}>{`${b.emoji} ${b.label}`}</Badge>)}
-                      </InlineStack>
-                    )}
-                  </BlockStack>
-                </div>
-                <div style={{ flexShrink: 0, textAlign: "right" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">Reputation</Text>
-                  <Text as="p" variant="headingLg" fontWeight="semibold">{profile.reputation} pts</Text>
-                  <div style={{ marginTop: 4 }}>
-                    <Badge tone="info">{`LVL ${lvl.level}`}</Badge>
-                  </div>
-                  <div style={{ marginTop: 4 }}>
-                    <Text as="span" variant="bodySm" tone="subdued">{lvl.next - profile.reputation} pts to LVL {lvl.level + 1}</Text>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          );
-        })() : (
-          <Banner title="Set up your community profile" tone="info" action={{ content: "Create profile", url: "/app/challenges/profile?returnTo=/app" }}>
-            <p>Create a display name and avatar to start posting challenges and helping fellow merchants.</p>
-          </Banner>
-        ))}
-
-        {auditTypeCardsMarkup}
+                </Card>
+              );
+            })()
+          ) : (
+            <Banner
+              title="Set up your community profile"
+              tone="info"
+              action={{
+                content: "Create profile",
+                url: "/app/challenges/profile?returnTo=/app",
+              }}
+            >
+              <p>
+                Create a display name and avatar to start posting challenges and
+                helping fellow merchants.
+              </p>
+            </Banner>
+          ))}
       </BlockStack>
 
       {/* Type Selection Modal */}
@@ -1463,12 +1303,14 @@ export default function Index() {
               {
                 label: "Product page",
                 value: "product",
-                helpText: "Track visitor engagement on a product page (/products/...)",
+                helpText:
+                  "Track visitor engagement on a product page (/products/...)",
               },
               {
                 label: "Collection page",
                 value: "collection",
-                helpText: "Track visitor engagement on a collection page (/collections/...)",
+                helpText:
+                  "Track visitor engagement on a collection page (/collections/...)",
               },
               {
                 label: "Homepage",
@@ -1478,12 +1320,14 @@ export default function Index() {
               {
                 label: "Page",
                 value: "page",
-                helpText: "Track visitor engagement on a custom page (/pages/...)",
+                helpText:
+                  "Track visitor engagement on a custom page (/pages/...)",
               },
               {
                 label: "Blog",
                 value: "blog",
-                helpText: "Track visitor engagement on a blog or blog post (/blogs/...)",
+                helpText:
+                  "Track visitor engagement on a blog or blog post (/blogs/...)",
               },
             ]}
             selected={[resourceType]}
@@ -1523,17 +1367,20 @@ export default function Index() {
                 {
                   label: "Count unique human visitors",
                   value: "HUMAN_VISITORS",
-                  helpText: "Best default for page recommendations because bots and unengaged traffic do not control completion.",
+                  helpText:
+                    "Best default for page recommendations because bots and unengaged traffic do not control completion.",
                 },
                 {
                   label: "Count total visits",
                   value: "TOTAL_VISITS",
-                  helpText: "Useful when you want a pageview-based scan across the store.",
+                  helpText:
+                    "Useful when you want a pageview-based scan across the store.",
                 },
                 {
                   label: "Run for a time window",
                   value: "TIME_WINDOW",
-                  helpText: "Useful for campaigns, launches, and weekly or monthly store checks.",
+                  helpText:
+                    "Useful for campaigns, launches, and weekly or monthly store checks.",
                 },
               ]}
               selected={[storeSnapshotMode]}
@@ -1610,7 +1457,11 @@ export default function Index() {
                   label="Title"
                   value={manualTitle}
                   onChange={setManualTitle}
-                  placeholder={resourceType === "blog" ? "e.g., News Blog" : "e.g., About Us"}
+                  placeholder={
+                    resourceType === "blog"
+                      ? "e.g., News Blog"
+                      : "e.g., About Us"
+                  }
                   helpText="Name for this audit"
                   autoComplete="off"
                 />
@@ -1618,8 +1469,16 @@ export default function Index() {
                   label="URL Handle"
                   value={manualHandle}
                   onChange={setManualHandle}
-                  placeholder={resourceType === "blog" ? "e.g., news or news/my-first-post" : "e.g., about-us"}
-                  helpText={resourceType === "blog" ? "The blog handle from the URL: /blogs/{handle} or /blogs/{blog}/{post}" : "The page handle from the URL: /pages/{handle}"}
+                  placeholder={
+                    resourceType === "blog"
+                      ? "e.g., news or news/my-first-post"
+                      : "e.g., about-us"
+                  }
+                  helpText={
+                    resourceType === "blog"
+                      ? "The blog handle from the URL: /blogs/{handle} or /blogs/{blog}/{post}"
+                      : "The page handle from the URL: /pages/{handle}"
+                  }
                   autoComplete="off"
                 />
               </>

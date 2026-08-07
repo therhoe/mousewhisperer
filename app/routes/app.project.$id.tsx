@@ -53,6 +53,10 @@ import {
   planLimitPayload,
   type BillingAccess,
 } from "../utils/billing.server";
+import {
+  buildClickEngagement,
+  type ImageEngagementItem,
+} from "../utils/click-engagement";
 
 const INSIGHT_CATEGORIES = [
   { label: "Select a category", value: "" },
@@ -86,6 +90,7 @@ type TrackedClick = {
   label?: string;
   tag?: string;
   href?: string | null;
+  time?: number;
   zone?: string;
 };
 
@@ -957,6 +962,8 @@ async function getSnapshotStatsFast(snapshotId: string) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
   });
+  const { imageEngagement, categoryTotals: clickCategoryTotals } =
+    buildClickEngagement(ctaClickRows, totalSessions);
 
   return {
     totalSessions,
@@ -1030,6 +1037,8 @@ async function getSnapshotStatsFast(snapshotId: string) {
     exitUrls,
     searchStats,
     ctaByCategory,
+    clickCategoryTotals,
+    imageEngagement,
   };
 }
 
@@ -1837,6 +1846,8 @@ async function getSnapshotStatsFromDBSlow(
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
   });
+  const { imageEngagement, categoryTotals: clickCategoryTotals } =
+    buildClickEngagement(ctaClickRows, totalSessions);
 
   return {
     totalSessions,
@@ -1906,6 +1917,8 @@ async function getSnapshotStatsFromDBSlow(
     exitUrls,
     searchStats,
     ctaByCategory,
+    clickCategoryTotals,
+    imageEngagement,
   };
 }
 
@@ -2680,6 +2693,190 @@ function StatCard({
         </InlineStack>
       </BlockStack>
     </Box>
+  );
+}
+
+function ImageEngagementStrip({
+  items,
+  totalImageClicks,
+  bodyTotalClicks,
+  globalMaxElementClicks,
+}: {
+  items: ImageEngagementItem[];
+  totalImageClicks: number;
+  bodyTotalClicks: number;
+  globalMaxElementClicks: number;
+}) {
+  const imageClickShare = percent(totalImageClicks, bodyTotalClicks);
+
+  return (
+    <>
+      <Divider />
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center" gap="300">
+          <InlineStack gap="200" blockAlign="center">
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "#0EA5E9",
+                flexShrink: 0,
+              }}
+            />
+            <Text as="h3" variant="headingMd">
+              Image
+            </Text>
+          </InlineStack>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {totalImageClicks.toLocaleString()} clicks ({imageClickShare}%)
+          </Text>
+        </InlineStack>
+
+        <div
+          aria-label="Image engagement thumbnails"
+          style={{
+            overflowX: "auto",
+            overflowY: "hidden",
+            padding: "2px 2px 10px 18px",
+            scrollSnapType: "x proximity",
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: 16,
+              width: "max-content",
+              minWidth: "100%",
+            }}
+          >
+            {items.map((item) => {
+              const barWidth =
+                (item.clickCount / globalMaxElementClicks) * 100;
+
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    flex: "0 0 164px",
+                    width: 164,
+                    scrollSnapAlign: "start",
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "relative",
+                      width: "100%",
+                      aspectRatio: "1 / 1",
+                      overflow: "hidden",
+                      border: "1px solid var(--p-color-border-secondary)",
+                      borderRadius: 10,
+                      background: "var(--p-color-bg-surface-secondary)",
+                    }}
+                  >
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.label}
+                        loading="lazy"
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          display: "flex",
+                          width: "100%",
+                          height: "100%",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: 16,
+                          textAlign: "center",
+                          color: "var(--p-color-text-subdued)",
+                        }}
+                      >
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Image preview unavailable
+                        </Text>
+                      </div>
+                    )}
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: 8,
+                        left: 8,
+                        minWidth: 34,
+                        padding: "2px 8px",
+                        borderRadius: 7,
+                        background: "rgba(255, 255, 255, 0.94)",
+                        boxShadow: "0 0 0 1px rgba(26, 26, 26, 0.10)",
+                        color: "#303030",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        lineHeight: "20px",
+                        textAlign: "center",
+                      }}
+                    >
+                      {item.clickCount.toLocaleString()}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        right: "auto",
+                        bottom: 0,
+                        left: 0,
+                        width: `${barWidth}%`,
+                        height: 5,
+                        background: "#0EA5E9",
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {item.sessionPercent}% of sessions
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      <span
+                        title={item.label}
+                        style={{
+                          display: "block",
+                          minHeight: 20,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {item.sessionCount.toLocaleString()} sessions
+                      {item.averageClickTimeSeconds !== null
+                        ? ` · avg ${formatTime(item.averageClickTimeSeconds)} to click`
+                        : ""}
+                    </Text>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ paddingLeft: 18 }}>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Grouped by image file, so resized versions of the same storefront
+            image are counted together.
+          </Text>
+        </div>
+      </BlockStack>
+    </>
   );
 }
 
@@ -5549,16 +5746,55 @@ export default function ProjectDetails() {
 
                     const bodyCatTotals = bodyCategories.map((cat) => ({
                       cat,
-                      total: ctaData[cat].reduce(
-                        (s: number, i: any) => s + i.count,
-                        0,
-                      ),
+                      total:
+                        displayStats?.clickCategoryTotals?.[cat] ??
+                        ctaData[cat].reduce(
+                          (s: number, i: any) => s + i.count,
+                          0,
+                        ),
                       items: ctaData[cat],
                       color: categoryColors[cat] || "#94A3B8",
                     }));
                     const bodyTotalClicks = bodyCatTotals.reduce(
                       (s, c) => s + c.total,
                       0,
+                    );
+                    const bodyBreakdownTotals = bodyCatTotals.filter(
+                      (category) => category.cat !== "Image",
+                    );
+                    const imageTotalClicks =
+                      bodyCatTotals.find((category) => category.cat === "Image")
+                        ?.total || 0;
+                    const imageItems: ImageEngagementItem[] =
+                      displayStats?.imageEngagement?.length > 0
+                        ? displayStats.imageEngagement
+                        : (ctaData.Image || []).map(
+                            (item: { label: string; count: number }) => ({
+                              key: `legacy:${item.label}`,
+                              label: item.label,
+                              imageUrl: null,
+                              clickCount: item.count,
+                              sessionCount: item.count,
+                              sessionPercent: percent(
+                                item.count,
+                                displayStats?.totalSessions || 0,
+                              ),
+                              averageClickTimeSeconds: null,
+                            }),
+                          );
+                    const largestNonImageElement =
+                      bodyBreakdownTotals.reduce(
+                        (largest, category) =>
+                          category.items.reduce(
+                            (categoryLargest: number, item: any) =>
+                              Math.max(categoryLargest, Number(item.count) || 0),
+                            largest,
+                          ),
+                        1,
+                      );
+                    const globalMaxElementClicks = imageItems.reduce(
+                      (largest, item) => Math.max(largest, item.clickCount),
+                      largestNonImageElement,
                     );
                     const radius = 70;
                     const circumference = 2 * Math.PI * radius;
@@ -5571,7 +5807,10 @@ export default function ProjectDetails() {
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "200px 1fr",
+                              gridTemplateColumns:
+                                bodyBreakdownTotals.length > 0
+                                  ? "200px minmax(0, 1fr)"
+                                  : "1fr",
                               gap: 32,
                               alignItems: "start",
                             }}
@@ -5675,7 +5914,7 @@ export default function ProjectDetails() {
 
                             {/* Horizontal bar breakdown — body zones only */}
                             <BlockStack gap="300">
-                              {bodyCatTotals.map((c) => {
+                              {bodyBreakdownTotals.map((c) => {
                                 const pct =
                                   bodyTotalClicks > 0
                                     ? Math.round(
@@ -5716,9 +5955,9 @@ export default function ProjectDetails() {
                                     <div style={{ paddingLeft: 20 }}>
                                       {c.items.slice(0, 5).map((item: any) => {
                                         const itemPct =
-                                          c.total > 0
-                                            ? (item.count / c.total) * 100
-                                            : 0;
+                                          (item.count /
+                                            globalMaxElementClicks) *
+                                          100;
                                         return (
                                           <div
                                             key={item.label}
@@ -5790,6 +6029,15 @@ export default function ProjectDetails() {
                               })}
                             </BlockStack>
                           </div>
+                        )}
+
+                        {imageItems.length > 0 && (
+                          <ImageEngagementStrip
+                            items={imageItems}
+                            totalImageClicks={imageTotalClicks}
+                            bodyTotalClicks={bodyTotalClicks}
+                            globalMaxElementClicks={globalMaxElementClicks}
+                          />
                         )}
 
                         {/* Header & Footer — separate cards at the bottom */}

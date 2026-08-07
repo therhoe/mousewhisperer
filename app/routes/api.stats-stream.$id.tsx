@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
+import { buildClickEngagement } from "../utils/click-engagement";
 
 const NON_INTERNAL_EXIT_TYPES = ["window_closed", "back_button", "idle", "external_link"];
 const STREAM_POLL_INTERVAL_MS = 30_000;
@@ -492,6 +493,11 @@ async function getSnapshotStats(snapshotId: string) {
   const totalRevenue = revenueAggregate._sum.orderValue || 0;
   const ordersWithValue = revenueAggregate._count._all || 0;
   const clickSummary = summarizeClicks(ctaClickRows);
+  const {
+    ctaByCategory,
+    categoryTotals: clickCategoryTotals,
+    imageEngagement,
+  } = buildClickEngagement(ctaClickRows, totalSessions);
   const bounceCount = bounceCandidateRows.filter((row) =>
     parseTrackedClicks(row.ctaClicks).filter(isLinkOrButtonClick).length === 0
   ).length;
@@ -539,6 +545,9 @@ async function getSnapshotStats(snapshotId: string) {
     exitPaths,
     exitUrls,
     searchStats,
+    ctaByCategory,
+    clickCategoryTotals,
+    imageEngagement,
     recentVisits,
   };
 }

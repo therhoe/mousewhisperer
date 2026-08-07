@@ -871,6 +871,12 @@ async function buildAbTestCard(shop: string): Promise<DashboardActivityCard> {
   };
 }
 
+export async function getDashboardAbTestActivity(
+  shop: string,
+): Promise<DashboardActivityCard> {
+  return buildAbTestCard(shop);
+}
+
 async function buildResourceCards(
   latestRows: LatestSnapshotRow[],
 ): Promise<DashboardActivityCard[]> {
@@ -1051,4 +1057,50 @@ export async function getDashboardActivity(shop: string): Promise<{
     activeAudits,
     cards: [abTestCard, ...resourceCards],
   };
+}
+
+export async function getDashboardResourceActivity(
+  shop: string,
+  resourceType: DashboardResourceType,
+): Promise<DashboardActivityCard> {
+  const latestRows = await prisma.$queryRaw<LatestSnapshotRow[]>(Prisma.sql`
+    SELECT
+      p.id,
+      p."productTitle",
+      p."resourceType"::text AS "resourceType",
+      latest_snapshot.id AS "snapshotId",
+      latest_snapshot.number AS "snapshotNumber",
+      latest_snapshot.name AS "snapshotName",
+      latest_snapshot.status::text AS "snapshotStatus",
+      latest_snapshot."targetVisitors",
+      COALESCE((stats_cache.stats->>'realCount')::int, 0)::int AS "realCount",
+      stats_cache.stats
+    FROM "Project" p
+    JOIN LATERAL (
+      SELECT s.*
+      FROM "Snapshot" s
+      WHERE s."projectId" = p.id
+      ORDER BY s.number DESC
+      LIMIT 1
+    ) latest_snapshot ON TRUE
+    LEFT JOIN "SnapshotStatsCache" stats_cache
+      ON stats_cache."snapshotId" = latest_snapshot.id
+    WHERE p.shop = ${shop}
+      AND p."resourceType" = ${resourceType}::"ResourceType"
+    ORDER BY
+      CASE WHEN latest_snapshot.status = 'ACTIVE' THEN 0 ELSE 1 END,
+      latest_snapshot."createdAt" DESC
+  `);
+
+  const freshRows = await hydrateFreshStats(latestRows);
+  const cards = await buildResourceCards(freshRows);
+  const card = cards.find(
+    (candidate) => candidate.id === resourceType.toLowerCase(),
+  );
+
+  if (!card) {
+    throw new Error(`Missing dashboard activity configuration for ${resourceType}`);
+  }
+
+  return card;
 }
