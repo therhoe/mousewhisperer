@@ -9,7 +9,9 @@ import {
   FormLayout,
   InlineStack,
   Modal,
+  Pagination,
   Select,
+  Tabs,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -38,6 +40,8 @@ const CATEGORY_OPTIONS = [
   { label: "Other", value: "OTHER" },
 ];
 
+const ACTIVITY_PAGE_SIZE = 5;
+
 type EventActionResponse = { ok: boolean; error?: string };
 
 function formatRate(value: number) {
@@ -65,12 +69,16 @@ function compactText(value: string, limit: number) {
   return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
 }
 
-function readableCategory(value: string | null) {
-  if (!value) return "Optimization";
-  return value
-    .toLowerCase()
-    .replaceAll("_", " ")
-    .replace(/(^|\s)\S/g, (letter) => letter.toUpperCase());
+function activityTypeLabel(kind: ProgressTimelineEvent["kind"]) {
+  if (kind === "OPTIMIZATION") return "Optimization";
+  if (kind === "AB_TEST") return "Experiment";
+  return "Measurement";
+}
+
+function activityDateLabel(event: ProgressTimelineEvent) {
+  return event.end
+    ? `${formatEventDate(event.start)} – ${formatEventDate(event.end)}`
+    : formatEventDate(event.start);
 }
 
 function formatEventDate(value: string) {
@@ -197,12 +205,34 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
   };
   const ticks = chartDateTicks(progress.rangeStart, progress.rangeEnd);
   const hasSeries = Boolean(currentPath || previousPath);
-  const loggedEvents = events.filter((event) => event.kind === "OPTIMIZATION");
-  const hoveredEvent = loggedEvents.find(
-    (event) => event.id === hoveredEventId,
+  const experimentEvents = events.filter((event) => event.kind === "AB_TEST");
+  const pointEvents = events.filter((event) => event.kind !== "AB_TEST");
+  const measurementEvents = pointEvents.filter(
+    (event) => event.kind === "SNAPSHOT" || event.kind === "STORE_SNAPSHOT",
   );
-  const hoveredX = hoveredEvent ? eventX(hoveredEvent.start) : 0;
-  const hoveredY = hoveredEvent ? nearestPointY(hoveredEvent.start) : 0;
+  const measurementY = (event: ProgressTimelineEvent) => {
+    const sameDay = measurementEvents.filter(
+      (candidate) => candidate.start.slice(0, 10) === event.start.slice(0, 10),
+    );
+    const lane = Math.max(
+      0,
+      sameDay.findIndex((candidate) => candidate.id === event.id),
+    );
+    return bottom - 7 - (lane % 4) * 11;
+  };
+  const hoveredEvent = events.find((event) => event.id === hoveredEventId);
+  const hoveredX = hoveredEvent
+    ? hoveredEvent.kind === "AB_TEST" && hoveredEvent.end
+      ? (eventX(hoveredEvent.start) + eventX(hoveredEvent.end)) / 2
+      : eventX(hoveredEvent.start)
+    : 0;
+  const hoveredY = hoveredEvent
+    ? hoveredEvent.kind === "AB_TEST"
+      ? top + 28
+      : hoveredEvent.kind === "OPTIMIZATION"
+        ? nearestPointY(hoveredEvent.start)
+        : measurementY(hoveredEvent)
+    : 0;
   const tooltipWidth = 250;
   const tooltipHeight = hoveredEvent?.description ? 82 : 64;
   const tooltipX = Math.max(
@@ -222,6 +252,55 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
           aria-label={`${progress.periodLabel} Shopify conversion rate compared with the prior period`}
           style={{ display: "block" }}
         >
+          {experimentEvents.map((event) => {
+            const startX = eventX(event.start);
+            const endX = event.end ? eventX(event.end) : right;
+            const details = [
+              event.title,
+              activityDateLabel(event),
+              event.description,
+            ]
+              .filter(Boolean)
+              .join(". ");
+            return (
+              <g
+                key={event.id}
+                role="button"
+                tabIndex={0}
+                aria-label={details}
+                onMouseEnter={() => setHoveredEventId(event.id)}
+                onMouseLeave={() => setHoveredEventId(null)}
+                onFocus={() => setHoveredEventId(event.id)}
+                onBlur={() => setHoveredEventId(null)}
+                onClick={() =>
+                  setHoveredEventId((current) =>
+                    current === event.id ? null : event.id,
+                  )
+                }
+                style={{ cursor: "pointer", outline: "none" }}
+              >
+                <rect
+                  x={startX}
+                  y={top}
+                  width={Math.max(4, endX - startX)}
+                  height={height}
+                  fill="#7c3aed"
+                  opacity={hoveredEventId === event.id ? 0.16 : 0.07}
+                />
+                <line
+                  x1={startX}
+                  x2={startX}
+                  y1={top}
+                  y2={bottom}
+                  stroke="#7c3aed"
+                  strokeWidth="1"
+                  opacity="0.35"
+                />
+                <title>{details}</title>
+              </g>
+            );
+          })}
+
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const y = bottom - ratio * height;
             return (
@@ -272,13 +351,16 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
           ) : null}
 
           {hasSeries
-            ? loggedEvents.map((event) => {
+            ? pointEvents.map((event) => {
                 const x = eventX(event.start);
-                const y = nearestPointY(event.start);
-                const color = "#008060";
+                const isOptimization = event.kind === "OPTIMIZATION";
+                const y = isOptimization
+                  ? nearestPointY(event.start)
+                  : measurementY(event);
+                const color = eventColor(event.kind);
                 const details = [
                   event.title,
-                  formatEventDate(event.start),
+                  activityDateLabel(event),
                   event.description,
                 ]
                   .filter(Boolean)
@@ -307,18 +389,32 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
                       y2={bottom}
                       stroke={color}
                       strokeWidth="1"
-                      strokeDasharray="3 4"
-                      opacity="0.72"
+                      strokeDasharray={isOptimization ? "3 4" : "2 6"}
+                      opacity={isOptimization ? 0.72 : 0.3}
                     />
                     <circle cx={x} cy={y} r="14" fill="transparent" />
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r={hoveredEventId === event.id ? 7 : 6}
-                      fill={color}
-                      stroke="#fff"
-                      strokeWidth="2"
-                    />
+                    {isOptimization ? (
+                      <circle
+                        cx={x}
+                        cy={y}
+                        r={hoveredEventId === event.id ? 7 : 6}
+                        fill={color}
+                        stroke="#fff"
+                        strokeWidth="2"
+                      />
+                    ) : (
+                      <rect
+                        x={x - 5}
+                        y={y - 5}
+                        width="10"
+                        height="10"
+                        rx="1"
+                        fill={color}
+                        stroke="#fff"
+                        strokeWidth="1.5"
+                        transform={`rotate(45 ${x} ${y})`}
+                      />
+                    )}
                     <title>{details}</title>
                   </g>
                 );
@@ -351,8 +447,8 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
                 fill="#d2d5d8"
                 fontSize="11"
               >
-                {formatEventDate(hoveredEvent.start)} ·{" "}
-                {readableCategory(hoveredEvent.category)}
+                {activityDateLabel(hoveredEvent)} ·{" "}
+                {activityTypeLabel(hoveredEvent.kind)}
               </text>
               {hoveredEvent.description ? (
                 <text
@@ -520,6 +616,8 @@ export function ConversionProgressCard({
     initialData.progress.period,
   );
   const [data, setData] = useState(initialData);
+  const [selectedActivityTab, setSelectedActivityTab] = useState(0);
+  const [activityPage, setActivityPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] =
     useState<ProgressTimelineEvent | null>(null);
@@ -535,7 +633,10 @@ export function ConversionProgressCard({
   const handledEventResponse = useRef<EventActionResponse | undefined>();
 
   useEffect(() => {
-    if (analyticsFetcher.data?.progress) setData(analyticsFetcher.data);
+    if (analyticsFetcher.data?.progress) {
+      setData(analyticsFetcher.data);
+      setActivityPage(1);
+    }
   }, [analyticsFetcher.data]);
 
   useEffect(() => {
@@ -547,12 +648,59 @@ export function ConversionProgressCard({
     handledEventResponse.current = eventFetcher.data;
     setModalOpen(false);
     setEditingEvent(null);
+    setSelectedActivityTab(0);
+    setActivityPage(1);
     analyticsFetcher.load(`/api/dashboard-conversion?period=${period}`);
   }, [analyticsFetcher, eventFetcher.data, period]);
 
   const progress = data.progress;
   const isLoading = analyticsFetcher.state !== "idle";
   const isSaving = eventFetcher.state !== "idle";
+  const activityGroups = [
+    {
+      id: "optimizations",
+      label: "Optimizations",
+      emptyMessage:
+        "No optimizations have been logged in this period. Use “Log optimization” to add an implemented change.",
+      events: data.events.filter((event) => event.kind === "OPTIMIZATION"),
+    },
+    {
+      id: "experiments",
+      label: "Experiments",
+      emptyMessage: "No A/B tests ran during this period.",
+      events: data.events.filter((event) => event.kind === "AB_TEST"),
+    },
+    {
+      id: "measurements",
+      label: "Measurements",
+      emptyMessage: "No snapshots were completed during this period.",
+      events: data.events.filter(
+        (event) => event.kind === "SNAPSHOT" || event.kind === "STORE_SNAPSHOT",
+      ),
+    },
+  ].map((group) => ({
+    ...group,
+    events: [...group.events].sort(
+      (left, right) =>
+        new Date(right.start).getTime() - new Date(left.start).getTime(),
+    ),
+  }));
+  const selectedActivityGroup = activityGroups[selectedActivityTab];
+  const totalActivityPages = Math.max(
+    1,
+    Math.ceil(selectedActivityGroup.events.length / ACTIVITY_PAGE_SIZE),
+  );
+  const currentActivityPage = Math.min(activityPage, totalActivityPages);
+  const visibleActivityEvents = selectedActivityGroup.events.slice(
+    (currentActivityPage - 1) * ACTIVITY_PAGE_SIZE,
+    currentActivityPage * ACTIVITY_PAGE_SIZE,
+  );
+  const activityTabs = activityGroups.map((group) => ({
+    id: group.id,
+    content: `${group.label} (${group.events.length})`,
+    accessibilityLabel: `${group.label}, ${group.events.length} in this period`,
+    panelID: `${group.id}-panel`,
+  }));
   const changePeriod = (nextPeriod: ConversionPeriod) => {
     if (nextPeriod === period) return;
     setPeriod(nextPeriod);
@@ -779,67 +927,160 @@ export function ConversionProgressCard({
             <ConversionChart data={data} />
 
             {progress.status === "ready" && data.events.length ? (
-              <InlineStack gap="150" blockAlign="center" wrap>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    color: "#596b78",
-                    fontSize: 12,
-                  }}
-                >
+              <InlineStack gap="300" blockAlign="center" wrap>
+                {activityGroups[0].events.length ? (
                   <span
                     style={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: "50%",
-                      background: "#008060",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 7,
+                      color: "#596b78",
+                      fontSize: 12,
                     }}
-                  />
-                  Logged optimization — hover or focus the dot for details
-                </span>
+                  >
+                    <span
+                      style={{
+                        width: 9,
+                        height: 9,
+                        borderRadius: "50%",
+                        background: "#008060",
+                      }}
+                    />
+                    Implemented optimization
+                  </span>
+                ) : null}
+                {activityGroups[1].events.length ? (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 7,
+                      color: "#596b78",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 14,
+                        height: 9,
+                        borderRadius: 2,
+                        background: "rgba(124, 58, 237, 0.22)",
+                        border: "1px solid rgba(124, 58, 237, 0.45)",
+                      }}
+                    />
+                    A/B-test period
+                  </span>
+                ) : null}
+                {activityGroups[2].events.length ? (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 9,
+                      color: "#596b78",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 1,
+                        background: "#6d7175",
+                        transform: "rotate(45deg)",
+                      }}
+                    />
+                    Snapshot measurement
+                  </span>
+                ) : null}
+                <Text as="span" variant="bodySm" tone="subdued">
+                  Hover or focus a marker for details.
+                </Text>
               </InlineStack>
             ) : null}
           </BlockStack>
         </div>
 
-        <BlockStack gap="100">
-          <InlineStack align="space-between" blockAlign="center">
+        <BlockStack gap="200">
+          <InlineStack align="space-between" blockAlign="center" gap="300">
             <BlockStack gap="050">
               <Text as="h3" variant="headingMd">
-                Optimization timeline
+                CRO activity
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Only optimizations explicitly logged by your team appear here.
+                Implemented changes, experiments, and measurements are kept
+                separate so each event is interpreted correctly.
               </Text>
             </BlockStack>
             <Text as="p" variant="bodySm" tone="subdued">
-              {data.events.length} logged in this period
+              {data.events.length} total in this period
             </Text>
           </InlineStack>
-          {data.events.length ? (
-            data.events.map((event) => (
-              <TimelineEventRow
-                key={event.id}
-                event={event}
-                onEdit={openEdit}
-                onDelete={deleteEvent}
-              />
-            ))
-          ) : (
-            <div
-              style={{
-                padding: "18px 0 4px",
-                borderTop: "1px solid var(--p-color-border-subdued)",
+
+          <div
+            style={{
+              border: "1px solid var(--p-color-border-subdued)",
+              borderRadius: 12,
+              overflow: "hidden",
+              background: "var(--p-color-bg-surface)",
+            }}
+          >
+            <Tabs
+              tabs={activityTabs}
+              selected={selectedActivityTab}
+              fitted
+              onSelect={(index) => {
+                setSelectedActivityTab(index);
+                setActivityPage(1);
               }}
             >
-              <Text as="p" variant="bodySm" tone="subdued">
-                No optimizations have been logged in this period. Use “Log
-                optimization” to add a change and place its marker on the graph.
-              </Text>
-            </div>
-          )}
+              <div
+                id={`${selectedActivityGroup.id}-panel`}
+                style={{ padding: "0 16px 14px" }}
+              >
+                {visibleActivityEvents.length ? (
+                  visibleActivityEvents.map((event) => (
+                    <TimelineEventRow
+                      key={event.id}
+                      event={event}
+                      onEdit={openEdit}
+                      onDelete={deleteEvent}
+                    />
+                  ))
+                ) : (
+                  <div style={{ padding: "18px 0 6px" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {selectedActivityGroup.emptyMessage}
+                    </Text>
+                  </div>
+                )}
+
+                {selectedActivityGroup.events.length > ACTIVITY_PAGE_SIZE ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      paddingTop: 14,
+                    }}
+                  >
+                    <Pagination
+                      label={`Page ${currentActivityPage} of ${totalActivityPages}`}
+                      hasPrevious={currentActivityPage > 1}
+                      onPrevious={() =>
+                        setActivityPage((current) => Math.max(1, current - 1))
+                      }
+                      hasNext={currentActivityPage < totalActivityPages}
+                      onNext={() =>
+                        setActivityPage((current) =>
+                          Math.min(totalActivityPages, current + 1),
+                        )
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </Tabs>
+          </div>
         </BlockStack>
 
         <Text as="p" variant="bodySm" tone="subdued">

@@ -51,7 +51,7 @@ import {
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
-import { getOptimizationTimeline } from "../utils/optimization-timeline.server";
+import { getCROActivityTimeline } from "../utils/optimization-timeline.server";
 import { getShopifyConversionProgress } from "../utils/shopify-analytics.server";
 
 const HOMEPAGE_RESOURCE = {
@@ -198,7 +198,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         period: "month",
       }),
     ]);
-  const conversionEvents = await getOptimizationTimeline(
+  const conversionEvents = await getCROActivityTimeline(
     shop,
     conversionProgress.rangeStart,
     conversionProgress.rangeEnd,

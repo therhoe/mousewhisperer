@@ -2,7 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
-import { getOptimizationTimeline } from "../utils/optimization-timeline.server";
+import { getCROActivityTimeline } from "../utils/optimization-timeline.server";
 import {
   getShopifyConversionProgress,
   isConversionPeriod,
@@ -38,7 +38,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     sessionScope: session.scope,
     period,
   });
-  const events = await getOptimizationTimeline(
+  const events = await getCROActivityTimeline(
     session.shop,
     progress.rangeStart,
     progress.rangeEnd,
