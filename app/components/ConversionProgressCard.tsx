@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useFetcher } from "@remix-run/react";
 import {
   Badge,
@@ -152,9 +152,34 @@ function eventColor(kind: ProgressTimelineEvent["kind"]) {
   return "#6d7175";
 }
 
-function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
-  const { progress, events } = data;
+function ConversionChart({
+  data,
+  showActivity,
+}: {
+  data: ConversionDashboardPayload;
+  showActivity: boolean;
+}) {
+  const { progress } = data;
+  const events = showActivity ? data.events : [];
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHoveredEventId(null);
+  }, [showActivity, progress.rangeStart, progress.rangeEnd]);
+
+  const handleMarkerKeyDown = (
+    keyboardEvent: KeyboardEvent<SVGGElement>,
+    eventId: string,
+  ) => {
+    if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+      keyboardEvent.preventDefault();
+      setHoveredEventId(eventId);
+    } else if (keyboardEvent.key === "Escape") {
+      keyboardEvent.preventDefault();
+      setHoveredEventId(null);
+    }
+  };
+
   const left = 58;
   const right = 952;
   const top = 22;
@@ -208,7 +233,10 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
   const experimentEvents = events.filter((event) => event.kind === "AB_TEST");
   const pointEvents = events.filter((event) => event.kind !== "AB_TEST");
   const measurementEvents = pointEvents.filter(
-    (event) => event.kind === "SNAPSHOT" || event.kind === "STORE_SNAPSHOT",
+    (event) =>
+      event.kind === "SNAPSHOT" ||
+      event.kind === "STORE_SNAPSHOT" ||
+      event.kind === "CHANNEL_SNAPSHOT",
   );
   const measurementY = (event: ProgressTimelineEvent) => {
     const sameDay = measurementEvents.filter(
@@ -242,7 +270,15 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
   const tooltipY = Math.max(top + 4, hoveredY - tooltipHeight - 14);
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div
+      role="region"
+      aria-label="Conversion rate chart. Scroll horizontally to see all dates."
+      tabIndex={0}
+      style={{ overflowX: "auto" }}
+      onKeyDown={(keyboardEvent) => {
+        if (keyboardEvent.key === "Escape") setHoveredEventId(null);
+      }}
+    >
       <div style={{ minWidth: 680 }}>
         <svg
           viewBox="0 0 980 292"
@@ -272,12 +308,11 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
                 onMouseLeave={() => setHoveredEventId(null)}
                 onFocus={() => setHoveredEventId(event.id)}
                 onBlur={() => setHoveredEventId(null)}
-                onClick={() =>
-                  setHoveredEventId((current) =>
-                    current === event.id ? null : event.id,
-                  )
+                onClick={() => setHoveredEventId(event.id)}
+                onKeyDown={(keyboardEvent) =>
+                  handleMarkerKeyDown(keyboardEvent, event.id)
                 }
-                style={{ cursor: "pointer", outline: "none" }}
+                style={{ cursor: "pointer" }}
               >
                 <rect
                   x={startX}
@@ -375,12 +410,11 @@ function ConversionChart({ data }: { data: ConversionDashboardPayload }) {
                     onMouseLeave={() => setHoveredEventId(null)}
                     onFocus={() => setHoveredEventId(event.id)}
                     onBlur={() => setHoveredEventId(null)}
-                    onClick={() =>
-                      setHoveredEventId((current) =>
-                        current === event.id ? null : event.id,
-                      )
+                    onClick={() => setHoveredEventId(event.id)}
+                    onKeyDown={(keyboardEvent) =>
+                      handleMarkerKeyDown(keyboardEvent, event.id)
                     }
-                    style={{ cursor: "pointer", outline: "none" }}
+                    style={{ cursor: "pointer" }}
                   >
                     <line
                       x1={x}
@@ -610,12 +644,15 @@ export function ConversionProgressCard({
   initialData: ConversionDashboardPayload;
   shop: string;
 }) {
-  const analyticsFetcher = useFetcher<ConversionDashboardPayload>();
+  const analyticsFetcher = useFetcher<
+    ConversionDashboardPayload & { error?: string }
+  >();
   const eventFetcher = useFetcher<EventActionResponse>();
   const [period, setPeriod] = useState<ConversionPeriod>(
     initialData.progress.period,
   );
   const [data, setData] = useState(initialData);
+  const [cleanGraph, setCleanGraph] = useState(false);
   const [selectedActivityTab, setSelectedActivityTab] = useState(0);
   const [activityPage, setActivityPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
@@ -675,7 +712,10 @@ export function ConversionProgressCard({
       label: "Measurements",
       emptyMessage: "No snapshots were completed during this period.",
       events: data.events.filter(
-        (event) => event.kind === "SNAPSHOT" || event.kind === "STORE_SNAPSHOT",
+        (event) =>
+          event.kind === "SNAPSHOT" ||
+          event.kind === "STORE_SNAPSHOT" ||
+          event.kind === "CHANNEL_SNAPSHOT",
       ),
     },
   ].map((group) => ({
@@ -779,6 +819,14 @@ export function ConversionProgressCard({
             </Text>
           </BlockStack>
           <InlineStack gap="200" blockAlign="center" wrap>
+            <Button
+              size="slim"
+              pressed={cleanGraph}
+              accessibilityLabel="Clean graph: hide CRO activity overlays"
+              onClick={() => setCleanGraph((current) => !current)}
+            >
+              Clean graph
+            </Button>
             <div
               style={{
                 width: 190,
@@ -798,6 +846,25 @@ export function ConversionProgressCard({
             </Button>
           </InlineStack>
         </InlineStack>
+
+        {analyticsFetcher.data?.error ? (
+          <Banner tone="warning" title="Couldn’t refresh the conversion report">
+            <p>
+              {analyticsFetcher.data.error} The last loaded period is still
+              shown below.
+            </p>
+            <Button
+              onClick={() =>
+                analyticsFetcher.load(
+                  `/api/dashboard-conversion?period=${period}`,
+                )
+              }
+              loading={isLoading}
+            >
+              Retry conversion report
+            </Button>
+          </Banner>
+        ) : null}
 
         <div
           style={{
@@ -846,40 +913,6 @@ export function ConversionProgressCard({
               <Badge tone="info">Shopify Analytics</Badge>
             </InlineStack>
 
-            {progress.status === "ready" ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                  gap: 12,
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  background: "rgba(255, 255, 255, 0.68)",
-                  border: "1px solid #d8e7f2",
-                }}
-              >
-                <BlockStack gap="050">
-                  <Text as="p" variant="bodySm" fontWeight="semibold">
-                    What this rate means
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {progress.currentSessions > 0
-                      ? `${formatCount(progress.currentCompletedCheckouts)} checkout-completing sessions from ${formatCount(progress.currentSessions)} human online-store sessions.`
-                      : "No human online-store sessions were recorded in this period."}
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="050">
-                  <Text as="p" variant="bodySm" fontWeight="semibold">
-                    Previous comparison: {formatRate(progress.previousRate)}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Same elapsed length in the prior period ·{" "}
-                    {progress.previousLabel}
-                  </Text>
-                </BlockStack>
-              </div>
-            ) : null}
-
             {progress.status !== "ready" ? (
               <div
                 role="status"
@@ -907,9 +940,9 @@ export function ConversionProgressCard({
                   </Text>
                   {progress.status === "approval_required" ? (
                     <Text as="p" variant="bodySm" tone="subdued">
-                      No additional store activity is needed. The Mouse
-                      Whisperer app owner must complete this approval in Shopify
-                      Partner Dashboard.
+                      No additional store activity is needed. The Snapshot app
+                      owner must complete this approval in Shopify Partner
+                      Dashboard.
                     </Text>
                   ) : null}
                 </BlockStack>
@@ -924,9 +957,11 @@ export function ConversionProgressCard({
               </div>
             ) : null}
 
-            <ConversionChart data={data} />
+            <ConversionChart data={data} showActivity={!cleanGraph} />
 
-            {progress.status === "ready" && data.events.length ? (
+            {!cleanGraph &&
+            progress.status === "ready" &&
+            data.events.length ? (
               <InlineStack gap="300" blockAlign="center" wrap>
                 {activityGroups[0].events.length ? (
                   <span
@@ -994,9 +1029,43 @@ export function ConversionProgressCard({
                   </span>
                 ) : null}
                 <Text as="span" variant="bodySm" tone="subdued">
-                  Hover or focus a marker for details.
+                  Hover, click, or focus a marker for details.
                 </Text>
               </InlineStack>
+            ) : null}
+
+            {progress.status === "ready" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                  gap: 12,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  background: "rgba(255, 255, 255, 0.68)",
+                  border: "1px solid #d8e7f2",
+                }}
+              >
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">
+                    What this rate means
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {progress.currentSessions > 0
+                      ? `${formatCount(progress.currentCompletedCheckouts)} checkout-completing sessions from ${formatCount(progress.currentSessions)} human online-store sessions.`
+                      : "No human online-store sessions were recorded in this period."}
+                  </Text>
+                </BlockStack>
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">
+                    Previous comparison: {formatRate(progress.previousRate)}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Same elapsed length in the prior period ·{" "}
+                    {progress.previousLabel}
+                  </Text>
+                </BlockStack>
+              </div>
             ) : null}
           </BlockStack>
         </div>

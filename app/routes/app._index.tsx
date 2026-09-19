@@ -42,17 +42,15 @@ import {
 } from "../utils/loader-cache.server";
 import { createStoreSnapshot } from "../utils/store-snapshot.server";
 import { planUsagePillLabel, TargetLimitText } from "../components/PremiumGate";
-import { ConversionProgressCard } from "../components/ConversionProgressCard";
+import { DashboardConversionPanel } from "../components/DashboardConversionPanel";
 import {
   assertCanCreateNormalSnapshots,
   assertCanCreateStoreSnapshot,
   assertSnapshotTargetAllowed,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
-import { getCROActivityTimeline } from "../utils/optimization-timeline.server";
-import { getShopifyConversionProgress } from "../utils/shopify-analytics.server";
 
 const HOMEPAGE_RESOURCE = {
   id: "gid://shopify/Homepage/__homepage__",
@@ -119,14 +117,15 @@ async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
     DASHBOARD_CACHE_TTL_MS,
     async () => {
       const [shopSettings, completedCount, profile] = await Promise.all([
-        prisma.shopSettings.upsert({
+        prisma.shopSettings.findUnique({
           where: { shop },
-          update: {},
-          create: { shop },
+          select: { setupGuideDismissed: true },
         }),
-        prisma.snapshot.count({
-          where: { project: { shop }, status: "COMPLETED" },
-        }),
+        COMMUNITY_FEATURES_ENABLED
+          ? prisma.snapshot.count({
+              where: { project: { shop }, status: "COMPLETED" },
+            })
+          : Promise.resolve(0),
         COMMUNITY_FEATURES_ENABLED
           ? prisma.insightProfile.findUnique({
               where: { shop },
@@ -138,7 +137,7 @@ async function getDashboardSummary(shop: string): Promise<DashboardSummary> {
       ]);
 
       return {
-        setupGuideDismissed: shopSettings.setupGuideDismissed,
+        setupGuideDismissed: shopSettings?.setupGuideDismissed ?? false,
         completedCount,
         profile: profile
           ? {
@@ -161,66 +160,61 @@ function clearDashboardCache(shop: string) {
 }
 
 function clearAuditListCaches(shop: string) {
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
   clearDashboardCache(shop);
   clearCachePrefix(loaderCacheKeys.categoryPrefix(shop));
   clearCachePrefix(loaderCacheKeys.categoryFastPrefix(shop));
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const startedAt = Date.now();
+  const { session } = await authenticate.admin(request);
+  const authMs = Date.now() - startedAt;
   const shop = session.shop;
 
-  const [summary, storeSnapshots, billingAccess, conversionProgress] =
-    await Promise.all([
-      getDashboardSummary(shop),
-      prisma.storeSnapshot.findMany({
-        where: { shop },
-        orderBy: { startedAt: "desc" },
-        take: 5,
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          completionMode: true,
-          targetHumanVisitors: true,
-          targetTotalVisits: true,
-          durationDays: true,
-          startedAt: true,
-          completedAt: true,
-          _count: { select: { visits: true } },
-        },
-      }),
-      getBillingAccess(shop),
-      getShopifyConversionProgress({
-        admin,
-        shop,
-        sessionScope: session.scope,
-        period: "month",
-      }),
-    ]);
-  const conversionEvents = await getCROActivityTimeline(
-    shop,
-    conversionProgress.rangeStart,
-    conversionProgress.rangeEnd,
-  );
+  const [summary, storeSnapshots, billingAccess] = await Promise.all([
+    getDashboardSummary(shop),
+    prisma.storeSnapshot.findMany({
+      where: { shop },
+      orderBy: { startedAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        completionMode: true,
+        targetHumanVisitors: true,
+        targetTotalVisits: true,
+        durationDays: true,
+        startedAt: true,
+        completedAt: true,
+        _count: { select: { visits: true } },
+      },
+    }),
+    getBillingDisplayAccess(shop),
+  ]);
 
-  return json({
-    ...summary,
-    shop,
-    conversionDashboard: {
-      progress: conversionProgress,
-      events: conversionEvents,
+  return json(
+    {
+      ...summary,
+      shop,
+      billingAccess,
+      storeSnapshots: storeSnapshots.map((snapshot) => ({
+        ...snapshot,
+        startedAt: snapshot.startedAt.toISOString(),
+        completedAt: snapshot.completedAt?.toISOString() ?? null,
+      })),
+      notifications: [],
+      unreadCount: 0,
+      notificationsPending: true,
     },
-    billingAccess,
-    storeSnapshots: storeSnapshots.map((snapshot) => ({
-      ...snapshot,
-      startedAt: snapshot.startedAt.toISOString(),
-      completedAt: snapshot.completedAt?.toISOString() ?? null,
-    })),
-    notifications: [],
-    unreadCount: 0,
-    notificationsPending: true,
-  });
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Server-Timing": `auth;dur=${authMs}, shell;dur=${Date.now() - startedAt}`,
+      },
+    },
+  );
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -449,7 +443,6 @@ export default function Index() {
     profile,
     notifications: initialNotifications,
     unreadCount: initialUnreadCount,
-    conversionDashboard,
     shop,
   } = useLoaderData<typeof loader>();
   const submit = useSubmit();
@@ -736,9 +729,9 @@ export default function Index() {
             Getting Started
           </Text>
           <Text as="p" tone="subdued">
-            Create an audit for any supported storefront page and Mouse
-            Whisperer will track active visitors, classify traffic quality, and
-            surface the page metrics that matter for that audit type.
+            Create an audit for any supported storefront page and Snapshot will
+            track active visitors, classify traffic quality, and surface the
+            page metrics that matter for that audit type.
           </Text>
         </BlockStack>
         <Button variant="plain" onClick={handleDismissSetup}>
@@ -1144,141 +1137,143 @@ export default function Index() {
           }
         }
       `}</style>
-      <BlockStack gap="400">
-        <ConversionProgressCard initialData={conversionDashboard} shop={shop} />
-        {announcementMarkup}
-        {storeSnapshotMarkup}
+      <div style={{ paddingBottom: 48 }}>
+        <BlockStack gap="400">
+          <DashboardConversionPanel key={shop} shop={shop} />
+          {announcementMarkup}
+          {storeSnapshotMarkup}
 
-        {/* Profile Card — horizontal full-width */}
-        {COMMUNITY_FEATURES_ENABLED &&
-          (profile ? (
-            (() => {
-              const lvl = getLevel(profile.reputation);
-              const badges: {
-                label: string;
-                emoji: string;
-                tone: "success" | "info" | "warning";
-              }[] = [];
-              if (profile.answersCount >= 5)
-                badges.push({
-                  label: "Top Contributor",
-                  emoji: "\uD83C\uDF1F",
-                  tone: "success",
-                });
-              if (profile.insightsCount >= 3)
-                badges.push({
-                  label: "Challenge Pioneer",
-                  emoji: "\uD83D\uDCA1",
-                  tone: "info",
-                });
-              if (completedCount >= 10)
-                badges.push({
-                  label: `${completedCount} Audits`,
-                  emoji: "\uD83D\uDD25",
-                  tone: "warning",
-                });
-              return (
-                <Card>
-                  <div
-                    style={{ display: "flex", gap: 20, alignItems: "center" }}
-                  >
-                    <Link
-                      to="/app/challenges/profile?returnTo=/app"
-                      style={{ textDecoration: "none" }}
+          {/* Profile Card — horizontal full-width */}
+          {COMMUNITY_FEATURES_ENABLED &&
+            (profile ? (
+              (() => {
+                const lvl = getLevel(profile.reputation);
+                const badges: {
+                  label: string;
+                  emoji: string;
+                  tone: "success" | "info" | "warning";
+                }[] = [];
+                if (profile.answersCount >= 5)
+                  badges.push({
+                    label: "Top Contributor",
+                    emoji: "\uD83C\uDF1F",
+                    tone: "success",
+                  });
+                if (profile.insightsCount >= 3)
+                  badges.push({
+                    label: "Challenge Pioneer",
+                    emoji: "\uD83D\uDCA1",
+                    tone: "info",
+                  });
+                if (completedCount >= 10)
+                  badges.push({
+                    label: `${completedCount} Audits`,
+                    emoji: "\uD83D\uDD25",
+                    tone: "warning",
+                  });
+                return (
+                  <Card>
+                    <div
+                      style={{ display: "flex", gap: 20, alignItems: "center" }}
                     >
-                      <div
-                        style={{
-                          width: 96,
-                          height: 96,
-                          borderRadius: 12,
-                          background: "#f6f6f7",
-                          overflow: "hidden",
-                          flexShrink: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
+                      <Link
+                        to="/app/challenges/profile?returnTo=/app"
+                        style={{ textDecoration: "none" }}
                       >
-                        {profile.avatarUrl ? (
-                          <img
-                            src={profile.avatarUrl}
-                            alt="Avatar"
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                              imageRendering: "pixelated",
-                            }}
-                          />
-                        ) : (
-                          <span style={{ fontSize: "3rem" }}>
-                            {profile.avatarEmoji || "\uD83D\uDC2D"}
-                          </span>
-                        )}
-                      </div>
-                    </Link>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <BlockStack gap="100">
-                        <Text as="p" variant="headingLg" fontWeight="bold">
-                          {profile.displayName}
-                        </Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {lvl.title}
-                        </Text>
-                        {profile.bio && (
-                          <Text as="p" variant="bodySm">
-                            {profile.bio}
+                        <div
+                          style={{
+                            width: 96,
+                            height: 96,
+                            borderRadius: 12,
+                            background: "#f6f6f7",
+                            overflow: "hidden",
+                            flexShrink: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {profile.avatarUrl ? (
+                            <img
+                              src={profile.avatarUrl}
+                              alt="Avatar"
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                                imageRendering: "pixelated",
+                              }}
+                            />
+                          ) : (
+                            <span style={{ fontSize: "3rem" }}>
+                              {profile.avatarEmoji || "\uD83D\uDC2D"}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <BlockStack gap="100">
+                          <Text as="p" variant="headingLg" fontWeight="bold">
+                            {profile.displayName}
                           </Text>
-                        )}
-                        {badges.length > 0 && (
-                          <InlineStack gap="100" wrap>
-                            {badges.map((b) => (
-                              <Badge
-                                key={b.label}
-                                tone={b.tone}
-                              >{`${b.emoji} ${b.label}`}</Badge>
-                            ))}
-                          </InlineStack>
-                        )}
-                      </BlockStack>
-                    </div>
-                    <div style={{ flexShrink: 0, textAlign: "right" }}>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Reputation
-                      </Text>
-                      <Text as="p" variant="headingLg" fontWeight="semibold">
-                        {profile.reputation} pts
-                      </Text>
-                      <div style={{ marginTop: 4 }}>
-                        <Badge tone="info">{`LVL ${lvl.level}`}</Badge>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {lvl.title}
+                          </Text>
+                          {profile.bio && (
+                            <Text as="p" variant="bodySm">
+                              {profile.bio}
+                            </Text>
+                          )}
+                          {badges.length > 0 && (
+                            <InlineStack gap="100" wrap>
+                              {badges.map((b) => (
+                                <Badge
+                                  key={b.label}
+                                  tone={b.tone}
+                                >{`${b.emoji} ${b.label}`}</Badge>
+                              ))}
+                            </InlineStack>
+                          )}
+                        </BlockStack>
                       </div>
-                      <div style={{ marginTop: 4 }}>
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          {lvl.next - profile.reputation} pts to LVL{" "}
-                          {lvl.level + 1}
+                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Reputation
                         </Text>
+                        <Text as="p" variant="headingLg" fontWeight="semibold">
+                          {profile.reputation} pts
+                        </Text>
+                        <div style={{ marginTop: 4 }}>
+                          <Badge tone="info">{`LVL ${lvl.level}`}</Badge>
+                        </div>
+                        <div style={{ marginTop: 4 }}>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {lvl.next - profile.reputation} pts to LVL{" "}
+                            {lvl.level + 1}
+                          </Text>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Card>
-              );
-            })()
-          ) : (
-            <Banner
-              title="Set up your community profile"
-              tone="info"
-              action={{
-                content: "Create profile",
-                url: "/app/challenges/profile?returnTo=/app",
-              }}
-            >
-              <p>
-                Create a display name and avatar to start posting challenges and
-                helping fellow merchants.
-              </p>
-            </Banner>
-          ))}
-      </BlockStack>
+                  </Card>
+                );
+              })()
+            ) : (
+              <Banner
+                title="Set up your community profile"
+                tone="info"
+                action={{
+                  content: "Create profile",
+                  url: "/app/challenges/profile?returnTo=/app",
+                }}
+              >
+                <p>
+                  Create a display name and avatar to start posting challenges
+                  and helping fellow merchants.
+                </p>
+              </Banner>
+            ))}
+        </BlockStack>
+      </div>
 
       {/* Type Selection Modal */}
       <Modal

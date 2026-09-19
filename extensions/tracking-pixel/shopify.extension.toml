@@ -3,7 +3,7 @@ api_version = "2024-10"
 [[extensions]]
 uid = "5d23d7eb-259c-2ecc-9355-3be596a7ce72d9323f16"
 type = "web_pixel"
-name = "Conversion Tracker"
+name = "Snapshot Conversions"
 handle = "tracking-pixel"
 
 runtime_context = "strict"

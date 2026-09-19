@@ -27,24 +27,49 @@ function parseEventDate(value: FormDataEntryValue | null, fallback?: Date) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const startedAt = Date.now();
   const { session, admin } = await authenticate.admin(request);
   const requestedPeriod = new URL(request.url).searchParams.get("period");
   const period = isConversionPeriod(requestedPeriod)
     ? requestedPeriod
     : "month";
-  const progress = await getShopifyConversionProgress({
-    admin,
-    shop: session.shop,
-    sessionScope: session.scope,
-    period,
-  });
-  const events = await getCROActivityTimeline(
-    session.shop,
-    progress.rangeStart,
-    progress.rangeEnd,
-  );
+  try {
+    const progress = await getShopifyConversionProgress({
+      admin,
+      shop: session.shop,
+      sessionScope: session.scope,
+      period,
+    });
+    const events = await getCROActivityTimeline(
+      session.shop,
+      progress.rangeStart,
+      progress.rangeEnd,
+    );
 
-  return json({ progress, events });
+    return json(
+      { progress, events },
+      {
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Server-Timing": `conversion;dur=${Date.now() - startedAt}`,
+        },
+      },
+    );
+  } catch (error) {
+    console.warn("[dashboard] Conversion report failed", {
+      error: error instanceof Error ? error.name : "UnknownError",
+    });
+    return json(
+      {
+        error:
+          "Your dashboard is ready, but the conversion report is temporarily unavailable. Please retry.",
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "private, no-store" },
+      },
+    );
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {

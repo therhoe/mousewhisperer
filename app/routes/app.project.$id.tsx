@@ -48,15 +48,18 @@ import {
 import {
   assertCanCreateNormalSnapshots,
   assertSnapshotTargetAllowed,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
   type BillingAccess,
 } from "../utils/billing.server";
 import {
   buildClickEngagement,
+  buildEngagementOutcomes,
   type ImageEngagementItem,
 } from "../utils/click-engagement";
+import { getPageSnapshotResourcePath } from "../utils/page-snapshot-navigation";
+import { EngagementOutcomesView } from "../components/EngagementOutcomes";
 
 const INSIGHT_CATEGORIES = [
   { label: "Select a category", value: "" },
@@ -400,6 +403,7 @@ async function getProjectWithSnapshots(shop: string, projectId: string) {
 }
 
 function clearProjectRouteCaches(shop: string, projectId: string) {
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
   clearCacheKey(loaderCacheKeys.project(shop, projectId));
   clearCacheKey(loaderCacheKeys.dashboard(shop));
   clearCachePrefix(loaderCacheKeys.categoryPrefix(shop));
@@ -459,7 +463,11 @@ async function getPersistedSnapshotStats(
       );
       const hasCurrentImageEngagement = Array.isArray(value.imageEngagement);
 
-      if (!hasCurrentSourceStats || !hasCurrentImageEngagement) {
+      if (
+        !hasCurrentSourceStats ||
+        !hasCurrentImageEngagement ||
+        value.engagementOutcomes?.version !== 1
+      ) {
         return refreshPersistedSnapshotStats(snapshotId);
       }
 
@@ -705,6 +713,8 @@ async function getSnapshotStatsFast(snapshotId: string) {
         snapshotId,
         OR: [
           { ctaClicks: { not: null } },
+          { addedToCart: true },
+          { converted: true },
           {
             scrollDepth: { lt: 50 },
             exitType: { in: NON_INTERNAL_EXIT_TYPES },
@@ -714,6 +724,10 @@ async function getSnapshotStatsFast(snapshotId: string) {
       select: {
         sourceCategory: true,
         ctaClicks: true,
+        sessionId: true,
+        visitorType: true,
+        addedToCart: true,
+        converted: true,
         scrollDepth: true,
         exitType: true,
       },
@@ -1052,6 +1066,11 @@ async function getSnapshotStatsFast(snapshotId: string) {
     ctaByCategory,
     clickCategoryTotals,
     imageEngagement,
+    engagementOutcomes: buildEngagementOutcomes(
+      interactionRows.filter(
+        (row) => row.visitorType === "REAL" || row.visitorType === "ZOMBIE",
+      ),
+    ),
   };
 }
 
@@ -1547,8 +1566,22 @@ async function getSnapshotStatsFromDBSlow(
     }),
     // CTA clicks — fetch raw JSON from visits that have CTA data
     prisma.visit.findMany({
-      where: { ...whereClause, ctaClicks: { not: null } },
-      select: { sourceCategory: true, ctaClicks: true },
+      where: {
+        ...whereClause,
+        OR: [
+          { ctaClicks: { not: null } },
+          { addedToCart: true },
+          { converted: true },
+        ],
+      },
+      select: {
+        sourceCategory: true,
+        ctaClicks: true,
+        sessionId: true,
+        visitorType: true,
+        addedToCart: true,
+        converted: true,
+      },
     }),
   ]);
 
@@ -1933,6 +1966,11 @@ async function getSnapshotStatsFromDBSlow(
     ctaByCategory,
     clickCategoryTotals,
     imageEngagement,
+    engagementOutcomes: buildEngagementOutcomes(
+      ctaClickRows.filter(
+        (row) => row.visitorType === "REAL" || row.visitorType === "ZOMBIE",
+      ),
+    ),
   };
 }
 
@@ -2123,7 +2161,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
-    const billingAccess = await getBillingAccess(shop);
+    const billingAccess = await getBillingDisplayAccess(shop);
 
     return json({
       project: {
@@ -2766,8 +2804,7 @@ function ImageEngagementStrip({
             }}
           >
             {items.map((item) => {
-              const barWidth =
-                (item.clickCount / globalMaxElementClicks) * 100;
+              const barWidth = (item.clickCount / globalMaxElementClicks) * 100;
 
               return (
                 <div
@@ -3901,6 +3938,7 @@ export default function ProjectDetails() {
 
   const isCollection = project.resourceType === "COLLECTION";
   const isProductAudit = project.resourceType === "PRODUCT";
+  const pageSnapshotsUrl = getPageSnapshotResourcePath(project.resourceType);
 
   // Modal states
   const [isNewSnapshotModalOpen, setIsNewSnapshotModalOpen] = useState(false);
@@ -3938,6 +3976,7 @@ export default function ProjectDetails() {
 
   // Source filter (clicking Traffic by Source rows filters Recent Visits)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [showEngagementOutcomes, setShowEngagementOutcomes] = useState(false);
   const [showSourcePercentages, setShowSourcePercentages] = useState(false);
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(0);
@@ -4330,7 +4369,7 @@ export default function ProjectDetails() {
   if (snapshots.length === 0) {
     return (
       <Page
-        backAction={{ content: "Dashboard", url: "/app" }}
+        backAction={{ content: "Page Snapshots", url: pageSnapshotsUrl }}
         title={project.productTitle}
       >
         <Layout>
@@ -4439,7 +4478,7 @@ export default function ProjectDetails() {
 
     return (
       <Page
-        backAction={{ content: "Dashboard", url: "/app" }}
+        backAction={{ content: "Page Snapshots", url: pageSnapshotsUrl }}
         title={project.productTitle}
         subtitle="Snapshot Comparison"
         primaryAction={{ content: "Exit Compare", onAction: exitCompareMode }}
@@ -4909,7 +4948,7 @@ export default function ProjectDetails() {
 
   return (
     <Page
-      backAction={{ content: "Dashboard", url: "/app" }}
+      backAction={{ content: "Page Snapshots", url: pageSnapshotsUrl }}
       title={project.productTitle}
       titleMetadata={
         selectedSnapshot && getStatusBadge(selectedSnapshot.status)
@@ -5768,171 +5807,231 @@ export default function ProjectDetails() {
             <Layout.Section>
               <Card>
                 <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">
-                    Engagement by Zone
-                  </Text>
-                  {(() => {
-                    const ctaData = displayStats?.ctaByCategory || {};
-                    const categoryColors: Record<string, string> = {
-                      Header: "#6366F1",
-                      Image: "#0EA5E9",
-                      Button: "#F59E0B",
-                      Link: "#10B981",
-                      Widget: "#8B5CF6",
-                      Footer: "#64748B",
-                    };
-                    // Separate body zones from header/footer
-                    const bodyOrder = ["Image", "Button", "Link", "Widget"];
-                    const bodyCategories = bodyOrder.filter(
-                      (cat) => ctaData[cat] && ctaData[cat].length > 0,
-                    );
-                    const headerData = ctaData["Header"] || [];
-                    const footerData = ctaData["Footer"] || [];
-
-                    if (
-                      bodyCategories.length === 0 &&
-                      headerData.length === 0 &&
-                      footerData.length === 0
-                    ) {
-                      return (
-                        <Text as="p" tone="subdued">
-                          No click data yet. Clicks will be categorized by zone
-                          as visitors interact with the page.
-                        </Text>
+                  <InlineStack
+                    align="space-between"
+                    blockAlign="center"
+                    gap="300"
+                  >
+                    <Text as="h2" variant="headingMd">
+                      Engagement by Zone
+                    </Text>
+                    <Checkbox
+                      label="Show outcomes"
+                      checked={showEngagementOutcomes}
+                      onChange={setShowEngagementOutcomes}
+                    />
+                  </InlineStack>
+                  {showEngagementOutcomes ? (
+                    <EngagementOutcomesView
+                      data={displayStats?.engagementOutcomes}
+                      totals={displayStats?.clickCategoryTotals || {}}
+                    />
+                  ) : (
+                    (() => {
+                      const ctaData = displayStats?.ctaByCategory || {};
+                      const categoryColors: Record<string, string> = {
+                        Header: "#6366F1",
+                        Image: "#0EA5E9",
+                        Button: "#F59E0B",
+                        Link: "#10B981",
+                        Widget: "#8B5CF6",
+                        Footer: "#64748B",
+                      };
+                      // Separate body zones from header/footer
+                      const bodyOrder = ["Image", "Button", "Link", "Widget"];
+                      const bodyCategories = bodyOrder.filter(
+                        (cat) => ctaData[cat] && ctaData[cat].length > 0,
                       );
-                    }
+                      const headerData = ctaData["Header"] || [];
+                      const footerData = ctaData["Footer"] || [];
 
-                    const bodyCatTotals = bodyCategories.map((cat) => ({
-                      cat,
-                      total:
-                        displayStats?.clickCategoryTotals?.[cat] ??
-                        ctaData[cat].reduce(
-                          (s: number, i: any) => s + i.count,
-                          0,
-                        ),
-                      items: ctaData[cat],
-                      color: categoryColors[cat] || "#94A3B8",
-                    }));
-                    const bodyTotalClicks = bodyCatTotals.reduce(
-                      (s, c) => s + c.total,
-                      0,
-                    );
-                    const bodyBreakdownTotals = bodyCatTotals.filter(
-                      (category) => category.cat !== "Image",
-                    );
-                    const imageTotalClicks =
-                      bodyCatTotals.find((category) => category.cat === "Image")
-                        ?.total || 0;
-                    const imageItems: ImageEngagementItem[] =
-                      displayStats?.imageEngagement?.length > 0
-                        ? displayStats.imageEngagement
-                        : (ctaData.Image || []).map(
-                            (item: { label: string; count: number }) => ({
-                              key: `legacy:${item.label}`,
-                              label: item.label,
-                              imageUrl: null,
-                              clickCount: item.count,
-                              sessionCount: item.count,
-                              sessionPercent: percent(
-                                item.count,
-                                displayStats?.totalSessions || 0,
-                              ),
-                              averageClickTimeSeconds: null,
-                            }),
-                          );
-                    const largestNonImageElement =
-                      bodyBreakdownTotals.reduce(
+                      if (
+                        bodyCategories.length === 0 &&
+                        headerData.length === 0 &&
+                        footerData.length === 0
+                      ) {
+                        return (
+                          <Text as="p" tone="subdued">
+                            No click data yet. Clicks will be categorized by
+                            zone as visitors interact with the page.
+                          </Text>
+                        );
+                      }
+
+                      const bodyCatTotals = bodyCategories.map((cat) => ({
+                        cat,
+                        total:
+                          displayStats?.clickCategoryTotals?.[cat] ??
+                          ctaData[cat].reduce(
+                            (s: number, i: any) => s + i.count,
+                            0,
+                          ),
+                        items: ctaData[cat],
+                        color: categoryColors[cat] || "#94A3B8",
+                      }));
+                      const bodyTotalClicks = bodyCatTotals.reduce(
+                        (s, c) => s + c.total,
+                        0,
+                      );
+                      const bodyBreakdownTotals = bodyCatTotals.filter(
+                        (category) => category.cat !== "Image",
+                      );
+                      const imageTotalClicks =
+                        bodyCatTotals.find(
+                          (category) => category.cat === "Image",
+                        )?.total || 0;
+                      const imageItems: ImageEngagementItem[] =
+                        displayStats?.imageEngagement?.length > 0
+                          ? displayStats.imageEngagement
+                          : (ctaData.Image || []).map(
+                              (item: { label: string; count: number }) => ({
+                                key: `legacy:${item.label}`,
+                                label: item.label,
+                                imageUrl: null,
+                                clickCount: item.count,
+                                sessionCount: item.count,
+                                sessionPercent: percent(
+                                  item.count,
+                                  displayStats?.totalSessions || 0,
+                                ),
+                                averageClickTimeSeconds: null,
+                              }),
+                            );
+                      const largestNonImageElement = bodyBreakdownTotals.reduce(
                         (largest, category) =>
                           category.items.reduce(
                             (categoryLargest: number, item: any) =>
-                              Math.max(categoryLargest, Number(item.count) || 0),
+                              Math.max(
+                                categoryLargest,
+                                Number(item.count) || 0,
+                              ),
                             largest,
                           ),
                         1,
                       );
-                    const globalMaxElementClicks = imageItems.reduce(
-                      (largest, item) => Math.max(largest, item.clickCount),
-                      largestNonImageElement,
-                    );
-                    const radius = 70;
-                    const circumference = 2 * Math.PI * radius;
-                    let offset = 0;
+                      const globalMaxElementClicks = imageItems.reduce(
+                        (largest, item) => Math.max(largest, item.clickCount),
+                        largestNonImageElement,
+                      );
+                      const radius = 70;
+                      const circumference = 2 * Math.PI * radius;
+                      let offset = 0;
 
-                    return (
-                      <BlockStack gap="500">
-                        {/* Body zones — donut + breakdowns */}
-                        {bodyCategories.length > 0 && (
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns:
-                                bodyBreakdownTotals.length > 0
-                                  ? "200px minmax(0, 1fr)"
-                                  : "1fr",
-                              gap: 32,
-                              alignItems: "start",
-                            }}
-                          >
-                            {/* Donut chart — body zones only */}
+                      return (
+                        <BlockStack gap="500">
+                          {/* Body zones — donut + breakdowns */}
+                          {bodyCategories.length > 0 && (
                             <div
                               style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "center",
-                                gap: 12,
+                                display: "grid",
+                                gridTemplateColumns:
+                                  bodyBreakdownTotals.length > 0
+                                    ? "200px minmax(0, 1fr)"
+                                    : "1fr",
+                                gap: 32,
+                                alignItems: "start",
                               }}
                             >
-                              <svg
-                                width="180"
-                                height="180"
-                                viewBox="0 0 180 180"
+                              {/* Donut chart — body zones only */}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  gap: 12,
+                                }}
                               >
-                                {bodyCatTotals.map((c) => {
-                                  const frac =
-                                    bodyTotalClicks > 0
-                                      ? c.total / bodyTotalClicks
-                                      : 0;
-                                  const dashLength = frac * circumference;
-                                  const dashGap = circumference - dashLength;
-                                  const currentOffset = offset;
-                                  offset += dashLength;
-                                  return (
-                                    <circle
-                                      key={c.cat}
-                                      cx="90"
-                                      cy="90"
-                                      r={radius}
-                                      fill="none"
-                                      stroke={c.color}
-                                      strokeWidth="24"
-                                      strokeDasharray={`${dashLength} ${dashGap}`}
-                                      strokeDashoffset={-currentOffset}
-                                      transform="rotate(-90 90 90)"
-                                    />
-                                  );
-                                })}
-                                <text
-                                  x="90"
-                                  y="85"
-                                  textAnchor="middle"
-                                  fontSize="22"
-                                  fontWeight="700"
-                                  fill="#1a1a1a"
+                                <svg
+                                  width="180"
+                                  height="180"
+                                  viewBox="0 0 180 180"
                                 >
-                                  {bodyTotalClicks}
-                                </text>
-                                <text
-                                  x="90"
-                                  y="104"
-                                  textAnchor="middle"
-                                  fontSize="11"
-                                  fill="#6b7280"
-                                >
-                                  body clicks
-                                </text>
-                              </svg>
-                              <BlockStack gap="200">
-                                {bodyCatTotals.map((c) => {
+                                  {bodyCatTotals.map((c) => {
+                                    const frac =
+                                      bodyTotalClicks > 0
+                                        ? c.total / bodyTotalClicks
+                                        : 0;
+                                    const dashLength = frac * circumference;
+                                    const dashGap = circumference - dashLength;
+                                    const currentOffset = offset;
+                                    offset += dashLength;
+                                    return (
+                                      <circle
+                                        key={c.cat}
+                                        cx="90"
+                                        cy="90"
+                                        r={radius}
+                                        fill="none"
+                                        stroke={c.color}
+                                        strokeWidth="24"
+                                        strokeDasharray={`${dashLength} ${dashGap}`}
+                                        strokeDashoffset={-currentOffset}
+                                        transform="rotate(-90 90 90)"
+                                      />
+                                    );
+                                  })}
+                                  <text
+                                    x="90"
+                                    y="85"
+                                    textAnchor="middle"
+                                    fontSize="22"
+                                    fontWeight="700"
+                                    fill="#1a1a1a"
+                                  >
+                                    {bodyTotalClicks}
+                                  </text>
+                                  <text
+                                    x="90"
+                                    y="104"
+                                    textAnchor="middle"
+                                    fontSize="11"
+                                    fill="#6b7280"
+                                  >
+                                    body clicks
+                                  </text>
+                                </svg>
+                                <BlockStack gap="200">
+                                  {bodyCatTotals.map((c) => {
+                                    const pct =
+                                      bodyTotalClicks > 0
+                                        ? Math.round(
+                                            (c.total / bodyTotalClicks) * 100,
+                                          )
+                                        : 0;
+                                    return (
+                                      <InlineStack
+                                        key={c.cat}
+                                        gap="200"
+                                        blockAlign="center"
+                                      >
+                                        <div
+                                          style={{
+                                            width: 10,
+                                            height: 10,
+                                            borderRadius: "50%",
+                                            backgroundColor: c.color,
+                                            flexShrink: 0,
+                                          }}
+                                        />
+                                        <Text as="span" variant="bodySm">
+                                          {c.cat}
+                                        </Text>
+                                        <Text
+                                          as="span"
+                                          variant="bodySm"
+                                          tone="subdued"
+                                        >
+                                          {c.total} ({pct}%)
+                                        </Text>
+                                      </InlineStack>
+                                    );
+                                  })}
+                                </BlockStack>
+                              </div>
+
+                              {/* Horizontal bar breakdown — body zones only */}
+                              <BlockStack gap="300">
+                                {bodyBreakdownTotals.map((c) => {
                                   const pct =
                                     bodyTotalClicks > 0
                                       ? Math.round(
@@ -5940,128 +6039,196 @@ export default function ProjectDetails() {
                                         )
                                       : 0;
                                   return (
-                                    <InlineStack
-                                      key={c.cat}
-                                      gap="200"
-                                      blockAlign="center"
-                                    >
-                                      <div
-                                        style={{
-                                          width: 10,
-                                          height: 10,
-                                          borderRadius: "50%",
-                                          backgroundColor: c.color,
-                                          flexShrink: 0,
-                                        }}
-                                      />
-                                      <Text as="span" variant="bodySm">
-                                        {c.cat}
-                                      </Text>
-                                      <Text
-                                        as="span"
-                                        variant="bodySm"
-                                        tone="subdued"
-                                      >
-                                        {c.total} ({pct}%)
-                                      </Text>
-                                    </InlineStack>
+                                    <BlockStack key={c.cat} gap="100">
+                                      <InlineStack align="space-between">
+                                        <InlineStack
+                                          gap="200"
+                                          blockAlign="center"
+                                        >
+                                          <div
+                                            style={{
+                                              width: 8,
+                                              height: 8,
+                                              borderRadius: "50%",
+                                              backgroundColor: c.color,
+                                            }}
+                                          />
+                                          <Text
+                                            as="span"
+                                            variant="bodyMd"
+                                            fontWeight="semibold"
+                                          >
+                                            {c.cat}
+                                          </Text>
+                                        </InlineStack>
+                                        <Text
+                                          as="span"
+                                          variant="bodySm"
+                                          tone="subdued"
+                                        >
+                                          {c.total} clicks ({pct}%)
+                                        </Text>
+                                      </InlineStack>
+                                      <div style={{ paddingLeft: 20 }}>
+                                        {c.items
+                                          .slice(0, 5)
+                                          .map((item: any) => {
+                                            const itemPct =
+                                              (item.count /
+                                                globalMaxElementClicks) *
+                                              100;
+                                            return (
+                                              <div
+                                                key={item.label}
+                                                style={{
+                                                  display: "grid",
+                                                  gridTemplateColumns:
+                                                    "1fr 50px",
+                                                  gap: 8,
+                                                  alignItems: "center",
+                                                  marginBottom: 4,
+                                                }}
+                                              >
+                                                <div
+                                                  style={{
+                                                    position: "relative",
+                                                    height: 22,
+                                                    borderRadius: 4,
+                                                    backgroundColor:
+                                                      "var(--p-color-bg-surface-secondary)",
+                                                    overflow: "hidden",
+                                                  }}
+                                                >
+                                                  <div
+                                                    style={{
+                                                      position: "absolute",
+                                                      top: 0,
+                                                      left: 0,
+                                                      bottom: 0,
+                                                      width: `${itemPct}%`,
+                                                      backgroundColor: c.color,
+                                                      opacity: 0.2,
+                                                      borderRadius: 4,
+                                                    }}
+                                                  />
+                                                  <div
+                                                    style={{
+                                                      position: "relative",
+                                                      padding: "2px 8px",
+                                                      fontSize: 12,
+                                                      whiteSpace: "nowrap",
+                                                      overflow: "hidden",
+                                                      textOverflow: "ellipsis",
+                                                    }}
+                                                  >
+                                                    {item.label}
+                                                  </div>
+                                                </div>
+                                                <Text
+                                                  as="span"
+                                                  variant="bodySm"
+                                                  tone="subdued"
+                                                >
+                                                  {item.count}
+                                                </Text>
+                                              </div>
+                                            );
+                                          })}
+                                        {c.items.length > 5 && (
+                                          <Text
+                                            as="span"
+                                            variant="bodySm"
+                                            tone="subdued"
+                                          >
+                                            +{c.items.length - 5} more
+                                          </Text>
+                                        )}
+                                      </div>
+                                    </BlockStack>
                                   );
                                 })}
                               </BlockStack>
                             </div>
+                          )}
 
-                            {/* Horizontal bar breakdown — body zones only */}
-                            <BlockStack gap="300">
-                              {bodyBreakdownTotals.map((c) => {
-                                const pct =
-                                  bodyTotalClicks > 0
-                                    ? Math.round(
-                                        (c.total / bodyTotalClicks) * 100,
-                                      )
-                                    : 0;
-                                return (
-                                  <BlockStack key={c.cat} gap="100">
-                                    <InlineStack align="space-between">
+                          {imageItems.length > 0 && (
+                            <ImageEngagementStrip
+                              items={imageItems}
+                              totalImageClicks={imageTotalClicks}
+                              bodyTotalClicks={bodyTotalClicks}
+                              globalMaxElementClicks={globalMaxElementClicks}
+                            />
+                          )}
+
+                          {/* Header & Footer — separate cards at the bottom */}
+                          {(headerData.length > 0 || footerData.length > 0) && (
+                            <>
+                              <Divider />
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns:
+                                    footerData.length > 0 &&
+                                    headerData.length > 0
+                                      ? "1fr 1fr"
+                                      : "1fr",
+                                  gap: 16,
+                                }}
+                              >
+                                {headerData.length > 0 && (
+                                  <Box
+                                    padding="300"
+                                    background="bg-surface-secondary"
+                                    borderRadius="200"
+                                  >
+                                    <BlockStack gap="200">
                                       <InlineStack
-                                        gap="200"
+                                        align="space-between"
                                         blockAlign="center"
                                       >
-                                        <div
-                                          style={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "50%",
-                                            backgroundColor: c.color,
-                                          }}
-                                        />
+                                        <InlineStack
+                                          gap="200"
+                                          blockAlign="center"
+                                        >
+                                          <div
+                                            style={{
+                                              width: 8,
+                                              height: 8,
+                                              borderRadius: "50%",
+                                              backgroundColor:
+                                                categoryColors.Header,
+                                            }}
+                                          />
+                                          <Text
+                                            as="span"
+                                            variant="bodyMd"
+                                            fontWeight="semibold"
+                                          >
+                                            Header
+                                          </Text>
+                                        </InlineStack>
                                         <Text
                                           as="span"
-                                          variant="bodyMd"
-                                          fontWeight="semibold"
+                                          variant="bodySm"
+                                          tone="subdued"
                                         >
-                                          {c.cat}
+                                          {headerData.reduce(
+                                            (s: number, i: any) => s + i.count,
+                                            0,
+                                          )}{" "}
+                                          clicks
                                         </Text>
                                       </InlineStack>
-                                      <Text
-                                        as="span"
-                                        variant="bodySm"
-                                        tone="subdued"
-                                      >
-                                        {c.total} clicks ({pct}%)
-                                      </Text>
-                                    </InlineStack>
-                                    <div style={{ paddingLeft: 20 }}>
-                                      {c.items.slice(0, 5).map((item: any) => {
-                                        const itemPct =
-                                          (item.count /
-                                            globalMaxElementClicks) *
-                                          100;
-                                        return (
-                                          <div
+                                      {headerData
+                                        .slice(0, 5)
+                                        .map((item: any) => (
+                                          <InlineStack
                                             key={item.label}
-                                            style={{
-                                              display: "grid",
-                                              gridTemplateColumns: "1fr 50px",
-                                              gap: 8,
-                                              alignItems: "center",
-                                              marginBottom: 4,
-                                            }}
+                                            align="space-between"
                                           >
-                                            <div
-                                              style={{
-                                                position: "relative",
-                                                height: 22,
-                                                borderRadius: 4,
-                                                backgroundColor:
-                                                  "var(--p-color-bg-surface-secondary)",
-                                                overflow: "hidden",
-                                              }}
-                                            >
-                                              <div
-                                                style={{
-                                                  position: "absolute",
-                                                  top: 0,
-                                                  left: 0,
-                                                  bottom: 0,
-                                                  width: `${itemPct}%`,
-                                                  backgroundColor: c.color,
-                                                  opacity: 0.2,
-                                                  borderRadius: 4,
-                                                }}
-                                              />
-                                              <div
-                                                style={{
-                                                  position: "relative",
-                                                  padding: "2px 8px",
-                                                  fontSize: 12,
-                                                  whiteSpace: "nowrap",
-                                                  overflow: "hidden",
-                                                  textOverflow: "ellipsis",
-                                                }}
-                                              >
-                                                {item.label}
-                                              </div>
-                                            </div>
+                                            <Text as="span" variant="bodySm">
+                                              {item.label}
+                                            </Text>
                                             <Text
                                               as="span"
                                               variant="bodySm"
@@ -6069,183 +6236,84 @@ export default function ProjectDetails() {
                                             >
                                               {item.count}
                                             </Text>
-                                          </div>
-                                        );
-                                      })}
-                                      {c.items.length > 5 && (
-                                        <Text
-                                          as="span"
-                                          variant="bodySm"
-                                          tone="subdued"
-                                        >
-                                          +{c.items.length - 5} more
-                                        </Text>
-                                      )}
-                                    </div>
-                                  </BlockStack>
-                                );
-                              })}
-                            </BlockStack>
-                          </div>
-                        )}
-
-                        {imageItems.length > 0 && (
-                          <ImageEngagementStrip
-                            items={imageItems}
-                            totalImageClicks={imageTotalClicks}
-                            bodyTotalClicks={bodyTotalClicks}
-                            globalMaxElementClicks={globalMaxElementClicks}
-                          />
-                        )}
-
-                        {/* Header & Footer — separate cards at the bottom */}
-                        {(headerData.length > 0 || footerData.length > 0) && (
-                          <>
-                            <Divider />
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns:
-                                  footerData.length > 0 && headerData.length > 0
-                                    ? "1fr 1fr"
-                                    : "1fr",
-                                gap: 16,
-                              }}
-                            >
-                              {headerData.length > 0 && (
-                                <Box
-                                  padding="300"
-                                  background="bg-surface-secondary"
-                                  borderRadius="200"
-                                >
-                                  <BlockStack gap="200">
-                                    <InlineStack
-                                      align="space-between"
-                                      blockAlign="center"
-                                    >
+                                          </InlineStack>
+                                        ))}
+                                    </BlockStack>
+                                  </Box>
+                                )}
+                                {footerData.length > 0 && (
+                                  <Box
+                                    padding="300"
+                                    background="bg-surface-secondary"
+                                    borderRadius="200"
+                                  >
+                                    <BlockStack gap="200">
                                       <InlineStack
-                                        gap="200"
+                                        align="space-between"
                                         blockAlign="center"
                                       >
-                                        <div
-                                          style={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "50%",
-                                            backgroundColor:
-                                              categoryColors.Header,
-                                          }}
-                                        />
-                                        <Text
-                                          as="span"
-                                          variant="bodyMd"
-                                          fontWeight="semibold"
+                                        <InlineStack
+                                          gap="200"
+                                          blockAlign="center"
                                         >
-                                          Header
-                                        </Text>
-                                      </InlineStack>
-                                      <Text
-                                        as="span"
-                                        variant="bodySm"
-                                        tone="subdued"
-                                      >
-                                        {headerData.reduce(
-                                          (s: number, i: any) => s + i.count,
-                                          0,
-                                        )}{" "}
-                                        clicks
-                                      </Text>
-                                    </InlineStack>
-                                    {headerData.slice(0, 5).map((item: any) => (
-                                      <InlineStack
-                                        key={item.label}
-                                        align="space-between"
-                                      >
-                                        <Text as="span" variant="bodySm">
-                                          {item.label}
-                                        </Text>
+                                          <div
+                                            style={{
+                                              width: 8,
+                                              height: 8,
+                                              borderRadius: "50%",
+                                              backgroundColor:
+                                                categoryColors.Footer,
+                                            }}
+                                          />
+                                          <Text
+                                            as="span"
+                                            variant="bodyMd"
+                                            fontWeight="semibold"
+                                          >
+                                            Footer
+                                          </Text>
+                                        </InlineStack>
                                         <Text
                                           as="span"
                                           variant="bodySm"
                                           tone="subdued"
                                         >
-                                          {item.count}
+                                          {footerData.reduce(
+                                            (s: number, i: any) => s + i.count,
+                                            0,
+                                          )}{" "}
+                                          clicks
                                         </Text>
                                       </InlineStack>
-                                    ))}
-                                  </BlockStack>
-                                </Box>
-                              )}
-                              {footerData.length > 0 && (
-                                <Box
-                                  padding="300"
-                                  background="bg-surface-secondary"
-                                  borderRadius="200"
-                                >
-                                  <BlockStack gap="200">
-                                    <InlineStack
-                                      align="space-between"
-                                      blockAlign="center"
-                                    >
-                                      <InlineStack
-                                        gap="200"
-                                        blockAlign="center"
-                                      >
-                                        <div
-                                          style={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "50%",
-                                            backgroundColor:
-                                              categoryColors.Footer,
-                                          }}
-                                        />
-                                        <Text
-                                          as="span"
-                                          variant="bodyMd"
-                                          fontWeight="semibold"
-                                        >
-                                          Footer
-                                        </Text>
-                                      </InlineStack>
-                                      <Text
-                                        as="span"
-                                        variant="bodySm"
-                                        tone="subdued"
-                                      >
-                                        {footerData.reduce(
-                                          (s: number, i: any) => s + i.count,
-                                          0,
-                                        )}{" "}
-                                        clicks
-                                      </Text>
-                                    </InlineStack>
-                                    {footerData.slice(0, 5).map((item: any) => (
-                                      <InlineStack
-                                        key={item.label}
-                                        align="space-between"
-                                      >
-                                        <Text as="span" variant="bodySm">
-                                          {item.label}
-                                        </Text>
-                                        <Text
-                                          as="span"
-                                          variant="bodySm"
-                                          tone="subdued"
-                                        >
-                                          {item.count}
-                                        </Text>
-                                      </InlineStack>
-                                    ))}
-                                  </BlockStack>
-                                </Box>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </BlockStack>
-                    );
-                  })()}
+                                      {footerData
+                                        .slice(0, 5)
+                                        .map((item: any) => (
+                                          <InlineStack
+                                            key={item.label}
+                                            align="space-between"
+                                          >
+                                            <Text as="span" variant="bodySm">
+                                              {item.label}
+                                            </Text>
+                                            <Text
+                                              as="span"
+                                              variant="bodySm"
+                                              tone="subdued"
+                                            >
+                                              {item.count}
+                                            </Text>
+                                          </InlineStack>
+                                        ))}
+                                    </BlockStack>
+                                  </Box>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </BlockStack>
+                      );
+                    })()
+                  )}
                 </BlockStack>
               </Card>
             </Layout.Section>
@@ -7066,7 +7134,7 @@ export function ErrorBoundary() {
                   {details}
                 </div>
               )}
-              <Link to="/app">Back to Dashboard</Link>
+              <Link to="/app/page-snapshots">Back to Page Snapshots</Link>
             </BlockStack>
           </Card>
         </Layout.Section>

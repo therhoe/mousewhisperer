@@ -46,7 +46,7 @@ export default function Auth() {
           <Form method="post">
             <FormLayout>
               <Text variant="headingMd" as="h2">
-                Log in
+                Log in to Snapshot
               </Text>
               <TextField
                 type="text"

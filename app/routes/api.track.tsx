@@ -1,6 +1,10 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import {
+  recordCustomerJourney,
+  recordCustomerCommerce,
+} from "../utils/customer-journey.server";
 import { getClientIP, getGeoData } from "../utils/geo.server";
 import {
   isDatacenterIP,
@@ -21,6 +25,11 @@ import {
   updateStoreSnapshotCheckoutStarted,
   updateStoreSnapshotConversion,
 } from "../utils/store-snapshot.server";
+import {
+  attributeChannelSnapshotEvent,
+  getActiveChannelSnapshot,
+  trackChannelSnapshotVisit,
+} from "../utils/channel-snapshot.server";
 
 // Visitor classification thresholds
 const CLASSIFICATION = {
@@ -105,7 +114,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Handle different event types from web pixel
     if (data.eventType) {
-      return handlePixelEvent(data, headers, request);
+      let customerError: unknown = null;
+      const customerOnly = data.eventType === "customer_commerce";
+      const commerceType = customerOnly ? data.commerceType : data.eventType;
+      if (
+        [
+          "add_to_cart",
+          "cart_removed",
+          "checkout_started",
+          "conversion",
+        ].includes(commerceType)
+      ) {
+        try {
+          await recordCustomerCommerce({
+            shop: getRequestShop(request) || normalizeShopDomain(data.shop),
+            sessionId: data.sessionId,
+            acquisitionSessionId: data.acquisitionSessionId,
+            eventType: commerceType,
+            eventId: data.eventId,
+            timestamp: data.timestamp,
+            fromPixel: data.fromPixel === true,
+            acquisition: data.acquisition,
+            orderId: data.orderId,
+            totalPrice: data.totalPrice,
+            currency: data.currency,
+            productTitle: data.productTitle,
+          });
+        } catch (error) {
+          customerError = error;
+        }
+      }
+      if (customerOnly) {
+        if (!customerError) return json({ ok: true }, { headers });
+        return json(
+          { error: "Please retry this event" },
+          { status: 503, headers },
+        );
+      }
+      // Retry only the new idempotent writer. Replaying legacy conversion
+      // selection could incorrectly attribute the same order to another visit.
+      const response = await handlePixelEvent(data, headers, request);
+      if (customerError) {
+        console.warn("Customer journey event needs isolated retry", {
+          error:
+            customerError instanceof Error
+              ? customerError.name
+              : "UnknownError",
+        });
+        response.headers.set("X-Customer-Journey-Retry", "1");
+        response.headers.set(
+          "Access-Control-Expose-Headers",
+          "X-Customer-Journey-Retry",
+        );
+      }
+      return response;
     }
 
     // Handle engagement tracking from theme extension
@@ -244,11 +306,24 @@ async function handleEngagementTrack(
         select: { id: true },
       })
     : null;
+  // Channel captures require an explicit shop; a handle-only project match must
+  // never choose the tenant for store-wide acquisition tracking.
+  const activeChannelSnapshot = trackingShop
+    ? await getActiveChannelSnapshot(trackingShop).catch((error) => {
+        console.warn("[MW] Channel capture lookup failed", error);
+        return null;
+      })
+    : null;
 
   let activeSnapshot = project?.snapshots[0] || null;
 
-  if (!activeSnapshot && !activeStoreSnapshot && !abTestId) {
-    // No active page snapshot, store snapshot, or A/B test engagement for this page.
+  if (
+    !activeSnapshot &&
+    !activeStoreSnapshot &&
+    !activeChannelSnapshot &&
+    !abTestId
+  ) {
+    // Independent channel captures also collect pages without any other audit.
     return json({ ok: true, tracked: false }, { headers });
   }
 
@@ -469,6 +544,31 @@ async function handleEngagementTrack(
     });
   }
 
+  if (activeChannelSnapshot && trackingShop) {
+    // A rejected acquisition must not interrupt existing page/store/A-B capture.
+    await trackChannelSnapshotVisit({
+      shop: trackingShop,
+      snapshotId: activeChannelSnapshot.id,
+      sessionId,
+      pageViewId: resolvedPageViewId,
+      acquisition: data.acquisition,
+      pagePath,
+      pageUrl,
+      source,
+      medium,
+      campaign,
+      sourceCategory,
+      visitorType,
+      timeOnPage: cappedTimeOnPage,
+      scrollDepth,
+      startedAt: startedAt ? new Date(startedAt) : new Date(),
+      addedToCart: Boolean(addedToCart),
+    }).catch((error) => {
+      console.warn("[MW] Channel engagement capture failed", error);
+      return false;
+    });
+  }
+
   if (effectiveShop && abTestId) {
     await recordAbTestEngagement({
       shop: effectiveShop,
@@ -581,6 +681,36 @@ async function handlePixelEvent(
   request: Request,
 ) {
   const { eventType, sessionId, timestamp } = data;
+  const channelShop = getRequestShop(request) || normalizeShopDomain(data.shop);
+
+  if (eventType === "journey_batch") {
+    if (!channelShop || data.consent !== true)
+      return json({ accepted: false }, { status: 400, headers });
+    if (JSON.stringify(data).length > 64_000)
+      return json({ error: "Batch too large" }, { status: 413, headers });
+    const visitorType = classifyVisitor({
+      timeOnPage: Math.max(0, Number(data.timeOnPage) || 0),
+      scrollDepth: Number(data.scrollDepth) || 0,
+      hasMouseMoved: data.hasMouseMoved === true,
+      hasScrolled: data.hasScrolled === true,
+      hasTouched: data.hasTouched === true,
+      hasKeyPressed: data.hasKeyPressed === true,
+      isWebdriver: data.isWebdriver === true,
+      suspiciousUA: data.suspiciousUA === true,
+      linearMovement: data.linearMovement === true,
+      datacenterIP: isDatacenterIP(getClientIP(request) || "").isDatacenter,
+    });
+    return json(
+      await recordCustomerJourney(
+        channelShop,
+        { ...data, enrollmentOnly: false },
+        visitorType,
+      ),
+      { headers },
+    );
+  }
+
+  if (eventType === "cart_removed") return json({ ok: true }, { headers });
 
   if (!sessionId) {
     console.log(`[MW Pixel] Event "${eventType}" missing sessionId — dropping`);
@@ -642,13 +772,23 @@ async function handlePixelEvent(
 
   if (eventType === "add_to_cart") {
     const { productHandle, productId } = data;
+    const channelTracked = await attributeChannelSnapshotEvent({
+      shop: channelShop,
+      sessionId,
+      acquisitionSessionId: data.acquisitionSessionId,
+      timestamp,
+      event: "add_to_cart",
+    }).catch((error) => {
+      console.warn("[MW] Channel add-to-cart attribution failed", error);
+      return 0;
+    });
     console.log(
       `[MW Pixel] ATC event — session: ${sessionId}, handle: ${productHandle || "null"}, productId: ${productId || "null"}`,
     );
 
     if (!productHandle) {
       console.log("[MW Pixel] ATC missing productHandle, skipping");
-      return json({ ok: true, tracked: false }, { headers });
+      return json({ ok: true, tracked: channelTracked > 0 }, { headers });
     }
 
     const productMatch = buildProductProjectMatch({
@@ -694,13 +834,26 @@ async function handlePixelEvent(
     });
 
     return json(
-      { ok: true, tracked: !!visit || storeTracked || abTracked > 0 },
+      {
+        ok: true,
+        tracked: !!visit || storeTracked || abTracked > 0 || channelTracked > 0,
+      },
       { headers },
     );
   }
 
   if (eventType === "conversion") {
     const { products, orderId, orderNumber } = data;
+    const channelConversionsTracked = await attributeChannelSnapshotEvent({
+      shop: channelShop,
+      sessionId,
+      acquisitionSessionId: data.acquisitionSessionId,
+      timestamp,
+      event: "conversion",
+    }).catch((error) => {
+      console.warn("[MW] Channel conversion attribution failed", error);
+      return 0;
+    });
     const uniqueProducts = deduplicateOrderProducts(products);
     const numericTotal = Number.parseFloat(String(data.totalPrice ?? ""));
     const perProductRevenue =
@@ -825,6 +978,7 @@ async function handlePixelEvent(
         conversionsTracked,
         storeConversionsTracked,
         abConversionsTracked,
+        channelConversionsTracked,
       },
       { headers },
     );
@@ -856,25 +1010,45 @@ async function handlePixelEvent(
         .catch(() => {});
     }
 
-    const storeCheckoutStartsTracked = await updateStoreSnapshotCheckoutStarted({
-      shop,
-      sessionId,
-      timestamp,
-    });
+    const storeCheckoutStartsTracked = await updateStoreSnapshotCheckoutStarted(
+      {
+        shop,
+        sessionId,
+        timestamp,
+      },
+    );
     const abCheckoutStartsTracked = await attributeAbTestCheckoutStarted({
       shop,
       sessionId,
       timestamp,
     });
+    const channelCheckoutStartsTracked = await attributeChannelSnapshotEvent({
+      shop: channelShop,
+      sessionId,
+      acquisitionSessionId: data.acquisitionSessionId,
+      timestamp,
+      event: "checkout_started",
+    }).catch((error) => {
+      console.warn("[MW] Channel checkout attribution failed", error);
+      return 0;
+    });
 
     return json(
       {
         ok: true,
-        tracked: !!visit || storeCheckoutStartsTracked > 0 || abCheckoutStartsTracked > 0,
+        tracked:
+          !!visit ||
+          storeCheckoutStartsTracked > 0 ||
+          abCheckoutStartsTracked > 0 ||
+          channelCheckoutStartsTracked > 0,
         checkoutStartsTracked:
-          (visit ? 1 : 0) + storeCheckoutStartsTracked + abCheckoutStartsTracked,
+          (visit ? 1 : 0) +
+          storeCheckoutStartsTracked +
+          abCheckoutStartsTracked +
+          channelCheckoutStartsTracked,
         storeCheckoutStartsTracked,
         abCheckoutStartsTracked,
+        channelCheckoutStartsTracked,
       },
       { headers },
     );

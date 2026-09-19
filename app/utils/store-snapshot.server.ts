@@ -6,8 +6,10 @@ import type {
 } from "@prisma/client";
 import prisma from "../db.server";
 import { createNotification } from "./notifications.server";
+import { clearCacheKey, loaderCacheKeys } from "./loader-cache.server";
 
 const STORE_SNAPSHOT_STATS_TTL_MS = 30_000;
+const STORE_SNAPSHOT_STATS_VERSION = 2;
 const COMPLETED_STORE_SNAPSHOT_STATS_TTL_MS = 5 * 60_000;
 const MIN_RECOMMENDATION_HUMANS = 5;
 const NON_INTERNAL_EXIT_TYPES = [
@@ -77,6 +79,7 @@ type StoreSnapshotVisitInput = {
 };
 
 type StoreSnapshotStats = {
+  version: number;
   visitorBreakdown: {
     total: number;
     humans: number;
@@ -274,7 +277,7 @@ export async function createStoreSnapshot({
       ? new Date(now.getTime() + safeDurationDays * 24 * 60 * 60 * 1000)
       : null;
 
-  return prisma.storeSnapshot.create({
+  const snapshot = await prisma.storeSnapshot.create({
     data: {
       shop,
       name: name?.trim() || null,
@@ -291,6 +294,8 @@ export async function createStoreSnapshot({
       endsAt,
     },
   });
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
+  return snapshot;
 }
 
 export async function trackStoreSnapshotVisit(input: StoreSnapshotVisitInput) {
@@ -480,6 +485,7 @@ export async function updateStoreSnapshotCheckoutStarted({
   if (!sessionId) return 0;
 
   const eventDate = timestamp ? new Date(timestamp) : new Date();
+  if (!Number.isFinite(eventDate.getTime())) return 0;
   const thirtyDaysBeforeEvent = new Date(eventDate);
   thirtyDaysBeforeEvent.setDate(thirtyDaysBeforeEvent.getDate() - 30);
 
@@ -487,11 +493,11 @@ export async function updateStoreSnapshotCheckoutStarted({
     where: {
       sessionId,
       checkoutStarted: false,
-      startedAt: { lte: eventDate },
+      startedAt: { gte: thirtyDaysBeforeEvent, lte: eventDate },
       storeSnapshot: {
         ...(shop ? { shop } : {}),
         status: { in: ["ACTIVE", "COMPLETED"] },
-        startedAt: { gte: thirtyDaysBeforeEvent, lte: eventDate },
+        startedAt: { lte: eventDate },
       },
     },
     orderBy: [
@@ -561,6 +567,7 @@ export async function attributeStoreSnapshotOrder({
   if (!sessionId) return 0;
 
   const orderDate = new Date(timestamp);
+  if (!Number.isFinite(orderDate.getTime())) return 0;
   const thirtyDaysBeforeOrder = new Date(orderDate);
   thirtyDaysBeforeOrder.setDate(thirtyDaysBeforeOrder.getDate() - 30);
 
@@ -568,11 +575,14 @@ export async function attributeStoreSnapshotOrder({
     where: {
       sessionId,
       converted: false,
-      startedAt: { lte: orderDate },
+      // The attribution window belongs to the visit, not the capture's age.
+      // Completed captures may still receive delayed purchases from eligible
+      // visits, preserving the existing 30-day conversion window.
+      startedAt: { gte: thirtyDaysBeforeOrder, lte: orderDate },
       storeSnapshot: {
         ...(shop ? { shop } : {}),
         status: { in: ["ACTIVE", "COMPLETED"] },
-        startedAt: { gte: thirtyDaysBeforeOrder, lte: orderDate },
+        startedAt: { lte: orderDate },
       },
     },
     orderBy: [
@@ -674,6 +684,8 @@ export async function getStoreSnapshotStats(
   if (
     !force &&
     snapshot.statsCache &&
+    (snapshot.statsCache.stats as { version?: number })?.version ===
+      STORE_SNAPSHOT_STATS_VERSION &&
     snapshot.statsCache.recomputedAt.getTime() > Date.now() - ttl
   ) {
     return snapshot.statsCache.stats as StoreSnapshotStats;
@@ -721,17 +733,21 @@ async function computeStoreSnapshotStats(
     },
   });
 
-  const humans = rows.filter((row) => row.visitorType === "REAL");
-  const zombies = rows.filter((row) => row.visitorType === "ZOMBIE");
-  const bots = rows.filter((row) => row.visitorType === "BOT");
-  const pending = rows.filter((row) => row.visitorType === "PENDING");
-  const uniqueHumanVisitors = new Set(humans.map((row) => row.sessionId)).size;
-  const uniqueZombieVisitors = new Set(zombies.map((row) => row.sessionId))
-    .size;
-  const uniqueBotVisitors = new Set(bots.map((row) => row.sessionId)).size;
-  const uniquePendingVisitors = new Set(pending.map((row) => row.sessionId))
-    .size;
-  const totalVisitors = new Set(rows.map((row) => row.sessionId)).size;
+  const sessionTypes = classifyStoreSessions(rows);
+  // Classify a session once, then include all of its pages in its metrics.
+  // This also retains a conversion on an idle landing page when a later page
+  // establishes that the same session is Real.
+  const humans = rows.filter(
+    (row) => sessionTypes.get(row.sessionId) === "REAL",
+  );
+  const types = Array.from(sessionTypes.values());
+  const uniqueHumanVisitors = types.filter((type) => type === "REAL").length;
+  const uniqueZombieVisitors = types.filter((type) => type === "ZOMBIE").length;
+  const uniqueBotVisitors = types.filter((type) => type === "BOT").length;
+  const uniquePendingVisitors = types.filter(
+    (type) => type === "PENDING",
+  ).length;
+  const totalVisitors = sessionTypes.size;
   const clicks = humans.map((row) => parseTrackedClicks(row.ctaClicks));
   const sessionsWithAnyClick = uniqueSessionsWhere(humans, (_, index) =>
     clicks[index]?.some(isLinkOrButtonClick),
@@ -778,6 +794,7 @@ async function computeStoreSnapshotStats(
   const previousStats = await getPreviousStoreSnapshotCachedStats(snapshot);
 
   return {
+    version: STORE_SNAPSHOT_STATS_VERSION,
     visitorBreakdown: {
       total: totalVisitors,
       humans: uniqueHumanVisitors,
@@ -838,6 +855,25 @@ async function computeStoreSnapshotStats(
     recommendations,
     generatedAt: new Date().toISOString(),
   };
+}
+
+function classifyStoreSessions(
+  rows: Array<{ sessionId: string; visitorType: VisitorType }>,
+) {
+  // Match the established Customer Journey best-observed-page classification.
+  const rank: Record<VisitorType, number> = {
+    BOT: 0,
+    PENDING: 1,
+    ZOMBIE: 2,
+    REAL: 3,
+  };
+  const types = new Map<string, VisitorType>();
+  for (const row of rows) {
+    const previous = types.get(row.sessionId);
+    if (!previous || rank[row.visitorType] > rank[previous])
+      types.set(row.sessionId, row.visitorType);
+  }
+  return types;
 }
 
 function buildPageAggregates(
@@ -1149,7 +1185,9 @@ async function getPreviousStoreSnapshotCachedStats(snapshot: StoreSnapshot) {
     include: { statsCache: true },
   });
 
-  return previous?.statsCache?.stats as StoreSnapshotStats | undefined;
+  const stats = previous?.statsCache?.stats as StoreSnapshotStats | undefined;
+  // Do not compare corrected session metrics against an old overlapping cache.
+  return stats?.version === STORE_SNAPSHOT_STATS_VERSION ? stats : undefined;
 }
 
 async function countUniqueHumanSessions(storeSnapshotId: string) {

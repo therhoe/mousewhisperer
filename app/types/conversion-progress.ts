@@ -34,7 +34,7 @@ export type ConversionProgress = {
 
 export type ProgressTimelineEvent = {
   id: string;
-  kind: "OPTIMIZATION" | "AB_TEST" | "SNAPSHOT" | "STORE_SNAPSHOT";
+  kind: "OPTIMIZATION" | "AB_TEST" | "SNAPSHOT" | "STORE_SNAPSHOT" | "CHANNEL_SNAPSHOT";
   title: string;
   description: string | null;
   category: string | null;

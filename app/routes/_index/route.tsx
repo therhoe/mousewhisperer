@@ -22,9 +22,10 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>Snapshot</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Understand storefront traffic, compare snapshots, and test
+          improvements in your Shopify store.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -34,22 +35,22 @@ export default function App() {
               <span>e.g: my-shop-domain.myshopify.com</span>
             </label>
             <button className={styles.button} type="submit">
-              Log in
+              Log in to Snapshot
             </button>
           </Form>
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Store and channel snapshots</strong>. See traffic quality
+            and where your visitors come from.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Page snapshots</strong>. Review engagement across products,
+            collections, pages, and blogs.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>A/B tests</strong>. Compare storefront variants and track
+            their results.
           </li>
         </ul>
       </div>

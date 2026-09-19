@@ -1,0 +1,27 @@
+# Deploy runtime source only. Vercel does not inherit .gitignore rules.
+.git/
+.vercel/
+.shopify/
+.shopify.lock
+.claude/
+.codex/
+.vscode/
+
+# Use the linked project's production variables, never local credentials.
+.env
+.env.*
+**/.env
+**/.env.*
+
+node_modules/
+**/node_modules/
+build/
+extensions/*/dist/
+.cache/
+*.log
+.DS_Store
+
+# Local research and synthetic UI fixtures are not runtime assets.
+docs/
+preview/
+public/_dev/

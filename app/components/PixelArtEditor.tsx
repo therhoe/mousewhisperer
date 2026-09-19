@@ -203,7 +203,7 @@ const PREMADE_AVATARS = [
   { name: "Guru", data: _cc({ templateIdx: 3 }) },
   { name: "Iron", data: _cc({ templateIdx: 4 }) },
   { name: "Hipster", data: _cc({ templateIdx: 5 }) },
-  { name: "MW", data: _cc({ templateIdx: 6 }) },
+  { name: "Snapshot", data: _cc({ templateIdx: 6 }) },
 
   // Mix-and-match variations
   { name: "Curly Bard", data: _cc({ templateIdx: 5, hairStyleIdx: 3, hairColorIdx: 7, topIdx: 5, eyeIdx: 9 }) },

@@ -38,7 +38,7 @@ const meterRows = [
   },
   {
     key: "normalSnapshots",
-    label: "Audit snapshots",
+    label: "Page & channel snapshots",
   },
   {
     key: "abTests",
@@ -120,7 +120,7 @@ const metricCopy: Record<
     compactNoun: "store snapshots",
   },
   normalSnapshots: {
-    noun: "audit snapshots",
+    noun: "page and channel snapshots",
     compactNoun: "snapshots",
   },
   abTests: {

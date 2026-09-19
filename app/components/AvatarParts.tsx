@@ -283,7 +283,7 @@ export const BASE_TEMPLATES: BaseTemplate[] = [
     naturalState: { skinIdx: 1, hairColorIdx: 2, topIdx: 7, accentIdx: 0, bottomIdx: 18, hasCape: false },
   },
   {
-    name: "MW",
+    name: "Snapshot",
     pixels: DS_MW_V1,
     hasIntegratedHair: true, // mouse fur extends into outline area
     hasCape: false,

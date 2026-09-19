@@ -5,6 +5,16 @@ import {
   Scripts,
   ScrollRestoration,
 } from "@remix-run/react";
+import type { MetaFunction } from "@remix-run/node";
+
+export const meta: MetaFunction = () => [
+  { title: "Snapshot" },
+  {
+    name: "description",
+    content:
+      "Understand Shopify storefront traffic and engagement with snapshots and A/B tests.",
+  },
+];
 
 export default function App() {
   return (

@@ -34,14 +34,11 @@ import {
 import {
   assertCanCreateStoreSnapshot,
   assertSnapshotTargetAllowed,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
-import {
-  getStorefrontTrackerStatus,
-  type StorefrontTrackerStatus,
-} from "../utils/storefront-tracker-status.server";
+import { StorefrontTrackingStatus } from "../components/StorefrontTrackingStatus";
 
 type StoreSnapshotRow = {
   id: string;
@@ -57,10 +54,10 @@ type StoreSnapshotRow = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [snapshots, trackerStatus, billingAccess] = await Promise.all([
+  const [snapshots, billingAccess] = await Promise.all([
     prisma.storeSnapshot.findMany({
       where: { shop },
       orderBy: { startedAt: "desc" },
@@ -78,12 +75,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         _count: { select: { visits: true } },
       },
     }),
-    getStorefrontTrackerStatus(admin, shop),
-    getBillingAccess(shop),
+    getBillingDisplayAccess(shop),
   ]);
 
   return json({
-    trackerStatus,
     billingAccess,
     snapshots: snapshots.map((snapshot) => ({
       ...snapshot,
@@ -117,7 +112,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     String(formData.get("targetTotalVisits") || "2500"),
     10,
   );
-  const durationDays = parseInt(String(formData.get("durationDays") || "7"), 10);
+  const durationDays = parseInt(
+    String(formData.get("durationDays") || "7"),
+    10,
+  );
 
   try {
     await assertCanCreateStoreSnapshot(shop);
@@ -149,8 +147,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function StoreSnapshotsIndex() {
-  const { snapshots, trackerStatus, billingAccess } =
-    useLoaderData<typeof loader>();
+  const { snapshots, billingAccess } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -210,7 +207,7 @@ export default function StoreSnapshotsIndex() {
           </Button>
         </InlineStack>
 
-        <TrackingStatusBanner trackerStatus={trackerStatus} />
+        <StorefrontTrackingStatus />
 
         {!billingAccess.canCreateStoreSnapshot && !activeSnapshot ? (
           <PremiumGateCard
@@ -401,37 +398,6 @@ export default function StoreSnapshotsIndex() {
       </Modal>
     </Page>
   );
-}
-
-function TrackingStatusBanner({
-  trackerStatus,
-}: {
-  trackerStatus: StorefrontTrackerStatus;
-}) {
-  const isActive = trackerStatus.status === "active";
-  return (
-    <InlineStack align="space-between" blockAlign="center" gap="300">
-      <InlineStack gap="200" blockAlign="center">
-        <Text as="span" variant="bodyMd" tone="subdued">
-          Rich storefront tracking
-        </Text>
-        <Badge tone={isActive ? "success" : undefined}>
-          {isActive ? "Active" : "Not active"}
-        </Badge>
-      </InlineStack>
-      <Text as="span" tone="subdued">
-        {formatStorefrontHost(trackerStatus.storefrontUrl)}
-      </Text>
-    </InlineStack>
-  );
-}
-
-function formatStorefrontHost(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return value;
-  }
 }
 
 const tableTextStyle = {

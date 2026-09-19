@@ -32,7 +32,7 @@ export async function getCROActivityTimeline(
       throw error;
     });
 
-  const [optimizations, tests, snapshots, storeSnapshots] = await Promise.all([
+  const [optimizations, tests, snapshots, storeSnapshots, channelSnapshots] = await Promise.all([
     optimizationQuery,
     prisma.abTest.findMany({
       where: {
@@ -65,6 +65,11 @@ export async function getCROActivityTimeline(
       orderBy: { completedAt: "asc" },
     }),
     prisma.storeSnapshot.findMany({
+      where: { shop, completedAt: { gte: start, lte: end } },
+      select: { id: true, name: true, completedAt: true },
+      orderBy: { completedAt: "asc" },
+    }),
+    prisma.channelSnapshot.findMany({
       where: { shop, completedAt: { gte: start, lte: end } },
       select: { id: true, name: true, completedAt: true },
       orderBy: { completedAt: "asc" },
@@ -122,6 +127,19 @@ export async function getCROActivityTimeline(
       start: snapshot.completedAt!.toISOString(),
       end: null,
       sourceType: "STORE_SNAPSHOT",
+      editable: false,
+    })),
+    ...channelSnapshots.map((snapshot) => ({
+      id: `channel-snapshot:${snapshot.id}`,
+      kind: "CHANNEL_SNAPSHOT" as const,
+      title: snapshot.name,
+      description: "Channel snapshot completed",
+      category: "MEASUREMENT",
+      scope: "CHANNEL",
+      pagePath: null,
+      start: snapshot.completedAt!.toISOString(),
+      end: null,
+      sourceType: "CHANNEL_SNAPSHOT",
       editable: false,
     })),
   ];

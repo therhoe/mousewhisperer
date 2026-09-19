@@ -1,10 +1,8 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import type { ShouldRevalidateFunction } from "@remix-run/react";
-import { useEffect, useState } from "react";
 import {
   Link,
   Outlet,
-  PrefetchPageLinks,
   useLoaderData,
   useLocation,
   useNavigation,
@@ -16,16 +14,18 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
-import { reconcileShopBillingFromShopify } from "../utils/billing.server";
+import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
+import {
+  isPageSnapshotsPath,
+  PAGE_SNAPSHOTS_PATH,
+} from "../utils/page-snapshot-navigation";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
-  const { admin, session } = await authenticate.admin(request);
-
-  await reconcileShopBillingFromShopify(admin, session.shop);
+  await authenticate.admin(request);
 
   if (process.env.NODE_ENV === "development") {
     console.info("[MW Perf] app layout loader", {
@@ -41,72 +41,28 @@ export const shouldRevalidate: ShouldRevalidateFunction = () => false;
 
 const APP_NAV_ITEMS = [
   { label: "Dashboard", to: "/app" },
-  { label: "Store snapshot", to: "/app/store-snapshots" },
-  { label: "A/B tests", to: "/app/ab-tests" },
-  { label: "Products", to: "/app/audits/products" },
-  { label: "Collections", to: "/app/audits/collections" },
-  { label: "Homepage", to: "/app/audits/homepage" },
-  { label: "Pages", to: "/app/audits/pages" },
-  { label: "Blogs", to: "/app/audits/blogs" },
+  { label: "Store Snapshots", to: "/app/store-snapshots" },
+  { label: "Channel Snapshots", to: "/app/channel-snapshots" },
+  { label: "Customer Snapshots", to: "/app/customer-snapshots" },
+  { label: "Page Snapshots", to: PAGE_SNAPSHOTS_PATH },
+  { label: "A/B Tests", to: "/app/ab-tests" },
 ];
-
-const PREFETCH_ROUTES = [
-  "/app",
-  "/app/store-snapshots",
-  "/app/ab-tests",
-  "/app/audits/products",
-  "/app/audits/collections",
-  "/app/audits/homepage",
-  "/app/audits/pages",
-  "/app/audits/blogs",
-];
-
-if (COMMUNITY_FEATURES_ENABLED) {
-  PREFETCH_ROUTES.push("/app/challenges");
-}
 
 function getRouteTitle(pathname: string) {
   if (pathname === "/app") return "Dashboard";
-  if (pathname.includes("/store-snapshots")) return "Store snapshots";
-  if (pathname.includes("/ab-tests")) return "A/B tests";
-  if (pathname.includes("/audits/products")) return "Products";
-  if (pathname.includes("/audits/collections")) return "Collections";
-  if (pathname.includes("/audits/homepage")) return "Homepage";
-  if (pathname.includes("/audits/pages")) return "Pages";
-  if (pathname.includes("/audits/blogs")) return "Blogs";
-  if (pathname.includes("/project/")) return "Audit details";
+  if (pathname.startsWith("/app/store-snapshots")) return "Store Snapshots";
+  if (pathname.startsWith("/app/channel-snapshots")) return "Channel Snapshots";
+  if (pathname.startsWith("/app/customer-snapshots")) return "Customer Snapshots";
+  if (pathname.startsWith("/app/ab-tests")) return "A/B Tests";
+  if (isPageSnapshotsPath(pathname)) return "Page Snapshots";
   if (pathname.includes("/challenges")) return "Challenges";
   return "Loading";
 }
 
-function AppRoutePrefetcher() {
-  const [prefetchCount, setPrefetchCount] = useState(0);
-
-  useEffect(() => {
-    const timers: number[] = [];
-    const startTimer = window.setTimeout(() => {
-      PREFETCH_ROUTES.forEach((_, index) => {
-        timers.push(
-          window.setTimeout(() => {
-            setPrefetchCount((current) => Math.max(current, index + 1));
-          }, index * 180),
-        );
-      });
-    }, 450);
-
-    return () => {
-      window.clearTimeout(startTimer);
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, []);
-
-  return (
-    <>
-      {PREFETCH_ROUTES.slice(0, prefetchCount).map((page) => (
-        <PrefetchPageLinks key={page} page={page} />
-      ))}
-    </>
-  );
+function isNavItemActive(pathname: string, destination: string) {
+  if (destination === "/app") return pathname === "/app";
+  if (destination === PAGE_SNAPSHOTS_PATH) return isPageSnapshotsPath(pathname);
+  return pathname === destination || pathname.startsWith(`${destination}/`);
 }
 
 function InstantRouteShell({ pathname }: { pathname: string }) {
@@ -201,7 +157,7 @@ function AppLocalNav({ activePathname }: { activePathname: string }) {
 
   return (
     <nav
-      aria-label="Mouse Whisperer sections"
+      aria-label="Snapshot sections"
       style={{
         display: "flex",
         gap: 8,
@@ -215,22 +171,24 @@ function AppLocalNav({ activePathname }: { activePathname: string }) {
       }}
     >
       {APP_NAV_ITEMS.map((item) => {
-        const active =
-          item.to === "/app"
-            ? pathname === "/app"
-            : pathname === item.to || pathname.startsWith(`${item.to}/`);
+        const active = isNavItemActive(pathname, item.to);
 
         return (
           <Link
             key={item.to}
             to={item.to}
-            prefetch="render"
+            prefetch="intent"
+            aria-current={active ? "page" : undefined}
             style={{
               flex: "0 0 auto",
               padding: "6px 10px",
               borderRadius: 6,
-              color: active ? "var(--p-color-text-brand)" : "var(--p-color-text)",
-              background: active ? "var(--p-color-bg-surface-brand-selected)" : "transparent",
+              color: active
+                ? "var(--p-color-text-brand)"
+                : "var(--p-color-text)",
+              background: active
+                ? "var(--p-color-bg-surface-brand-selected)"
+                : "transparent",
               fontSize: 13,
               fontWeight: active ? 650 : 500,
               lineHeight: "20px",
@@ -246,18 +204,23 @@ function AppLocalNav({ activePathname }: { activePathname: string }) {
 }
 
 function AppBridgeNav() {
+  const { pathname } = useLocation();
+
   return (
     <NavMenu>
-      <Link to="/app" rel="home">
-        Dashboard
-      </Link>
-      <Link to="/app/store-snapshots">Store snapshot</Link>
-      <Link to="/app/audits/products">Products</Link>
-      <Link to="/app/audits/collections">Collections</Link>
-      <Link to="/app/audits/homepage">Homepage</Link>
-      <Link to="/app/audits/pages">Pages</Link>
-      <Link to="/app/audits/blogs">Blogs</Link>
-      {COMMUNITY_FEATURES_ENABLED && <Link to="/app/challenges">Challenges</Link>}
+      {APP_NAV_ITEMS.map((item) => (
+        <Link
+          key={item.to}
+          to={item.to}
+          rel={item.to === "/app" ? "home" : undefined}
+          aria-current={isNavItemActive(pathname, item.to) ? "page" : undefined}
+        >
+          {item.label}
+        </Link>
+      ))}
+      {COMMUNITY_FEATURES_ENABLED && (
+        <Link to="/app/challenges">Challenges</Link>
+      )}
     </NavMenu>
   );
 }
@@ -267,18 +230,26 @@ export default function App() {
   const location = useLocation();
   const navigation = useNavigation();
   const pendingPathname = navigation.location?.pathname;
+  const isPageSnapshotCategoryTransition =
+    location.pathname.startsWith(`${PAGE_SNAPSHOTS_PATH}/`) &&
+    pendingPathname?.startsWith(`${PAGE_SNAPSHOTS_PATH}/`);
   const isRouteTransition =
     navigation.state === "loading" &&
     typeof pendingPathname === "string" &&
     pendingPathname.startsWith("/app") &&
-    pendingPathname !== location.pathname;
+    pendingPathname !== location.pathname &&
+    !isPageSnapshotCategoryTransition;
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
-      <AppRoutePrefetcher />
+      <BackgroundBillingSync />
       <AppBridgeNav />
       <AppLocalNav activePathname={pendingPathname || location.pathname} />
-      {isRouteTransition ? <InstantRouteShell pathname={pendingPathname} /> : <Outlet />}
+      {isRouteTransition ? (
+        <InstantRouteShell pathname={pendingPathname} />
+      ) : (
+        <Outlet />
+      )}
     </AppProvider>
   );
 }

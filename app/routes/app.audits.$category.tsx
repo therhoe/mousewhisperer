@@ -1,13 +1,13 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import type { Prisma, ResourceType } from "@prisma/client";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import {
   useFetcher,
   useLoaderData,
   Link,
-  PrefetchPageLinks,
   useSubmit,
   useNavigation,
+  useNavigate,
 } from "@remix-run/react";
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
@@ -20,6 +20,9 @@ import {
   Modal,
   TextField,
   FormLayout,
+  SkeletonBodyText,
+  SkeletonDisplayText,
+  Tabs,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -33,7 +36,7 @@ import {
 import {
   assertCanCreateNormalSnapshots,
   assertSnapshotTargetAllowed,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
   type BillingAccess,
@@ -44,6 +47,10 @@ import {
   getDashboardResourceActivity,
   type DashboardActivityCard,
 } from "../utils/dashboard-activity.server";
+import {
+  getPageSnapshotCategoryPath,
+  PAGE_SNAPSHOT_CATEGORIES,
+} from "../utils/page-snapshot-navigation";
 
 const CATEGORY_CONFIG: Record<
   string,
@@ -77,7 +84,7 @@ const NON_INTERNAL_EXIT_TYPES = [
   "external_link",
 ];
 const CATEGORY_CACHE_TTL_MS = 5 * 60_000;
-const DETAIL_PREFETCH_LIMIT = 16;
+const CATEGORY_ACTIVITY_CACHE_TTL_MS = 60_000;
 
 type TrackedClick = {
   label?: string;
@@ -171,11 +178,18 @@ type CategorySummary = {
 };
 
 type CategoryLoaderData = CategorySummary & {
+  shop: string;
   category: string;
   config: (typeof CATEGORY_CONFIG)[string];
-  activityCard: DashboardActivityCard;
   billingAccess?: BillingAccess;
   summaryPending?: boolean;
+};
+
+type CategoryActivityData = {
+  shop: string;
+  category: string;
+  activityCard?: DashboardActivityCard;
+  error?: string;
 };
 
 function emptyAuditMetric(): AuditMetric {
@@ -377,10 +391,17 @@ function getCategoryMetricDefs(
   ];
 }
 
+function categoryActivityCacheKey(shop: string, category: string) {
+  // Keep this under the category prefix so detail-page mutations invalidate it.
+  return `${loaderCacheKeys.category(shop, category)}:activity`;
+}
+
 function clearCategoryCaches(shop: string, category: string) {
   clearCacheKey(loaderCacheKeys.category(shop, category));
   clearCacheKey(loaderCacheKeys.categoryFast(shop, category));
+  clearCacheKey(categoryActivityCacheKey(shop, category));
   clearCacheKey(loaderCacheKeys.dashboard(shop));
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
 }
 
 function getMetricValuesFromSnapshotStats(
@@ -581,22 +602,64 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const authMs = Date.now() - startedAt;
   const shop = session.shop;
   const category = params.category || "products";
-  const config = CATEGORY_CONFIG[category];
+  const config = Object.prototype.hasOwnProperty.call(CATEGORY_CONFIG, category)
+    ? CATEGORY_CONFIG[category]
+    : undefined;
 
   if (!config) {
     throw new Response("Invalid category", { status: 404 });
   }
 
-  const summaryRequested =
-    new URL(request.url).searchParams.get("_summary") === "1";
+  const url = new URL(request.url);
+  const summaryRequested = url.searchParams.get("_summary") === "1";
+  const activityRequested = url.searchParams.get("_activity") === "1";
+
+  if (summaryRequested && activityRequested) {
+    throw new Response("Request either summary or activity", { status: 400 });
+  }
+
+  // Existing bookmarks still reach the same category in the grouped section.
+  // Keep legacy background requests working for already-open app sessions.
+  if (
+    !summaryRequested &&
+    !activityRequested &&
+    url.pathname.startsWith("/app/audits/")
+  ) {
+    url.searchParams.delete("_data");
+    return redirect(`${getPageSnapshotCategoryPath(category)}${url.search}`);
+  }
+
+  if (activityRequested) {
+    try {
+      const activityCard = await cachedValue(
+        categoryActivityCacheKey(shop, category),
+        CATEGORY_ACTIVITY_CACHE_TTL_MS,
+        () => getDashboardResourceActivity(shop, config.resourceType),
+      );
+      return json<CategoryActivityData>({ shop, category, activityCard });
+    } catch (error) {
+      console.error("[MW Perf] category activity failed", {
+        shop,
+        category,
+        error,
+      });
+      return json<CategoryActivityData>(
+        {
+          shop,
+          category,
+          error:
+            "The performance graph could not load. Your audit list is still available.",
+        },
+        { status: 503 },
+      );
+    }
+  }
 
   if (!summaryRequested) {
-    const [{ audits, baseline }, billingAccess, activityCard] =
-      await Promise.all([
-        getFastCategorySummary(shop, category, config),
-        getBillingAccess(shop),
-        getDashboardResourceActivity(shop, config.resourceType),
-      ]);
+    const [{ audits, baseline }, billingAccess] = await Promise.all([
+      getFastCategorySummary(shop, category, config),
+      getBillingDisplayAccess(shop),
+    ]);
     if (process.env.NODE_ENV === "development") {
       console.info("[MW Perf] category loader", {
         authMs,
@@ -606,11 +669,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
     return json({
+      shop,
       category,
       config,
       audits,
       baseline,
-      activityCard,
       billingAccess,
       summaryPending: true,
     });
@@ -829,17 +892,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
-  const [billingAccess, activityCard] = await Promise.all([
-    getBillingAccess(shop),
-    getDashboardResourceActivity(shop, config.resourceType),
-  ]);
   return json({
+    shop,
     category,
     config,
     audits,
     baseline,
-    activityCard,
-    billingAccess,
   });
 };
 
@@ -851,7 +909,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (actionType === "create") {
     const category = params.category || "products";
-    const config = CATEGORY_CONFIG[category];
+    const config = Object.prototype.hasOwnProperty.call(
+      CATEGORY_CONFIG,
+      category,
+    )
+      ? CATEGORY_CONFIG[category]
+      : undefined;
     if (!config) return json({ error: "Invalid category" }, { status: 400 });
 
     const productId =
@@ -967,25 +1030,119 @@ function DiffTag({
   );
 }
 
+function ActivityChartSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-label={`Loading ${label} performance`}>
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingLg" fontWeight="semibold">
+            {label} performance
+          </Text>
+          <div aria-hidden="true">
+            <SkeletonBodyText lines={1} />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 24,
+                padding: "16px 0",
+                margin: "12px 0",
+                borderTop: "1px solid var(--p-color-border-subdued)",
+                borderBottom: "1px solid var(--p-color-border-subdued)",
+              }}
+            >
+              {[0, 1, 2].map((column) => (
+                <div key={column} style={{ minWidth: 0 }}>
+                  <SkeletonDisplayText size="small" />
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                height: 120,
+                borderRadius: 4,
+                background:
+                  "repeating-linear-gradient(to top, var(--p-color-border-subdued) 0 1px, transparent 1px 40px)",
+              }}
+            />
+          </div>
+        </BlockStack>
+      </Card>
+    </div>
+  );
+}
+
+function CategoryPanelSkeleton({ label }: { label: string }) {
+  return (
+    <Layout>
+      <Layout.Section>
+        <ActivityChartSkeleton label={label} />
+      </Layout.Section>
+      <Layout.Section>
+        <div role="status" aria-label={`Loading ${label} audits`}>
+          <Card>
+            <div aria-hidden="true">
+              <BlockStack gap="600">
+                {[0, 1, 2].map((row) => (
+                  <SkeletonBodyText key={row} lines={2} />
+                ))}
+              </BlockStack>
+            </div>
+          </Card>
+        </div>
+      </Layout.Section>
+    </Layout>
+  );
+}
+
+function getCategoryFromPath(pathname: string | undefined) {
+  const match = pathname?.match(
+    /^\/app\/(?:page-snapshots|audits)\/([^/]+)\/?$/,
+  );
+  return match &&
+    Object.prototype.hasOwnProperty.call(CATEGORY_CONFIG, match[1])
+    ? match[1]
+    : null;
+}
+
 export default function AuditsCategory() {
   const loaderData = useLoaderData<CategoryLoaderData>();
-  const { category, config } = loaderData;
+  const { shop, category, config } = loaderData;
   const billingAccess =
     "billingAccess" in loaderData ? loaderData.billingAccess : null;
   const submit = useSubmit();
+  const navigate = useNavigate();
   const navigation = useNavigation();
   const resourceFetcher = useFetcher<{
     category: string;
     resources: Array<{ id: string; title: string; handle: string }>;
   }>();
   const summaryFetcher = useFetcher<{
+    shop: string;
     category: string;
     audits: CategorySummary["audits"];
     baseline: CategorySummary["baseline"];
   }>();
+  const activityFetcher = useFetcher<CategoryActivityData>();
   const isLoading = navigation.state !== "idle";
+  const pendingCategory = isLoading
+    ? getCategoryFromPath(navigation.location?.pathname)
+    : null;
+  const isCategoryChanging = Boolean(
+    pendingCategory && pendingCategory !== category,
+  );
+  const visibleCategory = isCategoryChanging ? pendingCategory! : category;
+  const visibleConfig = CATEGORY_CONFIG[visibleCategory];
   const summaryData =
-    summaryFetcher.data?.category === category ? summaryFetcher.data : null;
+    summaryFetcher.data?.category === category &&
+    summaryFetcher.data.shop === shop
+      ? summaryFetcher.data
+      : null;
+  const activityData =
+    activityFetcher.data?.category === category &&
+    activityFetcher.data.shop === shop
+      ? activityFetcher.data
+      : null;
   const audits = summaryData?.audits ?? loaderData.audits;
   const baseline = summaryData?.baseline ?? loaderData.baseline;
   const metricDefs = getCategoryMetricDefs(config.resourceType as ResourceType);
@@ -1001,37 +1158,40 @@ export default function AuditsCategory() {
     handle: string;
   } | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
-  const [prefetchDetails, setPrefetchDetails] = useState(false);
-  const lastSummaryRequestUrl = useRef<string | null>(null);
   const loadSummaryRef = useRef(summaryFetcher.load);
+  const loadActivityRef = useRef(activityFetcher.load);
 
   useEffect(() => {
     loadSummaryRef.current = summaryFetcher.load;
   }, [summaryFetcher.load]);
 
   useEffect(() => {
-    const summaryUrl = `/app/audits/${category}?_summary=1`;
-    if (
-      !loaderData.summaryPending ||
-      lastSummaryRequestUrl.current === summaryUrl
-    )
-      return;
-    lastSummaryRequestUrl.current = summaryUrl;
+    loadActivityRef.current = activityFetcher.load;
+  }, [activityFetcher.load]);
+
+  useEffect(() => {
+    if (!loaderData.summaryPending || isCategoryChanging) return;
+    // Enrich the already-visible rows after first paint, independently of the graph.
     const timeoutId = window.setTimeout(() => {
-      loadSummaryRef.current(summaryUrl);
+      loadSummaryRef.current(
+        `${getPageSnapshotCategoryPath(category)}?_summary=1`,
+      );
     }, 600);
 
     return () => window.clearTimeout(timeoutId);
-  }, [category, loaderData.summaryPending]);
+  }, [shop, category, loaderData.summaryPending, isCategoryChanging]);
 
   useEffect(() => {
-    setPrefetchDetails(false);
+    if (isCategoryChanging) return;
+    // Give the shell/list a paint before starting the heavier comparison queries.
     const timeoutId = window.setTimeout(() => {
-      setPrefetchDetails(true);
-    }, 450);
+      loadActivityRef.current(
+        `${getPageSnapshotCategoryPath(category)}?_activity=1`,
+      );
+    }, 150);
 
     return () => window.clearTimeout(timeoutId);
-  }, [category]);
+  }, [shop, category, isCategoryChanging]);
 
   const handleOpenCreate = useCallback(async () => {
     if (billingAccess && !billingAccess.canCreateNormalSnapshot) {
@@ -1120,22 +1280,11 @@ export default function AuditsCategory() {
       !pickerSearch ||
       r.title.toLowerCase().includes(pickerSearch.toLowerCase()),
   );
-  const detailPrefetchPages = Array.from(
-    new Set(
-      audits
-        .slice(0, DETAIL_PREFETCH_LIMIT)
-        .map((audit) => `/app/project/${audit.id}`),
-    ),
-  );
 
   return (
     <Page
-      title={config.label}
-      subtitle={
-        category === "homepage"
-          ? "Audit the store homepage and compare snapshot baselines"
-          : "Audit baselines and per-page comparison"
-      }
+      title="Page Snapshots"
+      subtitle="Measure and compare snapshots for individual storefront pages"
       backAction={{ content: "Dashboard", url: "/app" }}
       primaryAction={
         billingAccess ? (
@@ -1145,184 +1294,267 @@ export default function AuditsCategory() {
         ) : undefined
       }
     >
-      {prefetchDetails &&
-        detailPrefetchPages.map((page) => (
-          <PrefetchPageLinks key={page} page={page} />
-        ))}
-      <TitleBar title={config.label}>
-        <button variant="primary" onClick={handleOpenCreate}>
+      <TitleBar title={`Page Snapshots · ${visibleConfig.label}`}>
+        <button
+          variant="primary"
+          onClick={handleOpenCreate}
+          disabled={isCategoryChanging}
+        >
           {billingAccess && !billingAccess.canCreateNormalSnapshot
             ? "Upgrade to create audit"
-            : `+ New ${config.singular} Audit`}
+            : `+ New ${visibleConfig.singular} Audit`}
         </button>
       </TitleBar>
-      <Layout>
-        <Layout.Section>
-          <ResourceActivityChart card={loaderData.activityCard} />
-        </Layout.Section>
-        {audits.length === 0 ? (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300" inlineAlign="center">
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  No {category} audits yet.
-                </Text>
-                {billingAccess && !billingAccess.canCreateNormalSnapshot ? (
-                  <Button url="/app/upgrade" variant="primary">
-                    Upgrade to create audit
-                  </Button>
+      <BlockStack gap="400">
+        <Card padding="0">
+          <Tabs
+            tabs={PAGE_SNAPSHOT_CATEGORIES.map(({ key, label }) => ({
+              id: `page-snapshots-${key}`,
+              content: label,
+              accessibilityLabel: `${label} snapshots`,
+              panelID: "page-snapshot-category-content",
+            }))}
+            selected={PAGE_SNAPSHOT_CATEGORIES.findIndex(
+              ({ key }) => key === visibleCategory,
+            )}
+            onSelect={(index) => {
+              const selectedCategory = PAGE_SNAPSHOT_CATEGORIES[index];
+              if (
+                selectedCategory &&
+                selectedCategory.key !== visibleCategory
+              ) {
+                navigate(getPageSnapshotCategoryPath(selectedCategory.key));
+              }
+            }}
+          />
+        </Card>
+        <div
+          id="page-snapshot-category-content"
+          role="tabpanel"
+          aria-labelledby={`page-snapshots-${visibleCategory}`}
+          aria-busy={isLoading}
+        >
+          {isCategoryChanging ? (
+            <CategoryPanelSkeleton label={visibleConfig.label} />
+          ) : (
+            <Layout>
+              <Layout.Section>
+                {activityData?.activityCard ? (
+                  <ResourceActivityChart card={activityData.activityCard} />
+                ) : activityData?.error ? (
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h2" variant="headingMd">
+                        Performance graph unavailable
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        {activityData.error}
+                      </Text>
+                      <div>
+                        <Button
+                          onClick={() =>
+                            loadActivityRef.current(
+                              `${getPageSnapshotCategoryPath(category)}?_activity=1`,
+                            )
+                          }
+                          loading={activityFetcher.state !== "idle"}
+                        >
+                          Retry graph
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Card>
                 ) : (
-                  <Button onClick={handleOpenCreate}>
-                    Create your first {config.singular} audit
-                  </Button>
+                  <ActivityChartSkeleton label={config.label} />
                 )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        ) : null}
+              </Layout.Section>
+              {audits.length === 0 ? (
+                <Layout.Section>
+                  <Card>
+                    <BlockStack gap="300" inlineAlign="center">
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        No {category} audits yet.
+                      </Text>
+                      {billingAccess &&
+                      !billingAccess.canCreateNormalSnapshot ? (
+                        <Button url="/app/upgrade" variant="primary">
+                          Upgrade to create audit
+                        </Button>
+                      ) : (
+                        <Button onClick={handleOpenCreate}>
+                          Create your first {config.singular} audit
+                        </Button>
+                      )}
+                    </BlockStack>
+                  </Card>
+                </Layout.Section>
+              ) : null}
 
-        {audits.length > 0 && (
-          <Layout.Section>
-            <Card padding="0">
-              {audits.map((p: any, idx: number) => {
-                const progressPct = Math.min(
-                  100,
-                  Math.round((p.realCount / p.targetVisitors) * 100),
-                );
-                const isDone = progressPct >= 100;
-                return (
-                  <Link
-                    key={p.id}
-                    to={`/app/project/${p.id}`}
-                    prefetch="viewport"
-                    style={{ textDecoration: "none", color: "inherit" }}
-                  >
-                    <div
-                      style={{
-                        padding: "14px 20px",
-                        borderBottom:
-                          idx < audits.length - 1
-                            ? "1px solid #ebebeb"
-                            : "none",
-                        cursor: "pointer",
-                        transition: "background 0.15s",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background =
-                          "var(--p-color-bg-surface-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "transparent";
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 24,
-                        }}
-                      >
-                        <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-                          <Text variant="bodyMd" fontWeight="bold" as="span">
-                            {p.productTitle}
-                          </Text>
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {p.snapshotName}
-                            {p.snapshotCount > 1
-                              ? ` \u00B7 ${p.snapshotCount} snapshots`
-                              : ""}
-                          </Text>
-                        </div>
-                        <div style={{ flex: "1 1 180px", maxWidth: 220 }}>
+              {audits.length > 0 && (
+                <Layout.Section>
+                  <Card padding="0">
+                    {audits.map((p: any, idx: number) => {
+                      const progressPct = Math.min(
+                        100,
+                        Math.round((p.realCount / p.targetVisitors) * 100),
+                      );
+                      const isDone = progressPct >= 100;
+                      return (
+                        <Link
+                          key={p.id}
+                          to={`/app/project/${p.id}`}
+                          prefetch="intent"
+                          style={{ textDecoration: "none", color: "inherit" }}
+                        >
                           <div
                             style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              marginBottom: 4,
+                              padding: "14px 20px",
+                              borderBottom:
+                                idx < audits.length - 1
+                                  ? "1px solid #ebebeb"
+                                  : "none",
+                              cursor: "pointer",
+                              transition: "background 0.15s",
                             }}
-                          >
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {p.realCount}/{p.targetVisitors}
-                            </Text>
-                          </div>
-                          <div
-                            style={{
-                              height: 6,
-                              background: "#e4e5e7",
-                              borderRadius: 3,
-                              overflow: "hidden",
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background =
+                                "var(--p-color-bg-surface-hover)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "transparent";
                             }}
                           >
                             <div
                               style={{
-                                height: "100%",
-                                width: `${progressPct}%`,
-                                background: isDone ? "#29845a" : "#2c6ecb",
-                                borderRadius: 3,
-                                transition: "width 0.3s",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 24,
                               }}
-                            />
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 24,
-                            flexShrink: 0,
-                            flexWrap: "wrap",
-                            justifyContent: "flex-end",
-                          }}
-                        >
-                          {rowMetricDefs.map((metric) => {
-                            const value =
-                              (p.metricValues as Record<string, number>)[
-                                metric.key
-                              ] || 0;
-                            const baselineValue =
-                              (baseline.metricValues as Record<string, number>)[
-                                metric.key
-                              ] || 0;
-                            return (
-                              <div
-                                key={metric.key}
-                                style={{ textAlign: "center", minWidth: 88 }}
-                              >
-                                <Text as="p" variant="bodySm" tone="subdued">
-                                  {metric.label}
+                            >
+                              <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                                <Text
+                                  variant="bodyMd"
+                                  fontWeight="bold"
+                                  as="span"
+                                >
+                                  {p.productTitle}
                                 </Text>
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {p.snapshotName}
+                                  {p.snapshotCount > 1
+                                    ? ` \u00B7 ${p.snapshotCount} snapshots`
+                                    : ""}
+                                </Text>
+                              </div>
+                              <div style={{ flex: "1 1 180px", maxWidth: 220 }}>
                                 <div
                                   style={{
                                     display: "flex",
-                                    alignItems: "baseline",
-                                    justifyContent: "center",
+                                    justifyContent: "space-between",
+                                    marginBottom: 4,
                                   }}
                                 >
                                   <Text
                                     as="span"
-                                    variant="bodyMd"
-                                    fontWeight="semibold"
+                                    variant="bodySm"
+                                    tone="subdued"
                                   >
-                                    {metric.format(value)}
+                                    {p.realCount}/{p.targetVisitors}
                                   </Text>
-                                  <DiffTag
-                                    value={value}
-                                    baseline={baselineValue}
-                                    higherIsBetter={metric.higherIsBetter}
+                                </div>
+                                <div
+                                  style={{
+                                    height: 6,
+                                    background: "#e4e5e7",
+                                    borderRadius: 3,
+                                    overflow: "hidden",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      height: "100%",
+                                      width: `${progressPct}%`,
+                                      background: isDone
+                                        ? "#29845a"
+                                        : "#2c6ecb",
+                                      borderRadius: 3,
+                                      transition: "width 0.3s",
+                                    }}
                                   />
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
-                );
-              })}
-            </Card>
-          </Layout.Section>
-        )}
-      </Layout>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: 24,
+                                  flexShrink: 0,
+                                  flexWrap: "wrap",
+                                  justifyContent: "flex-end",
+                                }}
+                              >
+                                {rowMetricDefs.map((metric) => {
+                                  const value =
+                                    (p.metricValues as Record<string, number>)[
+                                      metric.key
+                                    ] || 0;
+                                  const baselineValue =
+                                    (
+                                      baseline.metricValues as Record<
+                                        string,
+                                        number
+                                      >
+                                    )[metric.key] || 0;
+                                  return (
+                                    <div
+                                      key={metric.key}
+                                      style={{
+                                        textAlign: "center",
+                                        minWidth: 88,
+                                      }}
+                                    >
+                                      <Text
+                                        as="p"
+                                        variant="bodySm"
+                                        tone="subdued"
+                                      >
+                                        {metric.label}
+                                      </Text>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          alignItems: "baseline",
+                                          justifyContent: "center",
+                                        }}
+                                      >
+                                        <Text
+                                          as="span"
+                                          variant="bodyMd"
+                                          fontWeight="semibold"
+                                        >
+                                          {metric.format(value)}
+                                        </Text>
+                                        <DiffTag
+                                          value={value}
+                                          baseline={baselineValue}
+                                          higherIsBetter={metric.higherIsBetter}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </Card>
+                </Layout.Section>
+              )}
+            </Layout>
+          )}
+        </div>
+      </BlockStack>
 
       {/* Custom Resource Picker for Pages/Blogs */}
       <Modal

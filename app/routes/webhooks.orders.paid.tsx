@@ -1,13 +1,14 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { recordCustomerCommerce } from "../utils/customer-journey.server";
 import { attributeAbTestConversion } from "../utils/ab-tests.server";
 import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
+import { attributeChannelSnapshotEvent } from "../utils/channel-snapshot.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
-    const { payload, shop, topic, admin } =
-      await authenticate.webhook(request);
+    const { payload, shop, topic, admin } = await authenticate.webhook(request);
 
     console.log(`[MW Webhook] Received ${topic} for ${shop}`);
 
@@ -32,6 +33,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const sessionId =
       getAttributeValue(order.note_attributes, "_mw_sid") ||
       getAttributeValue(order.custom_attributes, "_mw_sid");
+    const acquisitionSessionId =
+      getAttributeValue(order.note_attributes, "_mw_csid") ||
+      getAttributeValue(order.custom_attributes, "_mw_csid");
 
     console.log(
       `[MW Webhook] Order #${order.order_number || order.name} — session: ${sessionId || "none"}, total: ${orderTotal} ${orderCurrency}`,
@@ -40,6 +44,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let storeSnapshotConversionsTracked = 0;
     let abTestConversionsTracked = 0;
     if (sessionId) {
+      await recordCustomerCommerce({
+        shop,
+        sessionId,
+        acquisitionSessionId,
+        eventType: "conversion",
+        timestamp: orderCreatedAt,
+        orderId: order.id,
+        totalPrice: orderTotal,
+        currency: orderCurrency,
+      }).catch((error) => {
+        // The checkout pixel also records the exact order. Do not replay the
+        // legacy writers just because this additive writer failed.
+        console.warn("[MW Webhook] Customer journey attribution failed", {
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+      });
+      try {
+        await attributeChannelSnapshotEvent({
+          shop,
+          sessionId,
+          acquisitionSessionId,
+          timestamp: orderCreatedAt,
+          event: "conversion",
+        });
+      } catch (error) {
+        // Channel attribution is additive and best-effort here. Its failure
+        // must not interrupt or force a replay of the legacy order writers.
+        console.warn("[MW Webhook] Channel conversion attribution failed", {
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
       storeSnapshotConversionsTracked = await attributeStoreSnapshotOrder({
         shop,
         sessionId,

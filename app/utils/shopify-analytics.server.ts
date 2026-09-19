@@ -322,11 +322,13 @@ export async function getShopifyConversionProgress({
     return emptyProgress(
       getConversionCalendarRange(period),
       "missing_scope",
-      "Reconnect Mouse Whisperer to grant Shopify Analytics report access.",
+      "Reconnect Snapshot to grant Shopify Analytics report access.",
     );
   }
 
-  const timeZone = await getShopTimeZone(admin);
+  const timeZone = await cachedValue(`shop-timezone:${shop}`, 300_000, () =>
+    getShopTimeZone(admin),
+  );
   const range = getConversionCalendarRange(period, timeZone);
 
   return cachedValue(
@@ -381,7 +383,7 @@ export async function getShopifyConversionProgress({
           range,
           approvalRequired ? "approval_required" : "error",
           approvalRequired
-            ? "Mouse Whisperer has report access for this store, but Shopify is blocking conversion reports until the app receives Level 2 protected customer data approval."
+            ? "Snapshot has report access for this store, but Shopify is blocking conversion reports until the app receives Level 2 protected customer data approval."
             : "Shopify Analytics could not be loaded right now. Try again shortly.",
         );
       }

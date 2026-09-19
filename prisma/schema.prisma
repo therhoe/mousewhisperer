@@ -112,6 +112,159 @@ enum StoreSnapshotCompletionMode {
   TIME_WINDOW
 }
 
+enum ChannelSnapshotCompletionMode {
+  HUMAN_SESSIONS
+  TOTAL_SESSIONS
+  TIME_WINDOW
+}
+
+// Independent store-wide capture grouped by the acquisition channel, not page referrer.
+model ChannelSnapshot {
+  id             String                        @id @default(cuid())
+  shop           String
+  name           String
+  status         SnapshotStatus                @default(ACTIVE)
+  completionMode ChannelSnapshotCompletionMode @default(HUMAN_SESSIONS)
+  targetSessions Int?
+  durationDays   Int?
+  startedAt      DateTime                      @default(now())
+  endsAt         DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+
+  sessions ChannelSnapshotSession[]
+
+  @@index([shop, status])
+  @@index([shop, startedAt])
+}
+
+// An acquisition session is separate from the legacy, seven-day checkout tracking ID.
+model ChannelSnapshotSession {
+  id                String          @id @default(cuid())
+  channelSnapshotId String
+  channelSnapshot   ChannelSnapshot @relation(fields: [channelSnapshotId], references: [id], onDelete: Cascade)
+  acquisitionId     String
+  trackingSessionId String
+  channel           String          @default("Unknown")
+  source            String?
+  medium            String?
+  campaign          String?
+  referrer          String?
+  landingPath       String?
+  acquiredAt        DateTime?
+  startedAt         DateTime        @default(now())
+  lastSeenAt        DateTime        @default(now())
+  addedToCart       Boolean         @default(false)
+  checkoutStarted   Boolean         @default(false)
+  checkoutStartedAt DateTime?
+  converted         Boolean         @default(false)
+  convertedAt       DateTime?
+
+  visits ChannelSnapshotVisit[]
+
+  @@unique([channelSnapshotId, acquisitionId])
+  @@index([channelSnapshotId, channel])
+  @@index([trackingSessionId, lastSeenAt])
+}
+
+// Store page-view totals independently, so repeated heartbeat updates never inflate counts.
+model ChannelSnapshotVisit {
+  id          String                 @id @default(cuid())
+  sessionId   String
+  session     ChannelSnapshotSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  pageViewId  String
+  pagePath    String
+  visitorType VisitorType            @default(PENDING)
+  timeOnPage  Int                    @default(0)
+  scrollDepth Int                    @default(0)
+  startedAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@unique([sessionId, pageViewId])
+  @@index([sessionId, visitorType])
+}
+
+model CustomerSnapshot {
+  id             String                   @id @default(cuid())
+  shop           String
+  name           String
+  status         SnapshotStatus           @default(ACTIVE)
+  source         String
+  medium         String?
+  campaign       String?
+  adId           String?
+  destinationUrl String
+  targetSessions Int?
+  startedAt      DateTime                 @default(now())
+  endsAt         DateTime
+  completedAt    DateTime?
+  createdAt      DateTime                 @default(now())
+  sessions       CustomerJourneySession[]
+
+  @@index([shop, status, endsAt])
+  @@index([shop, startedAt])
+}
+
+model CustomerJourneySession {
+  id                String                 @id @default(cuid())
+  snapshotId        String
+  snapshot          CustomerSnapshot       @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  acquisitionId     String
+  trackingSessionId String
+  source            String
+  medium            String?
+  campaign          String?
+  adId              String?
+  landingPath       String
+  startedAt         DateTime
+  lastSeenAt        DateTime
+  visitorType       VisitorType            @default(PENDING)
+  addedToCart       Boolean                @default(false)
+  checkoutStarted   Boolean                @default(false)
+  converted         Boolean                @default(false)
+  truncated         Boolean                @default(false)
+  pages             CustomerJourneyPage[]
+  events            CustomerJourneyEvent[]
+
+  @@unique([snapshotId, acquisitionId])
+  @@index([snapshotId, startedAt, id])
+  @@index([trackingSessionId, acquisitionId])
+}
+
+model CustomerJourneyPage {
+  id          String                 @id @default(cuid())
+  sessionId   String
+  session     CustomerJourneySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  pageViewId  String
+  pagePath    String
+  startedAt   DateTime
+  timeOnPage  Int                    @default(0)
+  scrollDepth Int                    @default(0)
+  visitorType VisitorType            @default(PENDING)
+
+  @@unique([sessionId, pageViewId])
+}
+
+model CustomerJourneyEvent {
+  id         String                 @id @default(cuid())
+  sessionId  String
+  session    CustomerJourneySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  eventKey   String
+  type       String
+  occurredAt DateTime
+  pagePath   String?
+  label      String?
+  targetPath String?
+  orderId    String?
+  amount     Float?
+  currency   String?
+
+  @@unique([sessionId, eventKey])
+  @@index([sessionId, occurredAt, id])
+  @@index([orderId])
+}
+
 enum StoreSnapshotRecommendationStatus {
   OPEN
   CREATED
@@ -772,6 +925,7 @@ model InsightBookmark {
 // ─── Notifications ──────────────────────────────────────────
 
 enum NotificationType {
+  PRIVACY_REQUEST
   INSIGHT_ANSWERED
   ANSWER_UPVOTED
   ANSWER_ACCEPTED

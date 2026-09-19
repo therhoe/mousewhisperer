@@ -39,14 +39,11 @@ import {
   clearCachePrefix,
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
-import {
-  getStorefrontTrackerStatus,
-  type StorefrontTrackerStatus,
-} from "../utils/storefront-tracker-status.server";
+import { StorefrontTrackingStatus } from "../components/StorefrontTrackingStatus";
 import {
   assertCanCreateNormalSnapshots,
   assertSnapshotTargetAllowed,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
@@ -116,7 +113,7 @@ type ShopifyAdminClient = {
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const snapshotId = params.id;
 
@@ -132,11 +129,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Store snapshot not found", { status: 404 });
   }
 
-  const [stats, trackerStatus, focusedSnapshots, billingAccess] = await Promise.all([
+  const [stats, focusedSnapshots, billingAccess] = await Promise.all([
     getStoreSnapshotStats(snapshot.id),
-    getStorefrontTrackerStatus(admin, shop),
     getFocusedSnapshotsCreatedFromStoreSnapshot(snapshot.id, shop),
-    getBillingAccess(shop),
+    getBillingDisplayAccess(shop),
   ]);
 
   return json({
@@ -153,7 +149,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       completedAt: snapshot.completedAt?.toISOString() ?? null,
     },
     stats,
-    trackerStatus,
     focusedSnapshots,
     billingAccess,
   });
@@ -205,6 +200,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (actionType === "delete") {
     await prisma.storeSnapshot.delete({ where: { id: snapshot.id } });
+    clearCacheKey(loaderCacheKeys.billingDisplay(shop));
     return redirect("/app");
   }
 
@@ -380,10 +376,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function StoreSnapshotDetails() {
-  const { snapshot, stats, trackerStatus, focusedSnapshots, billingAccess } =
+  const { snapshot, stats, focusedSnapshots, billingAccess } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as
-    ActionResponse | undefined;
+    | ActionResponse
+    | undefined;
   const submit = useSubmit();
   const navigation = useNavigation();
   const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>([]);
@@ -588,7 +585,7 @@ export default function StoreSnapshotDetails() {
         ) : null}
 
         <Layout.Section>
-          <TrackingStatusBanner trackerStatus={trackerStatus} />
+          <StorefrontTrackingStatus />
         </Layout.Section>
 
         <Layout.Section>
@@ -1517,37 +1514,6 @@ function FocusedSnapshotRow({
   );
 }
 
-function TrackingStatusBanner({
-  trackerStatus,
-}: {
-  trackerStatus: StorefrontTrackerStatus;
-}) {
-  const isActive = trackerStatus.status === "active";
-  return (
-    <InlineStack align="space-between" blockAlign="center" gap="300">
-      <InlineStack gap="200" blockAlign="center">
-        <Text as="span" variant="bodyMd" tone="subdued">
-          Rich storefront tracking
-        </Text>
-        <Badge tone={isActive ? "success" : undefined}>
-          {isActive ? "Active" : "Not active"}
-        </Badge>
-      </InlineStack>
-      <Text as="span" tone="subdued">
-        {formatStorefrontHost(trackerStatus.storefrontUrl)}
-      </Text>
-    </InlineStack>
-  );
-}
-
-function formatStorefrontHost(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return value;
-  }
-}
-
 const tableNumStyle = {
   padding: "14px 20px",
   borderBottom: "1px solid var(--p-color-border-subdued)",
@@ -2413,6 +2379,7 @@ async function repairFocusedProductId(
 
 function clearDashboardAndCategoryCaches(shop: string) {
   clearCacheKey(loaderCacheKeys.dashboard(shop));
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
   clearCachePrefix(loaderCacheKeys.categoryPrefix(shop));
   clearCachePrefix(loaderCacheKeys.categoryFastPrefix(shop));
 }

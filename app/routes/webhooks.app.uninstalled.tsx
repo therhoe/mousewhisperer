@@ -8,6 +8,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     console.log(`Received ${topic} webhook for ${shop}`);
 
+    await db.channelSnapshot.updateMany({
+      where: { shop, status: "ACTIVE" },
+      data: { status: "PAUSED" },
+    });
+    await db.customerSnapshot.updateMany({
+      where: { shop, status: "ACTIVE" },
+      data: { status: "PAUSED" },
+    });
+
     // Webhook requests can trigger multiple times and after an app has already been uninstalled.
     // If this webhook already ran, the session may have been deleted previously.
     if (session) {

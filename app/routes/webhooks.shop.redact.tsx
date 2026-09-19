@@ -30,6 +30,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Deleting all data for shop: ${shop}`);
 
   try {
+    // Includes all acquisition sessions and visits through cascading relations.
+    await db.channelSnapshot.deleteMany({ where: { shop } });
+    await db.customerSnapshot.deleteMany({ where: { shop } });
     // Delete all sessions for this shop
     const deletedSessions = await db.session.deleteMany({
       where: { shop },
@@ -45,8 +48,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`Shop redaction complete for ${shop}`);
   } catch (error) {
     console.error(`Error during shop redaction for ${shop}:`, error);
-    // Still return 200 to acknowledge receipt - Shopify will retry if we return an error
-    // but we've already attempted deletion
+    return new Response("Shop data deletion failed", { status: 500 });
   }
 
   return new Response(null, { status: 200 });

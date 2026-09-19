@@ -10,6 +10,7 @@ export type ImageEngagementItem = {
 
 type ClickEngagementRow = {
   ctaClicks: string | null;
+  sessionId?: string | null;
 };
 
 type TrackedClick = {
@@ -20,10 +21,9 @@ type TrackedClick = {
   zone?: string;
 };
 
-function parseTrackedClicks(raw: string | null):
-  | TrackedClick[]
-  | Record<string, unknown>
-  | null {
+function parseTrackedClicks(
+  raw: string | null,
+): TrackedClick[] | Record<string, unknown> | null {
   if (!raw) return [];
 
   try {
@@ -127,8 +127,13 @@ export function buildClickEngagement(
     categoryItems.set(label, (categoryItems.get(label) || 0) + count);
   };
 
-  rows.forEach((row) => {
-    const imageKeysSeenThisSession = new Set<string>();
+  const imageKeysSeenBySession = new Map<string, Set<string>>();
+
+  rows.forEach((row, rowIndex) => {
+    const sessionKey = row.sessionId || `row:${rowIndex}`;
+    const imageKeysSeenThisSession =
+      imageKeysSeenBySession.get(sessionKey) || new Set<string>();
+    imageKeysSeenBySession.set(sessionKey, imageKeysSeenThisSession);
     const clickPayload = parseTrackedClicks(row.ctaClicks);
 
     if (!clickPayload) return;
@@ -215,4 +220,147 @@ export function buildClickEngagement(
     );
 
   return { ctaByCategory, categoryTotals, imageEngagement };
+}
+
+export type EngagementOutcomeItem = {
+  key: string;
+  label: string;
+  imageUrl: string | null;
+  clicks: number;
+  sessions: number | null;
+  carts: number | null;
+  purchases: number | null;
+};
+export type EngagementOutcomes = {
+  version: 1;
+  groups: Array<{ category: string; items: EngagementOutcomeItem[] }>;
+  maxSessions: number;
+};
+type OutcomeRow = {
+  sessionId?: string | null;
+  ctaClicks?: string | null;
+  addedToCart?: boolean;
+  converted?: boolean;
+};
+
+// Callers supply ONE tenant/capture/filter (and, for A/B, ONE variant).
+// Commerce is deliberately not inferred from button names or click timing.
+export function buildEngagementOutcomes(
+  clickRows: OutcomeRow[],
+  commerceRows: OutcomeRow[] = clickRows,
+): EngagementOutcomes {
+  const commerce = new Map<
+    string,
+    { cart: boolean; purchase: boolean; known: boolean }
+  >();
+  for (const row of commerceRows) {
+    if (!row.sessionId) continue;
+    const prior = commerce.get(row.sessionId);
+    commerce.set(row.sessionId, {
+      cart: Boolean(prior?.cart || row.addedToCart),
+      purchase: Boolean(prior?.purchase || row.converted),
+      known: Boolean(
+        prior?.known ||
+        (typeof row.addedToCart === "boolean" &&
+          typeof row.converted === "boolean"),
+      ),
+    });
+  }
+  const groups = new Map<
+    string,
+    Map<
+      string,
+      {
+        label: string;
+        imageUrl: string | null;
+        clicks: number;
+        sessions: Set<string>;
+        missingId: boolean;
+      }
+    >
+  >();
+  for (const row of clickRows) {
+    const payload = parseTrackedClicks(row.ctaClicks || null);
+    if (!payload) continue;
+    const clicks: Array<{ click: TrackedClick; count: number }> = Array.isArray(
+      payload,
+    )
+      ? payload
+          .filter((click) => click && typeof click.label === "string")
+          .map((click) => ({
+            click: {
+              label: click.label,
+              tag: typeof click.tag === "string" ? click.tag : undefined,
+              zone: typeof click.zone === "string" ? click.zone : undefined,
+              href: typeof click.href === "string" ? click.href : null,
+            },
+            count: 1,
+          }))
+      : Object.entries(payload)
+          .filter(
+            ([, count]) => Number.isFinite(Number(count)) && Number(count) >= 1,
+          )
+          .map(([label, count]) => ({
+            click: { label, tag: "button" },
+            count: Math.floor(Number(count)),
+          }));
+    for (const { click, count } of clicks) {
+      if (!click.label?.trim()) continue;
+      const category = categorizeClick(click);
+      const imageUrl =
+        category === "Image" && typeof click.href === "string"
+          ? click.href
+          : null;
+      const label =
+        category === "Image" ? imageLabel(click, imageUrl) : click.label.trim();
+      const key =
+        category === "Image"
+          ? canonicalImageKey(imageUrl) || `label:${label}`
+          : JSON.stringify([label, click.href || ""]);
+      const items = groups.get(category) || new Map();
+      groups.set(category, items);
+      const item = items.get(key) || {
+        label,
+        imageUrl,
+        clicks: 0,
+        sessions: new Set<string>(),
+        missingId: false,
+      };
+      item.clicks += count;
+      if (row.sessionId) item.sessions.add(row.sessionId);
+      else item.missingId = true;
+      items.set(key, item);
+    }
+  }
+  let maxSessions = 1;
+  const order = ["Button", "Link", "Widget", "Image", "Header", "Footer"];
+  return {
+    version: 1,
+    groups: Array.from(groups, ([category, items]) => ({
+      category,
+      items: Array.from(items, ([key, item]) => {
+        const sessions = item.missingId ? null : item.sessions.size;
+        const known =
+          sessions !== null &&
+          [...item.sessions].every((id) => commerce.get(id)?.known);
+        if (sessions !== null) maxSessions = Math.max(maxSessions, sessions);
+        return {
+          key,
+          label: item.label,
+          imageUrl: item.imageUrl,
+          clicks: item.clicks,
+          sessions,
+          carts: known
+            ? [...item.sessions].filter((id) => commerce.get(id)?.cart).length
+            : null,
+          purchases: known
+            ? [...item.sessions].filter((id) => commerce.get(id)?.purchase)
+                .length
+            : null,
+        };
+      }).sort((a, b) => b.clicks - a.clicks || a.label.localeCompare(b.label)),
+    })).sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category)),
+    // Getter avoided: return plain serializable data after the map above runs.
+    maxSessions,
+  };
 }

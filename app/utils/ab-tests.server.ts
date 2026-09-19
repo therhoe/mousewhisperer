@@ -2,11 +2,21 @@ import type {
   AbTestGoal,
   AbTestPageType,
   AbTestStatus,
+  Prisma,
   ResourceType,
   VisitorType,
 } from "@prisma/client";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import prisma from "../db.server";
+import {
+  buildClickEngagement,
+  buildEngagementOutcomes,
+} from "./click-engagement";
+import {
+  buildCumulativeAbTestTrend,
+  buildSourceQualityBreakdown,
+  hasTrackedInteraction,
+} from "./ab-test-report";
 
 export type ThemeTemplateOption = {
   themeId: string;
@@ -277,7 +287,7 @@ function transformSnapshotTemplateContent({
         status: "not_applicable" as const,
         changedFiles: [targetFilename],
         notes: [
-          "The selected template is Liquid, so Mouse Whisperer copied the template and attached the snapshot plan without editing theme structure.",
+          "The selected template is Liquid, so Snapshot copied the template and attached the snapshot plan without editing theme structure.",
         ],
       },
     };
@@ -291,7 +301,7 @@ function transformSnapshotTemplateContent({
         status: "not_applicable" as const,
         changedFiles: [targetFilename],
         notes: [
-          "No compatible theme section file was detected for automatic insertion, so Mouse Whisperer copied the template and attached the snapshot plan.",
+          "No compatible theme section file was detected for automatic insertion, so Snapshot copied the template and attached the snapshot plan.",
         ],
       },
     };
@@ -308,7 +318,7 @@ function transformSnapshotTemplateContent({
         status: "not_applicable" as const,
         changedFiles: [targetFilename],
         notes: [
-          "The source JSON template could not be parsed, so Mouse Whisperer copied the template and attached the snapshot plan.",
+          "The source JSON template could not be parsed, so Snapshot copied the template and attached the snapshot plan.",
         ],
       },
     };
@@ -399,7 +409,7 @@ function buildSnapshotSection(
   const body =
     transformation.intervention?.sectionBody ||
     transformation.evidence ||
-    "This variant was generated from the selected Mouse Whisperer snapshot.";
+    "This variant was generated from the selected Snapshot report.";
   const customLiquid = `<div class="mw-snapshot-variant" data-mw-source="snapshot">
   <h2>${escapeHtml(heading)}</h2>
   <p>${escapeHtml(body)}</p>
@@ -1835,15 +1845,58 @@ export async function attributeAbTestConversion({
   return result.count + visitUpdates;
 }
 
-export async function getAbTestStats(testId: string) {
+export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
   const variants = await prisma.abTestVariant.findMany({
     where: { testId },
     orderBy: { sortOrder: "asc" },
-    include: {
-      assignments: true,
-      visits: true,
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      templateName: true,
+      templateSuffix: true,
+      assignments: {
+        select: {
+          sessionId: true,
+          pagePath: true,
+          pageTitle: true,
+          resourceType: true,
+          resourceHandle: true,
+          visitorType: true,
+          source: true,
+          medium: true,
+          sourceCategory: true,
+          timeOnPage: true,
+          scrollDepth: true,
+          addedToCart: true,
+          addedToCartAt: true,
+          checkoutStarted: true,
+          converted: true,
+          convertedAt: true,
+          orderValue: true,
+          ctaClicks: true,
+          assignedAt: true,
+          endedAt: true,
+          updatedAt: true,
+        },
+      },
     },
   });
+  const useVisitEngagementTrend =
+    goal === "CLICK_THROUGH" || goal === "ENGAGEMENT";
+  const engagementTrendVisits = useVisitEngagementTrend
+    ? await prisma.abTestVisit.findMany({
+        where: { testId, visitorType: "REAL" },
+        select: {
+          variantId: true,
+          sessionId: true,
+          ctaClicks: true,
+          scrollDepth: true,
+          startedAt: true,
+          endedAt: true,
+        },
+      })
+    : [];
 
   function average<T>(
     items: T[],
@@ -2044,34 +2097,106 @@ export async function getAbTestStats(testId: string) {
       }));
   }
 
+  const trendAssignments = variants.flatMap((variant) =>
+    variant.assignments.filter(
+      (assignment) => assignment.visitorType === "REAL",
+    ),
+  );
+  const trendStartAt = trendAssignments.reduce<Date | null>(
+    (earliest, assignment) =>
+      !earliest || assignment.assignedAt < earliest
+        ? assignment.assignedAt
+        : earliest,
+    null,
+  );
+  const assignmentTrendEndAt = trendAssignments.reduce<Date | null>(
+    (latest, assignment) => {
+      const candidates = [
+        assignment.assignedAt,
+        assignment.addedToCartAt,
+        assignment.convertedAt,
+        assignment.endedAt,
+        assignment.updatedAt,
+      ].filter((value): value is Date => value instanceof Date);
+      const rowLatest = candidates.sort(
+        (left, right) => right.getTime() - left.getTime(),
+      )[0];
+      return !rowLatest || (latest && latest >= rowLatest) ? latest : rowLatest;
+    },
+    null,
+  );
+  const visitTrendEndAt = engagementTrendVisits.reduce<Date | null>(
+    (latest, visit) => {
+      const visitEnd = visit.endedAt || visit.startedAt;
+      return !latest || visitEnd > latest ? visitEnd : latest;
+    },
+    null,
+  );
+  const trendEndAt =
+    !assignmentTrendEndAt ||
+    (visitTrendEndAt && visitTrendEndAt > assignmentTrendEndAt)
+      ? visitTrendEndAt
+      : assignmentTrendEndAt;
+
+  const applyVisitEngagementTrend = (
+    trend: ReturnType<typeof buildCumulativeAbTestTrend>,
+    variantId: string,
+  ) => {
+    if (!useVisitEngagementTrend) return trend;
+    const variantVisits = engagementTrendVisits
+      .filter((visit) => visit.variantId === variantId)
+      .map((visit) => ({
+        ...visit,
+        engagementAt: visit.endedAt || visit.startedAt,
+      }))
+      .sort(
+        (left, right) =>
+          left.engagementAt.getTime() - right.engagementAt.getTime(),
+      );
+    const ctaSessions = new Set<string>();
+    let visitIndex = 0;
+    let scrollTotal = 0;
+    let scrollSamples = 0;
+
+    return trend.map((point) => {
+      const bucketEnd = new Date(`${point.date}T23:59:59.999Z`);
+      while (
+        visitIndex < variantVisits.length &&
+        variantVisits[visitIndex].engagementAt <= bucketEnd
+      ) {
+        const visit = variantVisits[visitIndex];
+        if (hasTrackedInteraction(visit.ctaClicks)) {
+          ctaSessions.add(visit.sessionId);
+        }
+        const scrollDepth = Number(visit.scrollDepth || 0);
+        if (Number.isFinite(scrollDepth)) {
+          scrollTotal += scrollDepth;
+          scrollSamples += 1;
+        }
+        visitIndex += 1;
+      }
+      const ctaVisitors = ctaSessions.size;
+
+      return {
+        ...point,
+        ctaVisitors,
+        ctaClickRate: point.visitors ? (ctaVisitors / point.visitors) * 100 : 0,
+        avgScrollDepth: scrollSamples ? scrollTotal / scrollSamples : 0,
+      };
+    });
+  };
+
   return variants.map((variant) => {
     const assignments = variant.assignments;
     const assignmentHumans = assignments.filter(
       (assignment) => assignment.visitorType === "REAL",
     );
-    const visitHumans = variant.visits.filter(
-      (visit) => visit.visitorType === "REAL",
-    );
-    const metricRows = visitHumans.length ? visitHumans : assignmentHumans;
-    const landingMetricRows = visitHumans.length
-      ? visitHumans.filter((visit) => visit.isLandingPage)
-      : [];
-    const pageBreakdownRows =
-      landingMetricRows.length || !visitHumans.length
-        ? landingMetricRows.length
-          ? landingMetricRows
-          : assignmentHumans
-        : visitHumans;
-    const sourceBreakdownRows = assignmentHumans.length
-      ? assignmentHumans
-      : pageBreakdownRows;
-    const qualityRows = variant.visits.length ? variant.visits : assignments;
-    const commerceRows = assignmentHumans.length
-      ? assignmentHumans
-      : metricRows;
-    const visitors = assignmentHumans.length
-      ? assignmentHumans.length
-      : new Set(visitHumans.map((visit) => visit.sessionId)).size;
+    const metricRows = assignmentHumans;
+    const pageBreakdownRows = assignmentHumans;
+    const sourceBreakdownRows = assignmentHumans;
+    const qualityRows = assignments;
+    const commerceRows = assignmentHumans;
+    const visitors = assignmentHumans.length;
     const atc = commerceRows.filter((row) => row.addedToCart).length;
     const checkoutStarts = commerceRows.filter(
       (row) => row.checkoutStarted,
@@ -2090,14 +2215,9 @@ export async function getAbTestStats(testId: string) {
         .filter((row) => hasInteractiveClick(row.ctaClicks))
         .map((row) => row.sessionId),
     );
-    const searches = visitHumans.filter((row) =>
-      row.searchQuery?.trim(),
-    ).length;
-    const filterInteractions = visitHumans.reduce(
-      (sum, row) => sum + (row.filterInteractions || 0),
-      0,
-    );
-    const exits = visitHumans.filter((row) => row.exitType?.trim()).length;
+    const searches = 0;
+    const filterInteractions = 0;
+    const exits = 0;
 
     return {
       variantId: variant.id,
@@ -2109,7 +2229,7 @@ export async function getAbTestStats(testId: string) {
       visitors,
       realVisitors: visitors,
       totalPageViews: qualityRows.length,
-      humanPageViews: visitHumans.length || visitors,
+      humanPageViews: visitors,
       zombies: qualityRows.filter((row) => row.visitorType === "ZOMBIE").length,
       bots: qualityRows.filter((row) => row.visitorType === "BOT").length,
       pending: qualityRows.filter((row) => row.visitorType === "PENDING")
@@ -2140,21 +2260,434 @@ export async function getAbTestStats(testId: string) {
         (row) =>
           row.pageTitle || row.pagePath || row.resourceHandle || "Unknown page",
       ),
-      deviceBreakdown: topBreakdown(
-        visitHumans,
-        (row) => row.deviceType || "Unknown device",
-      ),
-      countryBreakdown: topBreakdown(
-        visitHumans,
-        (row) => row.country || row.countryCode || "Unknown country",
-      ),
-      exitBreakdown: topBreakdown(
-        visitHumans.filter((row) => row.exitType),
-        (row) => row.exitType || "Unknown exit",
-        (row) =>
-          row.exitType ? row.exitType.replaceAll("_", " ") : "Unknown exit",
-      ),
+      deviceBreakdown: [],
+      countryBreakdown: [],
+      exitBreakdown: [],
       zoneBreakdown: clickCategoryBreakdown(metricRows),
+      trend: applyVisitEngagementTrend(
+        buildCumulativeAbTestTrend(assignments, {
+          startAt: trendStartAt,
+          endAt: trendEndAt,
+        }),
+        variant.id,
+      ),
     };
   });
+}
+
+function targetVariantVisitWhere(
+  targetPageType: AbTestPageType,
+): Prisma.AbTestVisitWhereInput {
+  if (targetPageType === "CART") {
+    return { pagePath: { startsWith: "/cart" } };
+  }
+
+  const pathPrefix: Partial<Record<AbTestPageType, string>> = {
+    PRODUCT: "/products/",
+    COLLECTION: "/collections/",
+    PAGE: "/pages/",
+    BLOG: "/blogs/",
+  };
+  const resourceType = targetPageType as ResourceType;
+  const fallbackPath = pathPrefix[targetPageType];
+
+  return {
+    OR: [
+      { resourceType },
+      ...(targetPageType === "HOMEPAGE" ? [{ pagePath: "/" }] : []),
+      ...(fallbackPath ? [{ pagePath: { startsWith: fallbackPath } }] : []),
+    ],
+  };
+}
+
+export async function getAbVariantSnapshotStats({
+  shop,
+  testId,
+  variantId,
+  targetPageType,
+}: {
+  shop: string;
+  testId: string;
+  variantId: string;
+  targetPageType: AbTestPageType;
+}) {
+  const variant = await prisma.abTestVariant.findFirst({
+    where: {
+      id: variantId,
+      testId,
+      test: { shop },
+    },
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      templateName: true,
+      templateSuffix: true,
+    },
+  });
+
+  if (!variant) return null;
+
+  const [assignments, visits] = await Promise.all([
+    prisma.abTestAssignment.findMany({
+      where: { shop, testId, variantId },
+      select: {
+        sessionId: true,
+        visitorType: true,
+        sourceCategory: true,
+        source: true,
+        medium: true,
+        addedToCart: true,
+        checkoutStarted: true,
+        converted: true,
+        orderValue: true,
+      },
+    }),
+    prisma.abTestVisit.findMany({
+      where: {
+        shop,
+        testId,
+        variantId,
+        ...targetVariantVisitWhere(targetPageType),
+      },
+      select: {
+        sessionId: true,
+        pagePath: true,
+        pageTitle: true,
+        resourceType: true,
+        resourceHandle: true,
+        visitorType: true,
+        sourceCategory: true,
+        source: true,
+        medium: true,
+        timeOnPage: true,
+        scrollDepth: true,
+        deviceType: true,
+        exitType: true,
+        exitUrl: true,
+        searchQuery: true,
+        filterInteractions: true,
+        ctaClicks: true,
+        country: true,
+        countryCode: true,
+      },
+    }),
+  ]);
+
+  const assignmentHumans = assignments.filter(
+    (assignment) => assignment.visitorType === "REAL",
+  );
+  const visitHumans = visits.filter((visit) => visit.visitorType === "REAL");
+  const commerceRows = assignmentHumans;
+  const behaviorRows = visitHumans;
+  const clickRows = behaviorRows.map((row) => ({
+    ctaClicks: row.ctaClicks,
+    sessionId: row.sessionId,
+  }));
+  const clickEngagement = buildClickEngagement(
+    clickRows,
+    assignmentHumans.length,
+  );
+  const categoryTotal = Object.values(clickEngagement.categoryTotals).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  const categoryOrder = [
+    "Image",
+    "Button",
+    "Link",
+    "Widget",
+    "Header",
+    "Footer",
+  ];
+  const categoryRank = (key: string) => {
+    const index = categoryOrder.indexOf(key);
+    return index === -1 ? categoryOrder.length : index;
+  };
+  const zoneBreakdown = Object.entries(clickEngagement.categoryTotals)
+    .map(([category, count]) => ({
+      key: category,
+      label: category,
+      count,
+      percent: categoryTotal ? (count / categoryTotal) * 100 : 0,
+      items: clickEngagement.ctaByCategory[category] || [],
+    }))
+    .sort(
+      (left, right) =>
+        categoryRank(left.key) - categoryRank(right.key) ||
+        right.count - left.count,
+    );
+
+  function average<T>(
+    items: T[],
+    getValue: (item: T) => number | null | undefined,
+  ) {
+    const values = items
+      .map(getValue)
+      .filter((value): value is number => Number.isFinite(value));
+    return values.length
+      ? values.reduce((sum, value) => sum + value, 0) / values.length
+      : 0;
+  }
+
+  function topBreakdown<T>(
+    items: T[],
+    getKey: (item: T) => string | null | undefined,
+    getLabel?: (item: T) => string | null | undefined,
+  ) {
+    const grouped = new Map<
+      string,
+      { key: string; label: string; count: number }
+    >();
+    for (const item of items) {
+      const key = (getKey(item) || "Unknown").trim() || "Unknown";
+      const label = (getLabel?.(item) || key).trim() || key;
+      const existing = grouped.get(key);
+      if (existing) existing.count += 1;
+      else grouped.set(key, { key, label, count: 1 });
+    }
+    return Array.from(grouped.values())
+      .sort(
+        (left, right) =>
+          right.count - left.count || left.label.localeCompare(right.label),
+      )
+      .slice(0, 8)
+      .map((group) => ({
+        ...group,
+        percent: items.length ? (group.count / items.length) * 100 : 0,
+      }));
+  }
+
+  const canonicalPageKey = (row: {
+    pagePath?: string | null;
+    resourceHandle?: string | null;
+    resourceType?: ResourceType | null;
+  }) => {
+    if (row.resourceHandle && row.resourceType) {
+      return `${row.resourceType}:${row.resourceHandle}`;
+    }
+    return row.pagePath?.split("?")[0]?.split("#")[0] || "Unknown page";
+  };
+  const sourceBreakdown = topBreakdown(
+    assignmentHumans,
+    (row) =>
+      row.sourceCategory || row.source || row.medium || "Direct / unknown",
+  );
+  const pageBreakdown = topBreakdown(
+    visitHumans,
+    canonicalPageKey,
+    (row) =>
+      row.pageTitle || row.pagePath || row.resourceHandle || "Unknown page",
+  );
+  const deviceBreakdown = topBreakdown(
+    visitHumans,
+    (row) => row.deviceType || "Unknown device",
+  );
+  const countryBreakdown = topBreakdown(
+    visitHumans,
+    (row) => row.country || row.countryCode || "Unknown country",
+  );
+  const exitBreakdown = topBreakdown(
+    visitHumans.filter((row) => row.exitType),
+    (row) => row.exitType || "Unknown exit",
+    (row) => row.exitType?.replaceAll("_", " ") || "Unknown exit",
+  );
+  const testedPages = topBreakdown(
+    visits,
+    canonicalPageKey,
+    (row) =>
+      row.pageTitle || row.pagePath || row.resourceHandle || "Unknown page",
+  );
+  const sourceQualityBreakdown = buildSourceQualityBreakdown(assignments);
+  const sourceKeyFor = (row: {
+    sourceCategory?: string | null;
+    source?: string | null;
+    medium?: string | null;
+  }) =>
+    (row.sourceCategory || row.source || row.medium || "Direct / unknown")
+      .trim()
+      .toLowerCase() || "direct / unknown";
+  const assignmentSourceBySession = new Map(
+    assignments.map((row) => [row.sessionId, sourceKeyFor(row)]),
+  );
+  const sourceVisitEngagement = new Map<
+    string,
+    { timeOnPage: number; scrollDepth: number; visits: number }
+  >();
+  for (const row of visitHumans) {
+    const sourceKey =
+      assignmentSourceBySession.get(row.sessionId) || sourceKeyFor(row);
+    const current = sourceVisitEngagement.get(sourceKey) || {
+      timeOnPage: 0,
+      scrollDepth: 0,
+      visits: 0,
+    };
+    current.timeOnPage += Number(row.timeOnPage || 0);
+    current.scrollDepth += Number(row.scrollDepth || 0);
+    current.visits += 1;
+    sourceVisitEngagement.set(sourceKey, current);
+  }
+  const sourceQualityWithVisitEngagement = sourceQualityBreakdown.map((row) => {
+    const engagement = sourceVisitEngagement.get(row.key);
+    if (!engagement?.visits) {
+      return { ...row, avgTimeOnPage: 0, avgScrollDepth: 0 };
+    }
+    return {
+      ...row,
+      avgTimeOnPage: engagement.timeOnPage / engagement.visits,
+      avgScrollDepth: engagement.scrollDepth / engagement.visits,
+    };
+  });
+  type VariantTrackedClick = {
+    label?: string;
+    tag?: string;
+    href?: string | null;
+    zone?: string;
+  };
+  const parseVariantTrackedClicks = (
+    raw: string | null,
+  ): VariantTrackedClick[] => {
+    if (!raw) return [] as VariantTrackedClick[];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as VariantTrackedClick[];
+      if (parsed && typeof parsed === "object") {
+        return Object.entries(parsed).flatMap(([label, count]) => {
+          const clickCount = Number(count);
+          if (!Number.isFinite(clickCount) || clickCount <= 0) return [];
+          return Array.from(
+            { length: Math.floor(clickCount) },
+            (): VariantTrackedClick => ({
+              label,
+              tag: "button",
+              zone: "main",
+            }),
+          );
+        });
+      }
+    } catch {}
+    return [] as VariantTrackedClick[];
+  };
+  const bodyCtaSessions = new Set<string>();
+  const productClickSessions = new Set<string>();
+  const anyLinkOrButtonClickSessions = new Set<string>();
+  const scroll50Sessions = new Set<string>();
+  const scroll100Sessions = new Set<string>();
+  let linkClickCount = 0;
+  let bodyCtaClickCount = 0;
+  let productClickCount = 0;
+  let anyLinkOrButtonClickCount = 0;
+
+  for (const row of visitHumans) {
+    const clicks = parseVariantTrackedClicks(row.ctaClicks);
+    const linkClicks = clicks.filter(
+      (click) => (click.tag || "").toLowerCase() === "a" && Boolean(click.href),
+    );
+    const bodyCtaClicks = clicks.filter((click) => {
+      const tag = (click.tag || "").toLowerCase();
+      return (
+        (click.zone || "main").toLowerCase() === "main" &&
+        (tag === "button" || tag === "input")
+      );
+    });
+    const linkOrButtonClicks = clicks.filter((click) => {
+      const tag = (click.tag || "").toLowerCase();
+      return tag === "a" || tag === "button" || tag === "input";
+    });
+    const trackedProductClicks = linkClicks.filter((click) =>
+      /(?:^|\/)products\/[^/?#]+/i.test(click.href || ""),
+    ).length;
+    const hasProductExit = /(?:^|\/)products\/[^/?#]+/i.test(row.exitUrl || "");
+    const rowProductClicks = trackedProductClicks || (hasProductExit ? 1 : 0);
+
+    linkClickCount += linkClicks.length;
+    bodyCtaClickCount += bodyCtaClicks.length;
+    productClickCount += rowProductClicks;
+    anyLinkOrButtonClickCount += linkOrButtonClicks.length;
+    if (bodyCtaClicks.length) bodyCtaSessions.add(row.sessionId);
+    if (rowProductClicks) productClickSessions.add(row.sessionId);
+    if (linkOrButtonClicks.length) {
+      anyLinkOrButtonClickSessions.add(row.sessionId);
+    }
+    if (row.scrollDepth >= 50) scroll50Sessions.add(row.sessionId);
+    if (row.scrollDepth >= 100) scroll100Sessions.add(row.sessionId);
+  }
+  const targetRealSessions = new Set(visitHumans.map((row) => row.sessionId))
+    .size;
+  const sessionRate = (count: number) =>
+    targetRealSessions ? (count / targetRealSessions) * 100 : 0;
+  const visitors = assignmentHumans.length;
+  const addToCarts = commerceRows.filter((row) => row.addedToCart).length;
+  const checkoutStarts = commerceRows.filter(
+    (row) => row.checkoutStarted,
+  ).length;
+  const conversions = commerceRows.filter((row) => row.converted).length;
+  const revenue = commerceRows.reduce(
+    (sum, row) => sum + Number(row.orderValue || 0),
+    0,
+  );
+  const ctaVisitorSessions = new Set(
+    behaviorRows
+      .filter((row) => hasTrackedInteraction(row.ctaClicks))
+      .map((row) => row.sessionId),
+  );
+
+  return {
+    variantId: variant.id,
+    key: variant.key,
+    name: variant.name,
+    templateName: variant.templateName,
+    templateSuffix: variant.templateSuffix,
+    assignedVisitors: assignments.length,
+    visitors,
+    realVisitors: visitors,
+    totalPageViews: visits.length,
+    humanPageViews: visitHumans.length,
+    zombies: assignments.filter((row) => row.visitorType === "ZOMBIE").length,
+    bots: assignments.filter((row) => row.visitorType === "BOT").length,
+    pending: assignments.filter((row) => row.visitorType === "PENDING").length,
+    addToCarts,
+    addToCartRate: visitors ? (addToCarts / visitors) * 100 : 0,
+    checkoutStarts,
+    conversionRate: visitors ? (conversions / visitors) * 100 : 0,
+    conversions,
+    orders: conversions,
+    revenue,
+    revenuePerVisitor: visitors ? revenue / visitors : 0,
+    avgTimeOnPage: average(behaviorRows, (row) => row.timeOnPage),
+    avgScrollDepth: average(behaviorRows, (row) => row.scrollDepth),
+    ctaClicks: categoryTotal,
+    ctaClickRate: visitors ? (ctaVisitorSessions.size / visitors) * 100 : 0,
+    searches: visitHumans.filter((row) => row.searchQuery?.trim()).length,
+    filterInteractions: visitHumans.reduce(
+      (sum, row) => sum + (row.filterInteractions || 0),
+      0,
+    ),
+    linkClickCount,
+    bodyCtaClickCount,
+    bodyCtaSessionCount: bodyCtaSessions.size,
+    bodyCtaCtrRate: sessionRate(bodyCtaSessions.size),
+    productClickCount,
+    productClickSessionCount: productClickSessions.size,
+    productCtrRate: sessionRate(productClickSessions.size),
+    scroll50Count: scroll50Sessions.size,
+    scroll50Rate: sessionRate(scroll50Sessions.size),
+    scroll100Count: scroll100Sessions.size,
+    scroll100Rate: sessionRate(scroll100Sessions.size),
+    anyLinkOrButtonClickCount,
+    anyLinkOrButtonClickSessionCount: anyLinkOrButtonClickSessions.size,
+    anyClickCtrRate: sessionRate(anyLinkOrButtonClickSessions.size),
+    exits: visitHumans.filter((row) => row.exitType?.trim()).length,
+    sourceBreakdown,
+    pageBreakdown,
+    deviceBreakdown,
+    countryBreakdown,
+    exitBreakdown,
+    zoneBreakdown,
+    imageEngagement: clickEngagement.imageEngagement,
+    engagementOutcomes: buildEngagementOutcomes(clickRows, assignmentHumans),
+    sourceQualityBreakdown: sourceQualityWithVisitEngagement,
+    testedPages,
+    scopePageCount: new Set(visits.map(canonicalPageKey)).size,
+  };
 }

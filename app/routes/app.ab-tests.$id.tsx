@@ -21,8 +21,13 @@ import {
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { AbTestDetailReport } from "../components/AbTestDetailReport";
+import {
+  AbTestDetailReport,
+  type AbTestReportStatsRow,
+} from "../components/AbTestDetailReport";
 import { getAbTestStats } from "../utils/ab-tests.server";
+import { clearAbTestActivityCache } from "../utils/ab-test-activity.server";
+import { cachedValue } from "../utils/loader-cache.server";
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   PRODUCT: "Product",
@@ -57,7 +62,7 @@ function formatDuration(milliseconds: number) {
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
-type AbTestStatsRow = Awaited<ReturnType<typeof getAbTestStats>>[number];
+type AbTestStatsRow = AbTestReportStatsRow;
 
 function MetricTile({
   label,
@@ -109,7 +114,7 @@ function BreakdownList({
   }
 
   return (
-    <BlockStack gap="250">
+    <BlockStack gap="200">
       {items.map((item) => (
         <div key={item.key}>
           <InlineStack align="space-between" blockAlign="center" gap="300">
@@ -216,7 +221,7 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
         <InlineStack align="space-between" blockAlign="start" gap="300">
           <BlockStack gap="100">
             <Badge tone={row.key === "A" ? "info" : "warning"}>
-              {row.key} · {row.name}
+              {`${row.key} · ${row.name}`}
             </Badge>
             <Text as="h3" variant="headingLg">
               {row.templateName}
@@ -271,7 +276,7 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
             }}
           >
             <section>
-              <BlockStack gap="250">
+              <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
                   Top traffic sources
                 </Text>
@@ -282,7 +287,7 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
               </BlockStack>
             </section>
             <section>
-              <BlockStack gap="250">
+              <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
                   Top pages
                 </Text>
@@ -316,7 +321,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Not found", { status: 404 });
   }
 
-  const stats = await getAbTestStats(test.id);
+  const stats = await cachedValue(
+    `ab-test-report:${shop}:${test.id}`,
+    10_000,
+    () => getAbTestStats(test.id, test.goal),
+  );
 
   return json({
     test: {
@@ -360,6 +369,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "LIVE", launchedAt: new Date(), pausedAt: null },
     });
+    clearAbTestActivityCache(shop);
     return redirect(`/app/ab-tests/${test.id}`);
   }
 
@@ -368,6 +378,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "PAUSED", pausedAt: new Date() },
     });
+    clearAbTestActivityCache(shop);
     return redirect(`/app/ab-tests/${test.id}`);
   }
 
@@ -376,11 +387,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       where: { id: test.id },
       data: { status: "ENDED", endedAt: new Date() },
     });
+    clearAbTestActivityCache(shop);
     return redirect(`/app/ab-tests/${test.id}`);
   }
 
   if (actionType === "delete-test") {
     await prisma.abTest.delete({ where: { id: test.id } });
+    clearAbTestActivityCache(shop);
     return redirect("/app/ab-tests");
   }
 
@@ -389,6 +402,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function AbTestDetail() {
   const { test, stats } = useLoaderData<typeof loader>();
+  // Remix's JSON type maps server-inferred empty arrays to null[] even though
+  // the runtime payload remains the report row shape.
+  const reportStats = stats as unknown as AbTestReportStatsRow[];
   const navigation = useNavigation();
   const submit = useSubmit();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -662,7 +678,7 @@ export default function AbTestDetail() {
         open={detailsOpen}
         onClose={() => setDetailsOpen(false)}
         test={test}
-        stats={stats}
+        stats={reportStats}
       />
       <AppBridgeModal
         id="ab-test-detail-report"
@@ -974,7 +990,7 @@ export default function AbTestDetail() {
                   gap: 20,
                 }}
               >
-                {stats.map((row) => (
+                {reportStats.map((row) => (
                   <VariantDetailCard key={row.variantId} row={row} />
                 ))}
               </div>

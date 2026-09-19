@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
@@ -15,6 +15,8 @@ import {
   Card,
   InlineStack,
   Page,
+  SkeletonBodyText,
+  SkeletonDisplayText,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -41,10 +43,14 @@ import {
 } from "../utils/loader-cache.server";
 import { planUsagePillLabel, PremiumGateCard } from "../components/PremiumGate";
 import { ResourceActivityChart } from "../components/ResourceActivityChart";
-import { getDashboardAbTestActivity } from "../utils/dashboard-activity.server";
+import type { DashboardActivityCard } from "../utils/dashboard-activity.server";
+import {
+  clearAbTestActivityCache,
+  getCachedAbTestActivity,
+} from "../utils/ab-test-activity.server";
 import {
   assertCanCreateAbTest,
-  getBillingAccess,
+  getBillingDisplayAccess,
   isPlanLimitError,
   planLimitPayload,
 } from "../utils/billing.server";
@@ -120,6 +126,7 @@ type AbTestRow = {
     templateSuffix: string | null;
     templateFileName: string | null;
     isControl: boolean;
+    trafficPercent: number;
   }>;
 };
 
@@ -133,6 +140,12 @@ type AbTestListVariantStats = {
 type AbTestReportData = {
   testId: string;
   stats: AbTestReportStatsRow[];
+};
+
+type AbTestActivityData = {
+  shop: string;
+  activityCard?: DashboardActivityCard;
+  error?: string;
 };
 
 type AbTestDashboardItem = {
@@ -432,9 +445,7 @@ function numericThemeId(themeId?: string | null) {
 
 function themeEditorTemplateParam(filename?: string | null) {
   if (!filename) return "";
-  return filename
-    .replace(/^templates\//, "")
-    .replace(/\.(json|liquid)$/i, "");
+  return filename.replace(/^templates\//, "").replace(/\.(json|liquid)$/i, "");
 }
 
 function buildThemeEditorUrl(
@@ -1339,7 +1350,7 @@ function DashboardTestCard({
                 {PAGE_TYPE_LABELS[test.targetPageType] || test.targetPageType}
               </Badge>
               <Badge tone="info">{goalLabel(test.goal)}</Badge>
-              <Badge>{variantTrafficLabel(test)} split</Badge>
+              <Badge>{`${variantTrafficLabel(test)} split`}</Badge>
             </InlineStack>
             <Text as="h3" variant="headingMd">
               {test.name}
@@ -1795,8 +1806,10 @@ function TemplateListOption({
       template.assignedCount !== undefined ? (
         <span style={{ flex: "0 0 auto" }}>
           <Badge tone="info">
-            {template.assignedCount.toLocaleString()}{" "}
-            {pageTargetNoun(template.pageType, template.assignedCount)}
+            {`${template.assignedCount.toLocaleString()} ${pageTargetNoun(
+              template.pageType,
+              template.assignedCount,
+            )}`}
           </Badge>
         </span>
       ) : null}
@@ -1832,7 +1845,7 @@ function SnapshotListOption({
         cursor: "pointer",
       }}
     >
-      <BlockStack gap="250">
+      <BlockStack gap="200">
         <InlineStack align="space-between" gap="300" blockAlign="start">
           <BlockStack gap="050">
             <Text as="span" variant="headingMd">
@@ -1909,7 +1922,7 @@ function ManualTemplateFields({
       >
         Advanced manual {side} template
       </summary>
-      <BlockStack gap="250">
+      <BlockStack gap="200">
         <TextField
           label="Template name"
           value={templateName}
@@ -1932,24 +1945,50 @@ function ManualTemplateFields({
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const context = await authenticate.admin(request);
+  const shop = context.session.shop;
+
+  if (new URL(request.url).searchParams.get("_activity") === "1") {
+    try {
+      const activityCard = await getCachedAbTestActivity(shop);
+      return json<AbTestActivityData>({ shop, activityCard });
+    } catch (error) {
+      console.error("[MW Perf] A/B activity failed", { shop, error });
+      return json<AbTestActivityData>(
+        {
+          shop,
+          error:
+            "The performance graph could not load. Your A/B test list is still available.",
+        },
+        { status: 503 },
+      );
+    }
+  }
+
+  return getAbTestsIndexData(context);
+};
+
+async function getAbTestsIndexData({
+  session,
+  admin,
+}: Awaited<ReturnType<typeof authenticate.admin>>) {
   const shop = session.shop;
 
-  const [tests, themeTemplates, completedSnapshots, billingAccess, activityCard] =
+  const [tests, themeTemplates, completedSnapshots, billingAccess] =
     await Promise.all([
-    prisma.abTest.findMany({
-      where: { shop },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        variants: {
-          orderBy: { sortOrder: "asc" },
+      prisma.abTest.findMany({
+        where: { shop },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          variants: {
+            orderBy: { sortOrder: "asc" },
+          },
         },
-      },
-    }),
-    cachedValue(loaderCacheKeys.abTestTemplates(shop), 60_000, () =>
-      getThemeTemplateOptions(admin),
-    ),
+      }),
+      cachedValue(loaderCacheKeys.abTestTemplates(shop), 60_000, () =>
+        getThemeTemplateOptions(admin),
+      ),
       prisma.snapshot.findMany({
         where: {
           status: "COMPLETED",
@@ -1963,8 +2002,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           _count: { select: { visits: true } },
         },
       }),
-      getBillingAccess(shop),
-      getDashboardAbTestActivity(shop),
+      getBillingDisplayAccess(shop),
     ]);
   const assignmentGroups = tests.length
     ? await prisma.abTestAssignment.groupBy({
@@ -2003,7 +2041,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     shop,
-    activityCard,
     billingAccess,
     themeTemplates,
     rowStatsByVariant,
@@ -2048,7 +2085,92 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       })),
     })),
   });
-};
+}
+
+function AbTestActivityPanel({ shop }: { shop: string }) {
+  const fetcher = useFetcher<AbTestActivityData>();
+  const loadRef = useRef(fetcher.load);
+  const data = fetcher.data?.shop === shop ? fetcher.data : null;
+
+  useEffect(() => {
+    loadRef.current = fetcher.load;
+  }, [fetcher.load]);
+
+  useEffect(() => {
+    // Let the list and controls paint before querying the graph's visit history.
+    const timer = window.setTimeout(() => {
+      loadRef.current("/app/ab-tests?_activity=1");
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [shop]);
+
+  if (data?.activityCard) {
+    return <ResourceActivityChart card={data.activityCard} />;
+  }
+
+  if (data?.error) {
+    return (
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingMd">
+            Performance graph unavailable
+          </Text>
+          <Text as="p" tone="subdued">
+            {data.error}
+          </Text>
+          <div>
+            <Button
+              onClick={() => loadRef.current("/app/ab-tests?_activity=1")}
+              loading={fetcher.state !== "idle"}
+            >
+              Retry graph
+            </Button>
+          </div>
+        </BlockStack>
+      </Card>
+    );
+  }
+
+  return (
+    <div role="status" aria-label="Loading A/B test performance">
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingLg" fontWeight="semibold">
+            A/B test performance
+          </Text>
+          <div aria-hidden="true">
+            <SkeletonBodyText lines={1} />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 24,
+                padding: "16px 0",
+                margin: "12px 0",
+                borderTop: "1px solid var(--p-color-border-subdued)",
+                borderBottom: "1px solid var(--p-color-border-subdued)",
+              }}
+            >
+              {[0, 1, 2].map((column) => (
+                <div key={column} style={{ minWidth: 0 }}>
+                  <SkeletonDisplayText size="small" />
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                height: 120,
+                borderRadius: 4,
+                background:
+                  "repeating-linear-gradient(to top, var(--p-color-border-subdued) 0 1px, transparent 1px 40px)",
+              }}
+            />
+          </div>
+        </BlockStack>
+      </Card>
+    </div>
+  );
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -2096,7 +2218,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               transformation: template.transformation,
               summary:
                 template.transformation.status === "applied"
-                  ? `${snapshotPlan.summary} Mouse Whisperer inserted section ${template.transformation.insertedSectionId} into ${template.filename}.`
+                  ? `${snapshotPlan.summary} Snapshot inserted section ${template.transformation.insertedSectionId} into ${template.filename}.`
                   : snapshotPlan.summary,
             }
           : snapshotPlan;
@@ -2190,10 +2312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         variantTemplateSuffix = duplicateTemplate.templateSuffix || null;
         variantTemplateFileName = duplicateTemplate.filename || null;
       } catch (error) {
-        return json(
-          { error: themeWriteErrorMessage(error) },
-          { status: 400 },
-        );
+        return json({ error: themeWriteErrorMessage(error) }, { status: 400 });
       }
     }
     const snapshotPlanRaw =
@@ -2240,13 +2359,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         String(formData.get("controlTemplateName") || "Default"),
       controlTemplateSuffix,
       controlTemplateFileName,
-      variantTemplateName:
-        variantTemplateName,
+      variantTemplateName: variantTemplateName,
       variantTemplateSuffix,
       variantTemplateFileName,
     });
 
     clearCacheKey(loaderCacheKeys.dashboard(shop));
+    clearAbTestActivityCache(shop);
+    clearCacheKey(loaderCacheKeys.billingDisplay(shop));
     return redirect(`/app/ab-tests/${test.id}`);
   }
 
@@ -2271,6 +2391,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       data: { status: "LIVE", launchedAt: new Date(), pausedAt: null },
     });
     clearCacheKey(loaderCacheKeys.dashboard(shop));
+    clearAbTestActivityCache(shop);
     return redirect("/app/ab-tests");
   }
 
@@ -2280,6 +2401,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       data: { status: "PAUSED", pausedAt: new Date() },
     });
     clearCacheKey(loaderCacheKeys.dashboard(shop));
+    clearAbTestActivityCache(shop);
     return redirect("/app/ab-tests");
   }
 
@@ -2289,12 +2411,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       data: { status: "ENDED", endedAt: new Date() },
     });
     clearCacheKey(loaderCacheKeys.dashboard(shop));
+    clearAbTestActivityCache(shop);
     return redirect("/app/ab-tests");
   }
 
   if (actionType === "delete-test") {
     await prisma.abTest.delete({ where: { id: test.id } });
     clearCacheKey(loaderCacheKeys.dashboard(shop));
+    clearAbTestActivityCache(shop);
+    clearCacheKey(loaderCacheKeys.billingDisplay(shop));
     return redirect("/app/ab-tests");
   }
 
@@ -2310,8 +2435,7 @@ export default function AbTestsIndex() {
     rowStatsByVariant,
     completedSnapshots,
     billingAccess,
-    activityCard,
-  } = useLoaderData<typeof loader>();
+  } = useLoaderData<typeof getAbTestsIndexData>();
   const navigation = useNavigation();
   const submit = useSubmit();
   const variantCreateFetcher = useFetcher<VariantCreateActionData>();
@@ -2418,7 +2542,9 @@ export default function AbTestsIndex() {
     : rawSameTemplateSelected;
   const canSave =
     Boolean(controlOption || controlTemplateName.trim()) &&
-    Boolean(variantOption || variantTemplateName.trim() || hasPendingDuplicate) &&
+    Boolean(
+      variantOption || variantTemplateName.trim() || hasPendingDuplicate,
+    ) &&
     !sameTemplateSelected;
   const canContinueToSettings = canSave;
   const dashboardItems = useMemo(() => {
@@ -2501,13 +2627,14 @@ export default function AbTestsIndex() {
 
   useEffect(() => {
     if (!loadingReportTestId || reportFetcher.state !== "idle") return;
-    if (reportFetcher.data?.testId !== loadingReportTestId) {
+    const reportData = reportFetcher.data;
+    if (!reportData || reportData.testId !== loadingReportTestId) {
       setLoadingReportTestId(null);
       return;
     }
     setReportStatsByTestId((current) => ({
       ...current,
-      [loadingReportTestId]: reportFetcher.data.stats,
+      [loadingReportTestId]: reportData.stats,
     }));
     setLoadingReportTestId(null);
   }, [loadingReportTestId, reportFetcher.data, reportFetcher.state]);
@@ -2553,7 +2680,6 @@ export default function AbTestsIndex() {
 
   function openTestDetails(testId: string) {
     setDetailTestId(testId);
-    if (reportStatsByTestId[testId]) return;
     setLoadingReportTestId(testId);
     reportFetcher.load(`/app/ab-tests/${testId}/report`);
   }
@@ -2730,7 +2856,9 @@ export default function AbTestsIndex() {
       title="A/B tests"
       subtitle="Test Shopify templates against each other and measure the winning storefront experience."
       primaryAction={{
-        content: billingAccess.canCreateAbTest ? "Create a test" : "Upgrade to create A/B test",
+        content: billingAccess.canCreateAbTest
+          ? "Create a test"
+          : "Upgrade to create A/B test",
         ...(billingAccess.canCreateAbTest
           ? { onAction: openCreateWizard }
           : { url: "/app/upgrade" }),
@@ -2738,7 +2866,7 @@ export default function AbTestsIndex() {
     >
       <TitleBar title="A/B tests" />
       <BlockStack gap="500">
-        <ResourceActivityChart card={activityCard} />
+        <AbTestActivityPanel shop={shop} />
         {themeTemplates.needsThemeScope ? (
           <Banner
             tone="warning"
@@ -3342,124 +3470,115 @@ export default function AbTestsIndex() {
                         )}
 
                         {snapshotPlan ? (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              border:
+                                "1px solid var(--p-color-border-secondary)",
+                              borderRadius: 10,
+                              padding: 12,
+                              background: "#fffaf0",
+                            }}
+                          >
+                            <BlockStack gap="200">
+                              <InlineStack
+                                align="space-between"
+                                blockAlign="center"
+                                gap="200"
+                                wrap
+                              >
+                                <Text as="span" fontWeight="semibold">
+                                  {snapshotPlan.title}
+                                </Text>
+                                {snapshotPlan.confidence !== null ? (
+                                  <Badge tone="info">
+                                    {`${snapshotPlan.confidence}% confidence`}
+                                  </Badge>
+                                ) : (
+                                  <Badge>Snapshot plan</Badge>
+                                )}
+                              </InlineStack>
+                              <Text as="p" tone="subdued">
+                                {snapshotPlan.summary}
+                              </Text>
+                              <Text as="span" tone="subdued">
+                                Source: {snapshotPlan.sourceLabel}
+                              </Text>
+                              {snapshotPlan.transformation ? (
                                 <div
                                   style={{
-                                    marginTop: 10,
                                     border:
                                       "1px solid var(--p-color-border-secondary)",
-                                    borderRadius: 10,
-                                    padding: 12,
-                                    background: "#fffaf0",
+                                    borderRadius: 8,
+                                    padding: 10,
+                                    background: "#ffffff",
                                   }}
                                 >
-                                  <BlockStack gap="200">
-                                    <InlineStack
-                                      align="space-between"
-                                      blockAlign="center"
-                                      gap="200"
-                                      wrap
-                                    >
-                                      <Text as="span" fontWeight="semibold">
-                                        {snapshotPlan.title}
-                                      </Text>
-                                      {snapshotPlan.confidence !== null ? (
-                                        <Badge tone="info">
-                                          {snapshotPlan.confidence}% confidence
-                                        </Badge>
-                                      ) : (
-                                        <Badge>Snapshot plan</Badge>
-                                      )}
-                                    </InlineStack>
-                                    <Text as="p" tone="subdued">
-                                      {snapshotPlan.summary}
+                                  <BlockStack gap="100">
+                                    <Text as="span" fontWeight="semibold">
+                                      Applied change:{" "}
+                                      {
+                                        snapshotPlan.transformation
+                                          .primaryWeakness
+                                      }
                                     </Text>
                                     <Text as="span" tone="subdued">
-                                      Source: {snapshotPlan.sourceLabel}
+                                      Evidence:{" "}
+                                      {snapshotPlan.transformation.evidence}
                                     </Text>
-                                    {snapshotPlan.transformation ? (
-                                      <div
-                                        style={{
-                                          border:
-                                            "1px solid var(--p-color-border-secondary)",
-                                          borderRadius: 8,
-                                          padding: 10,
-                                          background: "#ffffff",
-                                        }}
-                                      >
-                                        <BlockStack gap="100">
-                                          <Text as="span" fontWeight="semibold">
-                                            Applied change:{" "}
-                                            {
-                                              snapshotPlan.transformation
-                                                .primaryWeakness
-                                            }
-                                          </Text>
-                                          <Text as="span" tone="subdued">
-                                            Evidence:{" "}
-                                            {
-                                              snapshotPlan.transformation
-                                                .evidence
-                                            }
-                                          </Text>
-                                          {snapshotPlan.transformation
-                                            .insertedSectionId ? (
-                                            <Text as="span" tone="subdued">
-                                              Inserted section:{" "}
-                                              {
-                                                snapshotPlan.transformation
-                                                  .insertedSectionId
-                                              }{" "}
-                                              (
-                                              {
-                                                snapshotPlan.transformation
-                                                  .sectionType
-                                              }
-                                              )
-                                            </Text>
-                                          ) : null}
-                                          {snapshotPlan.transformation.notes
-                                            ?.length ? (
-                                            <Text as="span" tone="subdued">
-                                              {
-                                                snapshotPlan.transformation
-                                                  .notes[0]
-                                              }
-                                            </Text>
-                                          ) : null}
-                                        </BlockStack>
-                                      </div>
+                                    {snapshotPlan.transformation
+                                      .insertedSectionId ? (
+                                      <Text as="span" tone="subdued">
+                                        Inserted section:{" "}
+                                        {
+                                          snapshotPlan.transformation
+                                            .insertedSectionId
+                                        }{" "}
+                                        (
+                                        {
+                                          snapshotPlan.transformation
+                                            .sectionType
+                                        }
+                                        )
+                                      </Text>
                                     ) : null}
-                                    <div
-                                      style={{
-                                        display: "grid",
-                                        gap: 8,
-                                      }}
-                                    >
-                                      {snapshotPlan.focusAreas.map((area) => (
-                                        <div
-                                          key={area.label}
-                                          style={{
-                                            borderTop:
-                                              "1px solid var(--p-color-border-secondary)",
-                                            paddingTop: 8,
-                                          }}
-                                        >
-                                          <BlockStack gap="050">
-                                            <Text
-                                              as="span"
-                                              fontWeight="semibold"
-                                            >
-                                              {area.label}
-                                            </Text>
-                                            <Text as="span" tone="subdued">
-                                              {area.detail}
-                                            </Text>
-                                          </BlockStack>
-                                        </div>
-                                      ))}
-                                    </div>
+                                    {snapshotPlan.transformation.notes
+                                      ?.length ? (
+                                      <Text as="span" tone="subdued">
+                                        {snapshotPlan.transformation.notes[0]}
+                                      </Text>
+                                    ) : null}
                                   </BlockStack>
                                 </div>
+                              ) : null}
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gap: 8,
+                                }}
+                              >
+                                {snapshotPlan.focusAreas.map((area) => (
+                                  <div
+                                    key={area.label}
+                                    style={{
+                                      borderTop:
+                                        "1px solid var(--p-color-border-secondary)",
+                                      paddingTop: 8,
+                                    }}
+                                  >
+                                    <BlockStack gap="050">
+                                      <Text as="span" fontWeight="semibold">
+                                        {area.label}
+                                      </Text>
+                                      <Text as="span" tone="subdued">
+                                        {area.detail}
+                                      </Text>
+                                    </BlockStack>
+                                  </div>
+                                ))}
+                              </div>
+                            </BlockStack>
+                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -3483,7 +3602,9 @@ export default function AbTestsIndex() {
                         <>
                           Select an <strong>A</strong> template to continue.
                         </>
-                      ) : !variantOption && !variantTemplateName.trim() && !hasPendingDuplicate ? (
+                      ) : !variantOption &&
+                        !variantTemplateName.trim() &&
+                        !hasPendingDuplicate ? (
                         <>
                           <strong>A:</strong> {controlName} · choose how to
                           build <strong>B</strong>.
@@ -3532,7 +3653,8 @@ export default function AbTestsIndex() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "minmax(420px, 1fr) minmax(360px, 0.88fr)",
+                      gridTemplateColumns:
+                        "minmax(420px, 1fr) minmax(360px, 0.88fr)",
                       gap: 20,
                       alignItems: "start",
                     }}
@@ -3574,7 +3696,10 @@ export default function AbTestsIndex() {
                             hasPendingDuplicate
                               ? "Duplicate will be created when you save this draft."
                               : selectedVariant?.templateFileName ||
-                                buildManualFilename(targetPageType, variantSuffix)
+                                buildManualFilename(
+                                  targetPageType,
+                                  variantSuffix,
+                                )
                           }
                           suffix={hasPendingDuplicate ? null : variantSuffix}
                           previewImageUrl={
@@ -3627,8 +3752,7 @@ export default function AbTestsIndex() {
                               border: "1px solid var(--p-color-border)",
                               borderRadius: 8,
                               padding: "14px 16px",
-                              background:
-                                "var(--p-color-bg-surface-secondary)",
+                              background: "var(--p-color-bg-surface-secondary)",
                             }}
                           >
                             <Text as="p">
@@ -3644,8 +3768,8 @@ export default function AbTestsIndex() {
                                     {controlAssignedCount.toLocaleString()}{" "}
                                     {targetingNoun}
                                   </span>{" "}
-                                  assigned to your{" "}
-                                  <strong>Original (A)</strong> template.
+                                  assigned to your <strong>Original (A)</strong>{" "}
+                                  template.
                                 </>
                               ) : (
                                 <>{targetingSummary}</>

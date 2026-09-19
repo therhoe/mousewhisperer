@@ -12,7 +12,10 @@ export type StorefrontTrackerStatus = {
 const STATUS_TTL_MS = 5 * 60_000;
 const NEGATIVE_STATUS_TTL_MS = 30_000;
 const FETCH_TIMEOUT_MS = 3_500;
-const statusCache = new Map<string, { expiresAt: number; value: StorefrontTrackerStatus }>();
+const statusCache = new Map<
+  string,
+  { expiresAt: number; value: StorefrontTrackerStatus }
+>();
 
 const STOREFRONT_HEADERS = {
   "User-Agent":
@@ -38,7 +41,9 @@ export async function getStorefrontTrackerStatus(
   const checkedAt = new Date().toISOString();
 
   try {
-    const checks = await Promise.all(storefrontUrls.map((url) => fetchTrackerStatus(url)));
+    const checks = await Promise.all(
+      storefrontUrls.map((url) => fetchTrackerStatus(url)),
+    );
     const activeCheck = checks.find((check) => check.status === "active");
     if (activeCheck) {
       return cacheStatus(shop, {
@@ -49,13 +54,23 @@ export async function getStorefrontTrackerStatus(
       });
     }
 
-    const checkedPage = checks.find((check) => check.responseOk);
+    const checkedPage = checks.find((check) => check.status === "missing");
     if (checkedPage) {
       return cacheStatus(shop, {
         status: "missing",
         storefrontUrl: checkedPage.storefrontUrl,
         checkedAt,
         message: "Rich storefront tracking is not detected on the live theme.",
+      });
+    }
+
+    if (checks.some((check) => check.responseOk)) {
+      return cacheStatus(shop, {
+        status: "unknown",
+        storefrontUrl,
+        checkedAt,
+        message:
+          "Could not verify tracking because the storefront returned a password, challenge, or non-storefront page.",
       });
     }
 
@@ -102,10 +117,32 @@ async function fetchTrackerStatus(storefrontUrl: string) {
     }
 
     const html = await response.text();
+    const finalPath = new URL(response.url || storefrontUrl).pathname;
+    const contentType = response.headers.get("content-type") || "";
+    const blockedPage =
+      /\/(?:password|challenge|checkpoint)(?:\/|$)/i.test(finalPath) ||
+      /id=["'](?:login_form|storefront_password)["']|name=["']password["']|class=["'][^"']*password-page|\/cdn-cgi\/challenge-platform|id=["']challenge-form["']/i.test(
+        html,
+      );
+    const storefrontPage =
+      /(?:text\/html|application\/xhtml\+xml)/i.test(contentType) &&
+      /Shopify\.shop\s*=|id=["']shopify-section-|class=["'][^"']*shopify-section/i.test(
+        html,
+      );
+    if (blockedPage || !storefrontPage) {
+      return {
+        status: "unknown" as const,
+        storefrontUrl: response.url || storefrontUrl,
+        responseOk: true,
+        statusCode: response.status,
+      };
+    }
     const hasTracker =
       html.includes("__TRACKING_API_ENDPOINT__") ||
       html.includes("/apps/api") ||
       html.includes("tracker.js") ||
+      html.includes("Snapshot Tracker") ||
+      // Keep detecting older published embeds during the branding rollout.
       html.includes("Mouse Whisperer Tracker");
 
     return {
@@ -151,7 +188,8 @@ async function getStorefrontUrls(admin: ShopifyAdminClient, shop: string) {
 }
 
 function cacheStatus(shop: string, value: StorefrontTrackerStatus) {
-  const ttl = value.status === "active" ? STATUS_TTL_MS : NEGATIVE_STATUS_TTL_MS;
+  const ttl =
+    value.status === "active" ? STATUS_TTL_MS : NEGATIVE_STATUS_TTL_MS;
   statusCache.set(shop, { value, expiresAt: Date.now() + ttl });
   return value;
 }

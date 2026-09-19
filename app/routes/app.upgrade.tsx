@@ -42,7 +42,7 @@ const PRICING_PLANS = [
     limits: PLAN_LIMITS.WHISPER,
     features: [
       "5 store snapshots included",
-      "50 audit snapshots included",
+      "50 page and channel snapshots included",
       "5 A/B tests included",
       "Up to 5,000 visitors per snapshot",
     ],
@@ -51,7 +51,7 @@ const PRICING_PLANS = [
     shopifyPlan: SIGNAL_PLAN,
     billingPlan: "SIGNAL" as const,
     name: "Signal",
-    tagline: "For teams using Mouse Whisperer as a decision engine.",
+    tagline: "For teams using Snapshot as a decision engine.",
     price: "$99.99",
     compareAt: "$149",
     recommended: true,
@@ -61,7 +61,7 @@ const PRICING_PLANS = [
     limits: PLAN_LIMITS.SIGNAL,
     features: [
       "20 store snapshots included",
-      "250 audit snapshots included",
+      "250 page and channel snapshots included",
       "25 A/B tests included",
       "Up to 25,000 visitors per snapshot",
     ],
@@ -100,7 +100,7 @@ export default function UpgradePage() {
   return (
     <Page
       title="Upgrade plan"
-      subtitle="Choose the monthly Mouse Whisperer plan that matches how often you audit, test, and act on storefront behavior."
+      subtitle="Choose the monthly Snapshot plan that matches how often you audit, test, and act on storefront behavior."
       backAction={{ content: "Dashboard", url: "/app" }}
     >
       <TitleBar title="Upgrade plan" />
@@ -327,7 +327,7 @@ function PlanLimitGrid({
       }}
     >
       <UsageStat label="Store snapshots" value={limits.storeSnapshots} />
-      <UsageStat label="Audit snapshots" value={limits.normalSnapshots} />
+      <UsageStat label="Page & channel snapshots" value={limits.normalSnapshots} />
       <UsageStat label="A/B tests" value={limits.abTests} />
       <UsageStat
         label="Visitor target"

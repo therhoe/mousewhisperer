@@ -1,6 +1,11 @@
 import type { BillingPlan } from "@prisma/client";
 import prisma from "../db.server";
 import {
+  cachedValue,
+  clearCacheKey,
+  loaderCacheKeys,
+} from "./loader-cache.server";
+import {
   PLAN_DISPLAY_NAMES,
   PLAN_LIMITS,
   SHOPIFY_PLAN_TO_BILLING_PLAN,
@@ -10,6 +15,9 @@ import {
 export type BillingUsage = {
   storeSnapshots: number;
   normalSnapshots: number;
+  pageSnapshots: number;
+  channelSnapshots: number;
+  customerSnapshots: number;
   abTests: number;
 };
 
@@ -41,8 +49,28 @@ export function isPlanLimitError(error: unknown): error is PlanLimitError {
   return error instanceof PlanLimitError;
 }
 
-export async function getBillingAccess(shop: string): Promise<BillingAccess> {
-  const billing = await prisma.shopBilling.findUnique({ where: { shop } });
+async function loadBillingAccess(shop: string): Promise<BillingAccess> {
+  // One aggregate round-trip instead of separate count queries competing for the
+  // small shared connection pool. All subqueries remain scoped to this shop.
+  const [billing, counts] = await Promise.all([
+    prisma.shopBilling.findUnique({ where: { shop } }),
+    prisma.$queryRaw<
+      Array<{
+        storeSnapshots: number;
+        pageSnapshots: number;
+        channelSnapshots: number;
+        customerSnapshots: number;
+        abTests: number;
+      }>
+    >`
+      SELECT
+        (SELECT COUNT(*)::int FROM "StoreSnapshot" WHERE shop = ${shop}) AS "storeSnapshots",
+        (SELECT COUNT(*)::int FROM "Snapshot" s JOIN "Project" p ON p.id = s."projectId" WHERE p.shop = ${shop}) AS "pageSnapshots",
+        (SELECT COUNT(*)::int FROM "ChannelSnapshot" WHERE shop = ${shop}) AS "channelSnapshots",
+        (SELECT COUNT(*)::int FROM "CustomerSnapshot" WHERE shop = ${shop}) AS "customerSnapshots",
+        (SELECT COUNT(*)::int FROM "AbTest" WHERE shop = ${shop}) AS "abTests"
+    `,
+  ]);
   const paidThrough =
     billing?.status === "ACTIVE" ||
     (billing?.status === "CANCELLED" &&
@@ -50,22 +78,18 @@ export async function getBillingAccess(shop: string): Promise<BillingAccess> {
         billing.currentPeriodEnd && billing.currentPeriodEnd > new Date(),
       ));
 
-  const plan =
-    billing && paidThrough ? billing.plan : ("FREE" as const);
+  const plan = billing && paidThrough ? billing.plan : ("FREE" as const);
   const limits = PLAN_LIMITS[plan];
-  const [storeSnapshots, normalSnapshots, abTests] = await Promise.all([
-    prisma.storeSnapshot.count({
-      where: { shop },
-    }),
-    prisma.snapshot.count({
-      where: {
-        project: { shop },
-      },
-    }),
-    prisma.abTest.count({
-      where: { shop },
-    }),
-  ]);
+  const {
+    storeSnapshots,
+    pageSnapshots,
+    abTests,
+    channelSnapshots,
+    customerSnapshots,
+  } = counts[0];
+  // Page, Channel, and Customer Snapshots share the existing audit allowance; pricing and
+  // Store Snapshot/A-B-test entitlements are unchanged.
+  const normalSnapshots = pageSnapshots + channelSnapshots + customerSnapshots;
 
   return {
     plan,
@@ -77,6 +101,9 @@ export async function getBillingAccess(shop: string): Promise<BillingAccess> {
     usage: {
       storeSnapshots,
       normalSnapshots,
+      pageSnapshots,
+      channelSnapshots,
+      customerSnapshots,
       abTests,
     },
     limits,
@@ -84,6 +111,24 @@ export async function getBillingAccess(shop: string): Promise<BillingAccess> {
     canCreateNormalSnapshot: normalSnapshots < limits.normalSnapshots,
     canCreateAbTest: abTests < limits.abTests,
   };
+}
+
+export function clearBillingDisplayCache(shop: string) {
+  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
+}
+
+/** Fresh server-side authorization. Never substitute the display cache here. */
+export async function getBillingAccess(shop: string): Promise<BillingAccess> {
+  // Creation guards also invalidate the old usage pill before the next loader.
+  clearBillingDisplayCache(shop);
+  return loadBillingAccess(shop);
+}
+
+/** Short-lived usage-pill data only; mutations always use fresh guards above. */
+export function getBillingDisplayAccess(shop: string): Promise<BillingAccess> {
+  return cachedValue(loaderCacheKeys.billingDisplay(shop), 30_000, () =>
+    loadBillingAccess(shop),
+  );
 }
 
 export async function assertCanCreateStoreSnapshot(shop: string) {
@@ -96,14 +141,11 @@ export async function assertCanCreateStoreSnapshot(shop: string) {
   return access;
 }
 
-export async function assertCanCreateNormalSnapshots(
-  shop: string,
-  count = 1,
-) {
+export async function assertCanCreateNormalSnapshots(shop: string, count = 1) {
   const access = await getBillingAccess(shop);
   if (access.usage.normalSnapshots + count > access.limits.normalSnapshots) {
     throw new PlanLimitError(
-      `${access.planName} plan includes ${access.limits.normalSnapshots} audit snapshots. Upgrade to create more snapshots.`,
+      `${access.planName} plan includes ${access.limits.normalSnapshots} page, channel, and customer snapshots. Upgrade to create more snapshots.`,
     );
   }
   return access;
@@ -209,7 +251,7 @@ export async function syncShopBillingFromSubscription(
   const shopifySubscriptionId =
     subscription.id || subscription.admin_graphql_api_id || null;
 
-  return prisma.shopBilling.upsert({
+  const billing = await prisma.shopBilling.upsert({
     where: { shop },
     create: {
       shop,
@@ -225,6 +267,8 @@ export async function syncShopBillingFromSubscription(
       currentPeriodEnd,
     },
   });
+  clearBillingDisplayCache(shop);
+  return billing;
 }
 
 function shopifyAppPricingConfig() {
@@ -287,7 +331,10 @@ async function partnerApiRequest<T>(
 
   if (!response.ok || payload.errors?.length) {
     const message =
-      payload.errors?.map((error) => error.message).filter(Boolean).join("; ") ||
+      payload.errors
+        ?.map((error) => error.message)
+        .filter(Boolean)
+        .join("; ") ||
       `Partner API request failed with status ${response.status}`;
     throw new Error(message);
   }
@@ -334,7 +381,7 @@ async function syncShopBillingFromShopifyAppPricing(
     return null;
   }
 
-  return prisma.shopBilling.upsert({
+  const billing = await prisma.shopBilling.upsert({
     where: { shop },
     create: {
       shop,
@@ -354,6 +401,8 @@ async function syncShopBillingFromShopifyAppPricing(
         : null,
     },
   });
+  clearBillingDisplayCache(shop);
+  return billing;
 }
 
 async function syncShopBillingFromLegacyBilling(
