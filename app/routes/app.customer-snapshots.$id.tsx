@@ -13,6 +13,7 @@ import {
   BlockStack,
   Button,
   Card,
+  Icon,
   InlineStack,
   Modal,
   Page,
@@ -20,7 +21,9 @@ import {
   Spinner,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { downloadCustomerJourney } from "../utils/customer-journey-download";
 import { authenticate } from "../shopify.server";
@@ -176,9 +179,14 @@ export default function CustomerSnapshotDetail() {
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center" gap="200">
-                <Text as="h2" variant="headingMd">
-                  Journey overview
-                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Journey overview
+                  </Text>
+                  <Tooltip content="Cart, checkout, and purchase totals count human sessions once. Conversion rate = purchasing human sessions ÷ human sessions (Real + Zombie).">
+                    <Icon source={InfoIcon} tone="subdued" />
+                  </Tooltip>
+                </InlineStack>
                 <Text as="span" tone="subdued">
                   {date(snapshot.startedAt)} – {date(snapshot.endsAt)} · UTC
                 </Text>
@@ -213,11 +221,6 @@ export default function CustomerSnapshotDetail() {
                   </BlockStack>
                 ))}
               </div>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Cart, checkout, and purchase totals count human sessions once.
-                Conversion rate = purchasing human sessions ÷ human sessions
-                (Real + Zombie).
-              </Text>
               <Text as="p" tone="subdued">
                 {total.toLocaleString()} /{" "}
                 {snapshot.targetSessions?.toLocaleString() || "—"} matching
@@ -289,11 +292,8 @@ export default function CustomerSnapshotDetail() {
                     </Banner>
                   )}
                   <Text as="p" tone="subdued">
-                    After updating the ad link, open it in a fresh browser
-                    session, allow analytics consent, browse the store, and
-                    refresh this report. Matching arrivals must start after this
-                    snapshot was created. Untagged ad IDs cannot be inferred
-                    from a click ID.
+                    Matching arrivals must start after this snapshot was
+                    created. Untagged ad IDs cannot be inferred from a click ID.
                   </Text>
                 </>
               )}
@@ -302,9 +302,14 @@ export default function CustomerSnapshotDetail() {
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd">
-                  Visitor journeys
-                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Visitor journeys
+                  </Text>
+                  <Tooltip content="Anonymous sessions end after 30 minutes of inactivity. Tracking depends on consent and browser delivery. Form contents and private account paths are excluded. These are recorded events, not a video replay.">
+                    <Icon source={InfoIcon} tone="subdued" />
+                  </Tooltip>
+                </InlineStack>
                 <Text as="span" tone="subdued">
                   {total.toLocaleString()} sessions
                 </Text>
@@ -315,8 +320,7 @@ export default function CustomerSnapshotDetail() {
                     Waiting for matching arrivals
                   </Text>
                   <Text as="p" tone="subdued">
-                    Use the campaign link above. Each captured visitor will
-                    appear here with a timeline of their actions.
+                    Use the campaign link above.
                   </Text>
                 </BlockStack>
               ) : (
@@ -407,12 +411,6 @@ export default function CustomerSnapshotDetail() {
               )}
             </BlockStack>
           </Card>
-          <Text as="p" tone="subdued">
-            Anonymous sessions end after 30 minutes of inactivity. Tracking
-            depends on consent and browser delivery. Form contents and private
-            account paths are excluded. These are recorded events, not a video
-            replay.
-          </Text>
         </BlockStack>
       </div>
       {selected && (

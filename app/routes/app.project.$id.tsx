@@ -31,8 +31,10 @@ import {
   Banner,
   Thumbnail,
   Checkbox,
+  Icon,
+  Tooltip,
 } from "@shopify/polaris";
-import { ImageIcon } from "@shopify/polaris-icons";
+import { ImageIcon, InfoIcon } from "@shopify/polaris-icons";
 import { Prisma } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -2779,6 +2781,9 @@ function ImageEngagementStrip({
             <Text as="h3" variant="headingMd">
               Image
             </Text>
+            <Tooltip content="Grouped by image file, so resized versions of the same storefront image are counted together.">
+              <Icon source={InfoIcon} tone="subdued" />
+            </Tooltip>
           </InlineStack>
           <Text as="span" variant="bodySm" tone="subdued">
             {totalImageClicks.toLocaleString()} clicks ({imageClickShare}%)
@@ -2920,12 +2925,6 @@ function ImageEngagementStrip({
           </div>
         </div>
 
-        <div style={{ paddingLeft: 18 }}>
-          <Text as="p" variant="bodySm" tone="subdued">
-            Grouped by image file, so resized versions of the same storefront
-            image are counted together.
-          </Text>
-        </div>
       </BlockStack>
     </>
   );
@@ -5852,8 +5851,7 @@ export default function ProjectDetails() {
                       ) {
                         return (
                           <Text as="p" tone="subdued">
-                            No click data yet. Clicks will be categorized by
-                            zone as visitors interact with the page.
+                            No click data yet.
                           </Text>
                         );
                       }
@@ -6765,10 +6763,6 @@ export default function ProjectDetails() {
         ]}
       >
         <Modal.Section>
-          <Banner tone="info">
-            This snapshot will start fresh from 0 visitors.
-          </Banner>
-          <br />
           <FormLayout>
             <TextField
               label="Snapshot Name"
@@ -6855,10 +6849,6 @@ export default function ProjectDetails() {
       >
         <Modal.Section>
           <BlockStack gap="200">
-            <Text as="p" tone="subdued">
-              Select 2 to 4 snapshots to compare. They will be ordered from
-              oldest to newest.
-            </Text>
             <BlockStack gap="300">
               {[...snapshots]
                 .sort(
@@ -7011,9 +7001,6 @@ export default function ProjectDetails() {
                       </div>
                     ))}
                   </div>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    These stats will be included with your challenge post.
-                  </Text>
                 </BlockStack>
               </Box>
             )}

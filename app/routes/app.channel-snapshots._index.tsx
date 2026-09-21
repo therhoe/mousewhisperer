@@ -209,7 +209,6 @@ export default function ChannelSnapshotsIndex() {
   return (
     <Page
       title="Channel Snapshots"
-      subtitle="See where visitors arrive from and how each channel performs across your store."
       backAction={{ content: "Dashboard", url: "/app" }}
       primaryAction={{
         content: activeSnapshotId
@@ -379,8 +378,7 @@ export default function ChannelSnapshotsIndex() {
             ) : null}
           </Card>
           <Text as="p" tone="subdued" variant="bodySm">
-            Dates are shown in UTC. Snapshot history shows up to 10 entries per
-            page.
+            Dates are shown in UTC.
           </Text>
           <details
             style={{ color: "var(--p-color-text-subdued)", fontSize: 12 }}
@@ -496,9 +494,8 @@ export default function ChannelSnapshotsIndex() {
               </>
             )}
             <Text as="p" tone="subdued" variant="bodySm">
-              All incoming channels are collected. Filter channels, sources, or
-              campaigns in the report. Starting this snapshot uses one of your
-              existing snapshot credits.
+              Starting this snapshot uses one of your existing snapshot
+              credits.
             </Text>
           </FormLayout>
         </Modal.Section>

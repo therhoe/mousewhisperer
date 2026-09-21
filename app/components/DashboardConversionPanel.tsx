@@ -25,12 +25,7 @@ class ConversionPanelBoundary extends Component<
             <Text as="h2" variant="headingLg">
               Conversion progress
             </Text>
-            <Banner tone="warning" title="The conversion graph couldn’t open">
-              <p>
-                Your other pages are still available. Reload the dashboard to
-                retry the graph.
-              </p>
-            </Banner>
+            <Banner tone="warning" title="The conversion graph couldn’t open" />
             <Button onClick={() => window.location.reload()}>
               Reload dashboard
             </Button>

@@ -728,11 +728,6 @@ export default function Index() {
           <Text variant="headingLg" as="h2">
             Getting Started
           </Text>
-          <Text as="p" tone="subdued">
-            Create an audit for any supported storefront page and Snapshot will
-            track active visitors, classify traffic quality, and surface the
-            page metrics that matter for that audit type.
-          </Text>
         </BlockStack>
         <Button variant="plain" onClick={handleDismissSetup}>
           Dismiss
@@ -747,9 +742,6 @@ export default function Index() {
         <BlockStack gap="100">
           <Text as="h2" variant="headingLg" fontWeight="semibold">
             Store snapshot
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            Whole-store activity and opportunities
           </Text>
         </BlockStack>
         <div>
@@ -1265,12 +1257,7 @@ export default function Index() {
                   content: "Create profile",
                   url: "/app/challenges/profile?returnTo=/app",
                 }}
-              >
-                <p>
-                  Create a display name and avatar to start posting challenges
-                  and helping fellow merchants.
-                </p>
-              </Banner>
+              />
             ))}
         </BlockStack>
       </div>

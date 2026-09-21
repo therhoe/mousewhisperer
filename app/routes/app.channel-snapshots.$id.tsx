@@ -14,6 +14,7 @@ import {
   BlockStack,
   Button,
   Card,
+  Icon,
   InlineStack,
   Modal,
   Page,
@@ -21,7 +22,9 @@ import {
   ProgressBar,
   Select,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
@@ -155,7 +158,6 @@ export default function ChannelSnapshotDetail() {
   return (
     <Page
       title={snapshot.name || "Channel snapshot"}
-      subtitle="Snapshot acquisition sessions across your store"
       backAction={{
         content: "Channel Snapshots",
         url: "/app/channel-snapshots",
@@ -255,11 +257,6 @@ export default function ChannelSnapshotDetail() {
                 progress={Math.max(0, Math.min(100, progress.percent))}
                 size="small"
               />
-              <Text as="p" tone="subdued" variant="bodySm">
-                Each session keeps its arrival channel across internal page
-                views. A fresh external or campaign arrival, or 30 minutes of
-                inactivity, starts a new acquisition session.
-              </Text>
             </BlockStack>
           </Card>
           <Card padding="0">
@@ -275,9 +272,14 @@ export default function ChannelSnapshotDetail() {
                   blockAlign="center"
                   gap="300"
                 >
-                  <Text as="h2" variant="headingMd">
-                    Traffic quality by source
-                  </Text>
+                  <InlineStack gap="100" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Traffic quality by source
+                    </Text>
+                    <Tooltip content="Each session keeps its arrival channel across internal page views; a fresh external or campaign arrival, or 30 minutes of inactivity, starts a new acquisition session. Quality percentages use all sessions in that row. Add-to-cart and conversion rates use human sessions (Real + Zombie), and conversions count sessions that converted, not orders. Snapshot session rules differ from Shopify Analytics, so CVR here is not the dashboard's Shopify CVR. Unknown means the arrival source was not available (not assumed to be Direct); Pending sessions have not yet been classified.">
+                      <Icon source={InfoIcon} tone="subdued" />
+                    </Tooltip>
+                  </InlineStack>
                   <Button
                     variant="plain"
                     pressed={showPercentages}
@@ -335,9 +337,7 @@ export default function ChannelSnapshotDetail() {
                     blockAlign="center"
                     gap="200"
                   >
-                    <Text as="span" tone="subdued" variant="bodySm">
-                      Summary and rows reflect the selected filters.
-                    </Text>
+                    <span />
                     <Button
                       variant="plain"
                       onClick={clearFilters}
@@ -554,42 +554,18 @@ export default function ChannelSnapshotDetail() {
                     />
                   </InlineStack>
                 ) : null}
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Quality percentages use all sessions in that row. Add-to-cart
-                  and conversion rates use human sessions (Real + Zombie).
-                  Conversions count sessions that converted, not the number of
-                  orders.
-                </Text>
+                {summary.unknownSessions > 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {formatCount(summary.unknownSessions)}{" "}
+                    {summary.unknownSessions === 1
+                      ? "session has"
+                      : "sessions have"}{" "}
+                    an unknown arrival channel
+                    {hasFilters ? " in the selected traffic" : ""}.
+                  </Text>
+                ) : null}
               </BlockStack>
             </div>
-          </Card>
-          <Card>
-            <BlockStack gap="200">
-              <Text as="h2" variant="headingMd">
-                About these numbers
-              </Text>
-              <Text as="p" tone="subdued">
-                CVR = converted human sessions ÷ human sessions (Real + Zombie).
-                Snapshot session rules differ from Shopify Analytics, so this
-                report should not be treated as the same metric as the
-                dashboard’s Shopify CVR.
-              </Text>
-              <Text as="p" tone="subdued">
-                Unknown means the arrival source was not available. It is not
-                assumed to be Direct. Pending sessions have not yet received a
-                traffic-quality classification.
-              </Text>
-              {summary.unknownSessions > 0 ? (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {formatCount(summary.unknownSessions)}{" "}
-                  {summary.unknownSessions === 1
-                    ? "session has"
-                    : "sessions have"}{" "}
-                  an unknown arrival channel
-                  {hasFilters ? " in the selected traffic" : ""}.
-                </Text>
-              ) : null}
-            </BlockStack>
           </Card>
         </BlockStack>
       </div>

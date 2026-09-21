@@ -1284,7 +1284,6 @@ export default function AuditsCategory() {
   return (
     <Page
       title="Page Snapshots"
-      subtitle="Measure and compare snapshots for individual storefront pages"
       backAction={{ content: "Dashboard", url: "/app" }}
       primaryAction={
         billingAccess ? (

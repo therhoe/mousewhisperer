@@ -260,7 +260,7 @@ export function AnswerCard({
           <Text as="p">
             {optimisticAccepted
               ? "This will remove the accepted status from this answer."
-              : "This will mark this answer as the accepted solution. Only one answer can be accepted per insight."}
+              : "Only one answer can be accepted per insight."}
           </Text>
         </Modal.Section>
       </Modal>

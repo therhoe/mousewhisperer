@@ -133,7 +133,6 @@ export default function ChallengesProfile() {
               onChange={setDisplayName}
               autoComplete="off"
               maxLength={50}
-              helpText="This is how other merchants will see you."
             />
 
             <Select
@@ -141,7 +140,6 @@ export default function ChallengesProfile() {
               options={STORE_CATEGORIES}
               value={storeCategory}
               onChange={setStoreCategory}
-              helpText="Helps others find merchants in similar niches."
             />
 
             <TextField

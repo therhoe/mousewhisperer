@@ -178,7 +178,6 @@ export default function StoreSnapshotsIndex() {
   return (
     <Page
       title="Store snapshots"
-      subtitle="Run one store-wide snapshot to find weak pages and choose the next focused audits."
       primaryAction={{
         content: activeSnapshot
           ? "View active snapshot"

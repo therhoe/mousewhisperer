@@ -2,7 +2,6 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useMemo, useState } from "react";
 import { json, redirect } from "@remix-run/node";
 import {
-  Link,
   useLoaderData,
   useNavigation,
   useSubmit,
@@ -655,24 +654,6 @@ export default function AbTestDetail() {
           </BlockStack>
         </Layout.Section>
 
-        <Layout.Section variant="oneThird">
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                How this test runs
-              </Text>
-              <Text as="p" tone="subdued">
-                Live visitors are assigned once per session. Variant B uses the
-                selected template suffix through Shopify's view parameter.
-              </Text>
-              <Text as="p" tone="subdued">
-                The storefront runtime is local in the theme extension until you
-                deploy the extension update.
-              </Text>
-              <Link to="/app/ab-tests">Back to all tests</Link>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
       </Layout>
       <AbTestDetailReport
         open={detailsOpen}

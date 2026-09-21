@@ -12,10 +12,13 @@ import {
   BlockStack,
   Button,
   Card,
+  Icon,
   InlineStack,
   Tabs,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import type {
   AbTestTrendPoint,
   SourceQualityRow,
@@ -216,7 +219,7 @@ function SummaryStat({
 }: {
   label: string;
   value: string;
-  caption: string;
+  caption?: string;
 }) {
   return (
     <div
@@ -234,9 +237,11 @@ function SummaryStat({
         <Text as="p" variant="headingLg">
           {value}
         </Text>
-        <Text as="p" tone="subdued">
-          {caption}
-        </Text>
+        {caption ? (
+          <Text as="p" tone="subdued">
+            {caption}
+          </Text>
+        ) : null}
       </BlockStack>
     </div>
   );
@@ -388,14 +393,14 @@ function AbTestTrendChart({
     <Card>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="start" gap="300">
-          <BlockStack gap="050">
+          <InlineStack gap="100" blockAlign="center">
             <Text as="h2" variant="headingMd">
               {metric.label} over time
             </Text>
-            <Text as="p" tone="subdued">
-              Cumulative result for visitors assigned to each variant.
-            </Text>
-          </BlockStack>
+            <Tooltip content="Cumulative result for visitors assigned to each variant. Live visitors are assigned once per session.">
+              <Icon source={InfoIcon} tone="subdued" />
+            </Tooltip>
+          </InlineStack>
           <InlineStack gap="300" wrap>
             {series.map((row) => (
               <InlineStack key={row.key} gap="100" blockAlign="center">
@@ -647,7 +652,7 @@ function MetricTile({
 }: {
   label: string;
   value: string;
-  caption: string;
+  caption?: string;
 }) {
   return (
     <div
@@ -666,9 +671,11 @@ function MetricTile({
         <Text as="p" variant="heading2xl">
           {value}
         </Text>
-        <Text as="p" tone="subdued">
-          {caption}
-        </Text>
+        {caption ? (
+          <Text as="p" tone="subdued">
+            {caption}
+          </Text>
+        ) : null}
       </BlockStack>
     </div>
   );
@@ -817,14 +824,9 @@ function TrafficQualityTable({
     <section>
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="center" gap="300">
-          <BlockStack gap="050">
-            <Text as="h3" variant="headingMd">
-              Traffic quality by source
-            </Text>
-            <Text as="p" tone="subdued">
-              Session quality and conversion for this variant only.
-            </Text>
-          </BlockStack>
+          <Text as="h3" variant="headingMd">
+            Traffic quality by source
+          </Text>
           <Button size="slim" onClick={onTogglePercentages}>
             {showPercentages ? "Hide percentages" : "Show percentages"}
           </Button>
@@ -934,14 +936,9 @@ function VariantImageEngagement({
     <section>
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="center" gap="300">
-          <BlockStack gap="050">
-            <Text as="h3" variant="headingMd">
-              Image engagement
-            </Text>
-            <Text as="p" tone="subdued">
-              Storefront images clicked by this variant&apos;s visitors.
-            </Text>
-          </BlockStack>
+          <Text as="h3" variant="headingMd">
+            Image engagement
+          </Text>
           <Text as="span" tone="subdued">
             {items
               .reduce((sum, item) => sum + item.clickCount, 0)
@@ -1083,14 +1080,14 @@ function VariantZoneBreakdown({
   return (
     <section>
       <BlockStack gap="200">
-        <BlockStack gap="050">
+        <InlineStack gap="100" blockAlign="center">
           <Text as="h3" variant="headingMd">
             Engagement by zone
           </Text>
-          <Text as="p" tone="subdued">
-            Every clicked element uses the same scale across click types.
-          </Text>
-        </BlockStack>
+          <Tooltip content="Every clicked element uses the same scale across click types.">
+            <Icon source={InfoIcon} tone="subdued" />
+          </Tooltip>
+        </InlineStack>
         {!visibleZones.length ? (
           <Text as="p" tone="subdued">
             No button, link, widget, header, or footer clicks captured yet.
@@ -1232,7 +1229,6 @@ function VariantDetailCard({
         {
           label: "Link clicks",
           value: (row.linkClickCount || 0).toLocaleString(),
-          caption: "Tracked link click events",
         },
         {
           label: "Product click rate",
@@ -1247,7 +1243,6 @@ function VariantDetailCard({
         {
           label: "Link clicks",
           value: (row.linkClickCount || 0).toLocaleString(),
-          caption: "Tracked link click events",
         },
         {
           label: "Body CTA rate",
@@ -1300,12 +1295,10 @@ function VariantDetailCard({
     {
       label: "Avg. scroll",
       value: formatPercent(row.avgScrollDepth),
-      caption: "Average page reach",
     },
     {
       label: "Avg. time",
       value: formatDuration(row.avgTimeOnPage),
-      caption: "Average time on page",
     },
     {
       label: "Interactions",
@@ -1348,24 +1341,19 @@ function VariantDetailCard({
       </div>
       <div style={{ padding: 20 }}>
         <BlockStack gap="500">
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 8,
-              background: "var(--p-color-bg-surface-secondary)",
-            }}
-          >
-            <Text as="p" tone="subdued">
-              Template-wide {scopeLabel.toLowerCase()} behavior for visitors
-              assigned to this variant during the test
-              {row.scopePageCount
-                ? ` · ${row.scopePageCount.toLocaleString()} captured ${
-                    row.scopePageCount === 1 ? "page" : "pages"
-                  }`
-                : ""}
-              .
-            </Text>
-          </div>
+          <InlineStack gap="100" blockAlign="center">
+            {row.scopePageCount ? (
+              <Text as="p" tone="subdued">
+                {row.scopePageCount.toLocaleString()} captured{" "}
+                {row.scopePageCount === 1 ? "page" : "pages"}
+              </Text>
+            ) : null}
+            <Tooltip
+              content={`Template-wide ${scopeLabel.toLowerCase()} behavior for visitors assigned to this variant during the test.`}
+            >
+              <Icon source={InfoIcon} tone="subdued" />
+            </Tooltip>
+          </InlineStack>
           <VisitorQualityBar row={row} />
           <div style={metricGridStyle(140)}>
             {metricTiles.map((tile) => (
@@ -1712,15 +1700,14 @@ function VariantSnapshotTabs({
         }}
       >
         <BlockStack gap="200">
-          <BlockStack gap="050">
+          <InlineStack gap="100" blockAlign="center">
             <Text as="h2" variant="headingLg">
               Variant page snapshots
             </Text>
-            <Text as="p" tone="subdued">
-              Explore behavior inside one variant at a time. These reports use
-              A/B-assigned visits, not blended Page Snapshot traffic.
-            </Text>
-          </BlockStack>
+            <Tooltip content="These reports use A/B-assigned visits, not blended Page Snapshot traffic.">
+              <Icon source={InfoIcon} tone="subdued" />
+            </Tooltip>
+          </InlineStack>
           <Tabs
             tabs={tabs}
             selected={Math.min(selected, tabs.length - 1)}
@@ -1744,9 +1731,6 @@ function VariantSnapshotTabs({
             <BlockStack gap="150" inlineAlign="center">
               <Text as="h3" variant="headingMd">
                 Loading {activeSummary?.key === "A" ? "Control A" : "Variant B"}
-              </Text>
-              <Text as="p" tone="subdued">
-                Pulling this variant&apos;s traffic, engagement, and click data.
               </Text>
             </BlockStack>
           </div>
@@ -1846,8 +1830,7 @@ export function AbTestDetailReport({
     if (Math.abs(difference) < 0.1) {
       return {
         title: "No clear lift",
-        description:
-          "A and B are performing nearly the same on the primary goal.",
+        description: "",
         badge: "Tied",
         badgeTone: undefined,
         metricLabel: controlMetric.label,
@@ -1866,7 +1849,7 @@ export function AbTestDetailReport({
 
     return {
       title: `${winner.key} is leading`,
-      description: `${winner.name} is ahead on ${controlMetric.label.toLowerCase()}. Keep monitoring until the sample size is large enough for a final decision.`,
+      description: `${winner.name} is ahead on ${controlMetric.label.toLowerCase()}.`,
       badge: variantLeading ? "B ahead" : "A ahead",
       badgeTone: variantLeading ? ("success" as const) : ("critical" as const),
       metricLabel: controlMetric.label,
@@ -1930,10 +1913,6 @@ export function AbTestDetailReport({
                   <Text as="h2" variant="headingMd">
                     Loading full A/B report
                   </Text>
-                  <Text as="p" tone="subdued">
-                    Pulling visitor quality, engagement, conversion, and page
-                    breakdown data for this test.
-                  </Text>
                 </BlockStack>
               </Card>
             ) : (
@@ -1954,9 +1933,6 @@ export function AbTestDetailReport({
                             {summary.badge}
                           </Badge>
                         </InlineStack>
-                        <Text as="p" tone="subdued">
-                          A/B test result
-                        </Text>
                       </BlockStack>
                       <BlockStack gap="100" align="end">
                         <Badge tone="info">{goalLabel(test.goal)}</Badge>
@@ -1969,17 +1945,14 @@ export function AbTestDetailReport({
                       <SummaryStat
                         label="Original (A)"
                         value={summary.controlLabel}
-                        caption="Primary metric"
                       />
                       <SummaryStat
                         label="Variant (B)"
                         value={summary.variantLabel}
-                        caption="Primary metric"
                       />
                       <SummaryStat
                         label="B vs A"
                         value={summary.differenceLabel}
-                        caption="Primary goal difference"
                       />
                       <SummaryStat
                         label="Sample"
@@ -1987,9 +1960,11 @@ export function AbTestDetailReport({
                         caption={summary.sampleLabel}
                       />
                     </div>
-                    <Text as="p" tone="subdued">
-                      {summary.description}
-                    </Text>
+                    {summary.description ? (
+                      <Text as="p" tone="subdued">
+                        {summary.description}
+                      </Text>
+                    ) : null}
                   </BlockStack>
                 </Card>
 

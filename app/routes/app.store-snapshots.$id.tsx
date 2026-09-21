@@ -592,14 +592,9 @@ export default function StoreSnapshotDetails() {
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="start" gap="300">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">
-                    Traffic Breakdown
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    Behavior captured across the storefront.
-                  </Text>
-                </BlockStack>
+                <Text as="h2" variant="headingMd">
+                  Traffic Breakdown
+                </Text>
                 <Badge
                   tone={
                     snapshot.status === "ACTIVE"
@@ -622,32 +617,31 @@ export default function StoreSnapshotDetails() {
                 <VisitorStat
                   title="Total visitors"
                   value={stats.visitorBreakdown.total}
-                  caption="All unique sessions"
                   color="#2c6ecb"
                 />
                 <VisitorStat
                   title="Humans"
                   value={stats.visitorBreakdown.humans}
-                  caption="Engaged real visitors"
+                  helpText="Engaged real visitors"
                   color="#008060"
                 />
                 <VisitorStat
                   title="Zombies"
                   value={stats.visitorBreakdown.zombies}
-                  caption="Unengaged visitors"
+                  helpText="Unengaged visitors"
                   color="#8a6116"
                 />
                 <VisitorStat
                   title="Bots"
                   value={stats.visitorBreakdown.bots}
-                  caption="Automated / non-human"
+                  helpText="Automated / non-human traffic"
                   color="#b5371f"
                 />
                 {((stats.visitorBreakdown as any).pending || 0) > 0 && (
                   <VisitorStat
                     title="Pending"
                     value={(stats.visitorBreakdown as any).pending}
-                    caption="Still classifying"
+                    helpText="Still awaiting traffic-quality classification"
                     color="#8c9196"
                   />
                 )}
@@ -740,7 +734,6 @@ export default function StoreSnapshotDetails() {
                       value={formatPercent(stats.metrics.avgScrollDepth)}
                       delta={stats.deltas.avgScrollDepth}
                       suffix="%"
-                      caption="avg. page reach"
                       helpText="Average scroll depth across real visitor page views."
                     />
                     <MetricTile
@@ -754,14 +747,12 @@ export default function StoreSnapshotDetails() {
                         stats.deltas.avgTimeOnPage
                       }
                       suffix="s"
-                      caption="avg. session"
                       helpText="Average session duration from the first to last tracked store snapshot page view for each real visitor."
                     />
                     <MetricTile
                       title="Searches"
                       value={stats.metrics.searchCount.toLocaleString()}
                       delta={stats.deltas.searchCount}
-                      caption="sessions"
                       helpText="Unique real visitor sessions where an on-site search query was detected."
                     />
                     <MetricTile
@@ -769,7 +760,6 @@ export default function StoreSnapshotDetails() {
                       value={formatPercent(stats.metrics.clickThroughRate)}
                       delta={stats.deltas.clickThroughRate}
                       suffix="%"
-                      caption="click rate"
                       helpText="Click-through rate: percentage of real visitor sessions with at least one link or button click."
                     />
                     <MetricTile
@@ -778,7 +768,6 @@ export default function StoreSnapshotDetails() {
                         (stats.metrics as any).filterInteractionCount ?? 0,
                       ).toLocaleString()}
                       delta={(stats.deltas as any).filterInteractionCount}
-                      caption="changes"
                       helpText="Collection filter interactions captured during real visitor sessions."
                     />
                     <MetricTile
@@ -788,7 +777,6 @@ export default function StoreSnapshotDetails() {
                           stats.visitorBreakdown.total,
                       ).toLocaleString()}
                       delta={(stats.deltas as any).totalPageViews}
-                      caption="page views"
                       helpText="Total Page Views: all tracked store snapshot page loads, including humans, zombies, bots, and pending visits."
                     />
                   </MetricGrid>
@@ -806,7 +794,6 @@ export default function StoreSnapshotDetails() {
                       value={formatPercent(stats.metrics.addToCartRate)}
                       delta={stats.deltas.addToCartRate}
                       suffix="%"
-                      caption="cart rate"
                       helpText="Add-to-cart rate: percentage of real visitor sessions where an add-to-cart event was captured."
                     />
                     <MetricTile
@@ -815,7 +802,6 @@ export default function StoreSnapshotDetails() {
                         (stats.metrics as any).checkoutReachCount ?? 0,
                       )}
                       delta={(stats.deltas as any).checkoutReachCount}
-                      caption="checkout"
                       helpText="Reached Checkout Count: unique real visitor sessions where checkout started. Older visits can also count when the only available signal is an exit toward checkout."
                     />
                     <MetricTile
@@ -823,21 +809,18 @@ export default function StoreSnapshotDetails() {
                       value={formatPercent(stats.metrics.conversionRate)}
                       delta={stats.deltas.conversionRate}
                       suffix="%"
-                      caption="conversion"
                       helpText="Conversion rate: percentage of real visitor sessions attributed to an order."
                     />
                     <MetricTile
                       title="Orders"
                       value={stats.metrics.orderCount.toLocaleString()}
                       delta={stats.deltas.orderCount}
-                      caption="placed this snapshot"
                       helpText="Orders attributed to real visitor sessions captured during this store snapshot."
                     />
                     <MetricTile
                       title="Revenue"
                       value={formatMoney(stats.metrics.revenue)}
                       delta={stats.deltas.revenue}
-                      caption="attributed revenue"
                       helpText="Order revenue attributed to real visitor sessions captured during this store snapshot."
                     />
                   </MetricGrid>
@@ -989,10 +972,6 @@ export default function StoreSnapshotDetails() {
                     <Text as="h2" variant="headingMd">
                       Focused snapshots created from this store snapshot
                     </Text>
-                    <Text as="p" tone="subdued">
-                      These audits were created from selected pages in the
-                      engagement table.
-                    </Text>
                   </BlockStack>
                   <Badge tone="info">
                     {focusedSnapshots.length} focused{" "}
@@ -1026,10 +1005,6 @@ export default function StoreSnapshotDetails() {
               <BlockStack gap="100">
                 <Text as="h2" variant="headingMd">
                   Sessions by Page
-                </Text>
-                <Text as="span" tone="subdued">
-                  Select up to {MAX_BULK_SNAPSHOT_SELECTION} pages to create
-                  focused snapshots.
                 </Text>
               </BlockStack>
 
@@ -1342,9 +1317,6 @@ export default function StoreSnapshotDetails() {
         <Modal.Section>
           <BlockStack gap="400">
             <BlockStack gap="200">
-              <Text as="p" tone="subdued">
-                These pages will each get a focused audit snapshot.
-              </Text>
               <div
                 style={{
                   border: "1px solid var(--p-color-border-subdued)",
@@ -1582,16 +1554,21 @@ function compareStoreSnapshotPages(
 function VisitorStat({
   title,
   value,
-  caption,
+  helpText,
   color,
   badge,
 }: {
   title: string;
   value: number;
-  caption: string;
+  helpText?: string;
   color: string;
   badge?: string;
 }) {
+  const titleNode = (
+    <Text as="p" fontWeight="semibold">
+      {title}
+    </Text>
+  );
   return (
     <div
       style={{
@@ -1602,16 +1579,17 @@ function VisitorStat({
       }}
     >
       <InlineStack gap="200" blockAlign="center">
-        <Text as="p" fontWeight="semibold">
-          {title}
-        </Text>
+        {helpText ? (
+          <Tooltip content={helpText}>
+            <span style={{ cursor: "help" }}>{titleNode}</span>
+          </Tooltip>
+        ) : (
+          titleNode
+        )}
         {badge ? <Badge tone="success">{badge}</Badge> : null}
       </InlineStack>
       <Text as="p" variant="heading2xl" fontWeight="semibold">
         {value.toLocaleString()}
-      </Text>
-      <Text as="p" tone="subdued">
-        {caption}
       </Text>
     </div>
   );
@@ -1670,7 +1648,7 @@ function MetricTile({
   value: string;
   delta?: number | null;
   suffix?: string;
-  caption: string;
+  caption?: string;
   helpText?: string;
 }) {
   const titleNode = (
@@ -1715,9 +1693,11 @@ function MetricTile({
               {formatDelta(delta, suffix)}
             </Badge>
           ) : null}
-          <Text as="span" tone="subdued">
-            {caption}
-          </Text>
+          {caption ? (
+            <Text as="span" tone="subdued">
+              {caption}
+            </Text>
+          ) : null}
         </InlineStack>
       </div>
     </div>

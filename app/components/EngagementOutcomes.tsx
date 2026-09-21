@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Icon, Tooltip } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import type {
   EngagementOutcomeItem,
   EngagementOutcomes as OutcomeData,
@@ -226,6 +228,11 @@ export function EngagementOutcomesView({
             {label}
           </span>
         ))}
+        <Tooltip
+          content={`${audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. All bars share one session-count scale. Outcomes can overlap across elements—do not add them together. Same-session association, not proof of sequence or causation; uses recorded session IDs, not cross-device people. Missing tracking can hide outcomes; "Unavailable" means the records could not be linked.`}
+        >
+          <Icon source={InfoIcon} tone="subdued" />
+        </Tooltip>
       </div>
       <div className="eo-layout">
         <aside
@@ -327,17 +334,6 @@ export function EngagementOutcomesView({
         .map((group) => (
           <Group key={group.category} {...group} maximum={data.maxSessions} />
         ))}
-      <p className="eo-note">
-        {audience} only. Percentages are among sessions that clicked that
-        element; repeat clicks count once. All bars share one session-count
-        scale. Outcomes can overlap across elements—do not add them together.
-      </p>
-      <p className="eo-note">
-        Same-session association within this report, not proof of sequence or
-        causation. Uses recorded session IDs, not cross-device people. Missing
-        tracking can hide outcomes; unavailable means the records could not be
-        linked. The donut retains the original click totals.
-      </p>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   FormLayout,
+  Icon,
   InlineStack,
   Modal,
   Pagination,
@@ -14,7 +15,9 @@ import {
   Tabs,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import type {
   ConversionDashboardPayload,
   ConversionPeriod,
@@ -813,10 +816,6 @@ export function ConversionProgressCard({
             <Text as="h2" variant="headingXl" fontWeight="semibold">
               Conversion progress
             </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Store conversion rate over time, with your CRO work shown in
-              context.
-            </Text>
           </BlockStack>
           <InlineStack gap="200" blockAlign="center" wrap>
             <Button
@@ -905,9 +904,20 @@ export function ConversionProgressCard({
                       )}
                     </Text>
                   ) : null}
+                  {progress.status === "ready" ? (
+                    <Tooltip
+                      content={`${
+                        progress.currentSessions > 0
+                          ? `${formatCount(progress.currentCompletedCheckouts)} checkout-completing sessions from ${formatCount(progress.currentSessions)} human online-store sessions.`
+                          : "No human online-store sessions were recorded in this period."
+                      } Previous period (${progress.previousLabel}): ${formatRate(progress.previousRate)}.`}
+                    >
+                      <Icon source={InfoIcon} tone="subdued" />
+                    </Tooltip>
+                  ) : null}
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {progress.periodLabel} · {progress.currentLabel}
+                  {progress.periodLabel}
                 </Text>
               </BlockStack>
               <Badge tone="info">Shopify Analytics</Badge>
@@ -1028,59 +1038,22 @@ export function ConversionProgressCard({
                     Snapshot measurement
                   </span>
                 ) : null}
-                <Text as="span" variant="bodySm" tone="subdued">
-                  Hover, click, or focus a marker for details.
-                </Text>
               </InlineStack>
             ) : null}
 
-            {progress.status === "ready" ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                  gap: 12,
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  background: "rgba(255, 255, 255, 0.68)",
-                  border: "1px solid #d8e7f2",
-                }}
-              >
-                <BlockStack gap="050">
-                  <Text as="p" variant="bodySm" fontWeight="semibold">
-                    What this rate means
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {progress.currentSessions > 0
-                      ? `${formatCount(progress.currentCompletedCheckouts)} checkout-completing sessions from ${formatCount(progress.currentSessions)} human online-store sessions.`
-                      : "No human online-store sessions were recorded in this period."}
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="050">
-                  <Text as="p" variant="bodySm" fontWeight="semibold">
-                    Previous comparison: {formatRate(progress.previousRate)}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Same elapsed length in the prior period ·{" "}
-                    {progress.previousLabel}
-                  </Text>
-                </BlockStack>
-              </div>
-            ) : null}
           </BlockStack>
         </div>
 
         <BlockStack gap="200">
           <InlineStack align="space-between" blockAlign="center" gap="300">
-            <BlockStack gap="050">
+            <InlineStack gap="100" blockAlign="center">
               <Text as="h3" variant="headingMd">
                 CRO activity
               </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Implemented changes, experiments, and measurements are kept
-                separate so each event is interpreted correctly.
-              </Text>
-            </BlockStack>
+              <Tooltip content="Timeline alignment shows correlation, not proof of causation. Use the A/B test report to measure causal lift.">
+                <Icon source={InfoIcon} tone="subdued" />
+              </Tooltip>
+            </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
               {data.events.length} total in this period
             </Text>
@@ -1152,10 +1125,6 @@ export function ConversionProgressCard({
           </div>
         </BlockStack>
 
-        <Text as="p" variant="bodySm" tone="subdued">
-          Timeline alignment shows correlation, not proof of causation. Use the
-          A/B test report to measure causal lift.
-        </Text>
       </BlockStack>
 
       <Modal

@@ -773,9 +773,7 @@ export default function InsightDetail() {
                   content: "Create profile",
                   url: `/app/challenges/profile?returnTo=/app/challenges/${insight.id}`,
                 }}
-              >
-                <p>Set up your community profile to post answers, vote, and more.</p>
-              </Banner>
+              />
             )}
           </BlockStack>
         </Layout.Section>

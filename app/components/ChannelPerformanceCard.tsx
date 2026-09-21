@@ -4,10 +4,13 @@ import {
   BlockStack,
   Button,
   Card,
+  Icon,
   InlineStack,
   Select,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import type { ChannelOverview } from "../utils/channel-overview.server";
 
 type ChartMetric = "humanSessions" | "conversionRate";
@@ -49,11 +52,11 @@ export function ChannelPerformanceCard({
             <Text as="h2" variant="headingLg" fontWeight="semibold">
               Channel performance
             </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {data?.snapshot
-                ? data.snapshot.name
-                : "Your latest channel snapshot"}
-            </Text>
+            {data?.snapshot ? (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {data.snapshot.name}
+              </Text>
+            ) : null}
           </BlockStack>
           <InlineStack blockAlign="center" gap="200">
             <Badge>Snapshot tracking</Badge>
@@ -143,12 +146,10 @@ export function ChannelPerformanceCard({
               <Kpi
                 label="Human sessions"
                 value={formatCount(data.summary.humanSessions)}
-                detail="Real + Zombie"
               />
               <Kpi
                 label="Real traffic"
                 value={formatRate(data.summary.realShare)}
-                detail="of all captured sessions"
                 bordered
               />
               <Kpi
@@ -162,11 +163,16 @@ export function ChannelPerformanceCard({
             <BlockStack gap="150">
               <InlineStack align="space-between" blockAlign="start" gap="300">
                 <BlockStack gap="050">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {metric === "humanSessions"
-                      ? "Human sessions by channel"
-                      : "Conversion rate by channel"}
-                  </Text>
+                  <InlineStack gap="100" blockAlign="center">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {metric === "humanSessions"
+                        ? "Human sessions by channel"
+                        : "Conversion rate by channel"}
+                    </Text>
+                    <Tooltip content="Human sessions are Real + Zombie; real traffic share is Real ÷ all captured sessions. Each acquisition session is counted once, in its first captured time bucket. Conversion rate is converted human sessions ÷ human sessions (gaps mean no human sessions). While the snapshot is active, the current bucket may be partial.">
+                      <Icon source={InfoIcon} tone="subdued" />
+                    </Tooltip>
+                  </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
                     {formatRange(data)}
                     {data.range?.truncated
@@ -194,21 +200,13 @@ export function ChannelPerformanceCard({
                   message={
                     data.summary.sessions === 0
                       ? "No sessions captured in this range yet. The graph will appear as new traffic arrives."
-                      : "No human sessions have been classified in this range yet. Bots and pending sessions are not plotted as human traffic."
+                      : "No human sessions have been classified in this range yet."
                   }
                 />
               )}
             </BlockStack>
 
-            <InlineStack align="space-between" blockAlign="center" gap="300">
-              <Text as="span" variant="bodySm" tone="subdued">
-                {metric === "conversionRate"
-                  ? "Converted human sessions ÷ human sessions. Gaps mean no human sessions."
-                  : "Each acquisition session is counted once, in its first captured time bucket."}
-                {data.snapshot.status === "ACTIVE"
-                  ? " Current bucket may be partial."
-                  : ""}
-              </Text>
+            <InlineStack align="end" blockAlign="center" gap="300">
               <InlineStack gap="300" blockAlign="center">
                 <Button
                   variant="plain"
@@ -507,12 +505,7 @@ function ChannelTrendChart({
           gap: "4px 12px",
         }}
       >
-        {hoveredBucket === null ? (
-          <span>
-            Hover over the graph, or focus it and use arrow keys, to inspect a
-            date.
-          </span>
-        ) : (
+        {(
           <>
             <strong>
               {formatBucket(
@@ -610,7 +603,7 @@ function Kpi({
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail?: string;
   bordered?: boolean;
 }) {
   return (
@@ -634,9 +627,11 @@ function Kpi({
       >
         {value}
       </div>
-      <Text as="p" variant="bodySm" tone="subdued">
-        {detail}
-      </Text>
+      {detail ? (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {detail}
+        </Text>
+      ) : null}
     </div>
   );
 }

@@ -12,11 +12,6 @@ export function ProfileSetupBanner() {
         content: "Create profile",
         onAction: () => navigate("/app/challenges/profile?returnTo=/app/challenges"),
       }}
-    >
-      <p>
-        Create a display name and avatar to start posting insights and helping
-        fellow merchants.
-      </p>
-    </Banner>
+    />
   );
 }

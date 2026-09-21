@@ -186,9 +186,6 @@ export function PlanUsageCard({ access }: { access: BillingAccessLike }) {
             <Text as="h2" variant="headingMd">
               Current plan
             </Text>
-            <Text as="p" tone="subdued">
-              Free limits are enforced across all snapshots and tests.
-            </Text>
           </BlockStack>
           <Badge tone={access.plan === "FREE" ? "attention" : "success"}>
             {access.plan}

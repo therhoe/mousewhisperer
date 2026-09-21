@@ -7,11 +7,14 @@ import {
   BlockStack,
   Button,
   Card,
+  Icon,
   InlineStack,
   Layout,
   Page,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
   authenticate,
@@ -32,7 +35,6 @@ const PRICING_PLANS = [
     shopifyPlan: WHISPER_PLAN,
     billingPlan: "WHISPER" as const,
     name: "Whisper",
-    tagline: "For stores moving from first audits into repeat page testing.",
     price: "$49.99",
     compareAt: "$79",
     recommended: false,
@@ -40,18 +42,11 @@ const PRICING_PLANS = [
     background:
       "linear-gradient(145deg, #ffffff 0%, #f5fbff 55%, #eef5ff 100%)",
     limits: PLAN_LIMITS.WHISPER,
-    features: [
-      "5 store snapshots included",
-      "50 page and channel snapshots included",
-      "5 A/B tests included",
-      "Up to 5,000 visitors per snapshot",
-    ],
   },
   {
     shopifyPlan: SIGNAL_PLAN,
     billingPlan: "SIGNAL" as const,
     name: "Signal",
-    tagline: "For teams using Snapshot as a decision engine.",
     price: "$99.99",
     compareAt: "$149",
     recommended: true,
@@ -59,12 +54,6 @@ const PRICING_PLANS = [
     background:
       "linear-gradient(145deg, #fffaf0 0%, #fff5d6 42%, #effaf5 100%)",
     limits: PLAN_LIMITS.SIGNAL,
-    features: [
-      "20 store snapshots included",
-      "250 page and channel snapshots included",
-      "25 A/B tests included",
-      "Up to 25,000 visitors per snapshot",
-    ],
   },
 ];
 
@@ -100,7 +89,6 @@ export default function UpgradePage() {
   return (
     <Page
       title="Upgrade plan"
-      subtitle="Choose the monthly Snapshot plan that matches how often you audit, test, and act on storefront behavior."
       backAction={{ content: "Dashboard", url: "/app" }}
     >
       <TitleBar title="Upgrade plan" />
@@ -109,10 +97,7 @@ export default function UpgradePage() {
           <BlockStack gap="500">
             {approved ? (
               <Banner tone="success" title="Billing approved">
-                <Text as="p">
-                  Your plan is active. The new limits are now available across
-                  snapshots and A/B tests.
-                </Text>
+                <Text as="p">Your plan is active.</Text>
               </Banner>
             ) : null}
             {failed ? (
@@ -135,15 +120,14 @@ export default function UpgradePage() {
 
             <Card>
               <InlineStack align="space-between" blockAlign="center" gap="400">
-                <BlockStack gap="100">
+                <InlineStack gap="100" blockAlign="center">
                   <Text as="h2" variant="headingMd">
                     Current plan
                   </Text>
-                  <Text as="p" tone="subdued">
-                    Limits count the snapshots and tests currently in this
-                    store. Deleted records free capacity.
-                  </Text>
-                </BlockStack>
+                  <Tooltip content="Limits count the snapshots and tests currently in this store. Deleted records free capacity.">
+                    <Icon source={InfoIcon} tone="subdued" />
+                  </Tooltip>
+                </InlineStack>
                 <Badge tone={billingAccess.isFree ? "attention" : "success"}>
                   {billingAccess.planName}
                 </Badge>
@@ -242,9 +226,6 @@ function PlanCard({
                 {plan.name}
               </Text>
             </InlineStack>
-            <Text as="p" tone="subdued">
-              {plan.tagline}
-            </Text>
           </BlockStack>
 
           <InlineStack gap="250" blockAlign="end">
@@ -270,32 +251,6 @@ function PlanCard({
           </InlineStack>
 
           <PlanLimitGrid limits={plan.limits} compact />
-
-          <BlockStack gap="150">
-            {plan.features.map((feature) => (
-              <InlineStack key={feature} gap="200" blockAlign="start" wrap={false}>
-                <span
-                  aria-hidden
-                  style={{
-                    width: 18,
-                    height: 18,
-                    borderRadius: 999,
-                    background: "#d9f7e8",
-                    color: "#008060",
-                    display: "inline-grid",
-                    placeItems: "center",
-                    fontSize: 12,
-                    fontWeight: 800,
-                    flexShrink: 0,
-                    marginTop: 2,
-                  }}
-                >
-                  ✓
-                </span>
-                <Text as="span">{feature}</Text>
-              </InlineStack>
-            ))}
-          </BlockStack>
 
           <Button
             fullWidth

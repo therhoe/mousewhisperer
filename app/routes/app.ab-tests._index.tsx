@@ -1228,7 +1228,7 @@ function MetricBlock({
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail?: string;
   tone?: "positive" | "negative" | "neutral";
 }) {
   const colorByTone = {
@@ -1253,9 +1253,11 @@ function MetricBlock({
       >
         {value}
       </div>
-      <Text as="span" tone="subdued">
-        {detail}
-      </Text>
+      {detail ? (
+        <Text as="span" tone="subdued">
+          {detail}
+        </Text>
+      ) : null}
     </div>
   );
 }
@@ -1869,23 +1871,19 @@ function SnapshotListOption({
           <MetricBlock
             label="ATC"
             value={formatPercentValue(snapshot.atcRate)}
-            detail="add-to-cart"
           />
           <MetricBlock
             label="CVR"
             value={formatPercentValue(snapshot.convRate)}
-            detail="conversion"
           />
           <MetricBlock
             label="Exit"
             value={formatPercentValue(snapshot.exitRate)}
-            detail="leaving"
             tone={snapshot.exitRate > 35 ? "negative" : "neutral"}
           />
           <MetricBlock
             label="Scroll"
             value={formatPercentValue(snapshot.avgScrollDepth)}
-            detail="avg depth"
           />
         </div>
       </BlockStack>
@@ -2854,7 +2852,6 @@ export default function AbTestsIndex() {
   return (
     <Page
       title="A/B tests"
-      subtitle="Test Shopify templates against each other and measure the winning storefront experience."
       primaryAction={{
         content: billingAccess.canCreateAbTest
           ? "Create a test"
@@ -2884,7 +2881,7 @@ export default function AbTestsIndex() {
         {!billingAccess.canCreateAbTest ? (
           <PremiumGateCard
             title="A/B testing is available on paid plans"
-            message="Free stores can run audits and one store snapshot. Upgrade to compare Shopify templates and measure winners."
+            message="Upgrade to compare Shopify templates."
           />
         ) : null}
 
@@ -3055,10 +3052,6 @@ export default function AbTestsIndex() {
                       Create New A/B Test
                     </Text>
                   </InlineStack>
-                  <Text as="p" tone="subdued">
-                    Pick a page type, choose the original template, then set up
-                    the variant to test against it.
-                  </Text>
                 </BlockStack>
                 <InlineStack gap="200" blockAlign="center">
                   {wizardStep === "settings" ? (
@@ -3086,9 +3079,6 @@ export default function AbTestsIndex() {
                     <BlockStack gap="100">
                       <Text as="h3" variant="headingLg">
                         What do you want to test?
-                      </Text>
-                      <Text as="p" tone="subdued">
-                        A and B always compare templates of the same page type.
                       </Text>
                     </BlockStack>
                   </div>
@@ -3228,11 +3218,6 @@ export default function AbTestsIndex() {
                                   label="B · Variant"
                                   tone="yellow"
                                 />
-                                <Text as="span" tone="subdued">
-                                  Choose an existing{" "}
-                                  {selectedPageTypeLabel.toLowerCase()}{" "}
-                                  template.
-                                </Text>
                               </BlockStack>
                               <Button onClick={returnToVariantBuildOptions}>
                                 Back
@@ -3313,11 +3298,6 @@ export default function AbTestsIndex() {
                                   label="B · Variant"
                                   tone="yellow"
                                 />
-                                <Text as="span" tone="subdued">
-                                  Select a completed{" "}
-                                  {selectedPageTypeLabel.toLowerCase()} snapshot
-                                  to guide the B template.
-                                </Text>
                               </BlockStack>
                               <Button onClick={returnToVariantBuildOptions}>
                                 Back
@@ -3417,9 +3397,6 @@ export default function AbTestsIndex() {
                               gap="300"
                             >
                               <VariantBadge label="B · Variant" tone="yellow" />
-                              <Text as="span" tone="subdued">
-                                How to build it
-                              </Text>
                             </InlineStack>
 
                             {showVariantCreateError ? (
@@ -3640,10 +3617,6 @@ export default function AbTestsIndex() {
                       <Text as="h3" variant="headingLg">
                         Traffic & Goal
                       </Text>
-                      <Text as="p" tone="subdued">
-                        Review the templates, name the test, then choose how to
-                        split traffic and judge the result.
-                      </Text>
                     </BlockStack>
                     <Button onClick={() => setWizardStep("setup")}>
                       Change setup
@@ -3744,9 +3717,6 @@ export default function AbTestsIndex() {
                           <Text as="h3" variant="headingMd">
                             Page targeting
                           </Text>
-                          <Text as="p" tone="subdued">
-                            This test runs on pages assigned to Original (A).
-                          </Text>
                           <div
                             style={{
                               border: "1px solid var(--p-color-border)",
@@ -3784,10 +3754,6 @@ export default function AbTestsIndex() {
                           <BlockStack gap="100">
                             <Text as="h3" variant="headingMd">
                               Traffic split
-                            </Text>
-                            <Text as="p" tone="subdued">
-                              Allocate traffic between Original (A) and Variant
-                              (B).
                             </Text>
                           </BlockStack>
 
@@ -3929,10 +3895,6 @@ export default function AbTestsIndex() {
                           <BlockStack gap="100">
                             <Text as="h3" variant="headingMd">
                               Goal
-                            </Text>
-                            <Text as="p" tone="subdued">
-                              Choose the primary metric used to judge the
-                              winner.
                             </Text>
                           </BlockStack>
                           <div

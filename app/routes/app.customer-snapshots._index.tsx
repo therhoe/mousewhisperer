@@ -16,6 +16,7 @@ import {
   Button,
   Card,
   FormLayout,
+  Icon,
   InlineStack,
   Modal,
   Page,
@@ -23,7 +24,9 @@ import {
   Select,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
+import { InfoIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
@@ -178,7 +181,6 @@ export default function CustomerSnapshots() {
   return (
     <Page
       title="Customer Snapshots"
-      subtitle="Follow visitors from a chosen source, campaign, or ad through their store session."
       backAction={{ content: "Dashboard", url: "/app" }}
       primaryAction={
         activeId
@@ -204,43 +206,22 @@ export default function CustomerSnapshots() {
       <div style={{ paddingBottom: 48 }}>
         <BlockStack gap="400">
           <Card>
-            <BlockStack gap="300">
-              <InlineStack gap="200">
-                <Badge tone="info">Source → journey → outcome</Badge>
-                <Badge>Anonymous sessions</Badge>
-              </InlineStack>
-              <Text as="h2" variant="headingLg">
-                See what happens after the click
-              </Text>
-              <Text as="p">
-                Choose the arrivals to follow, then explore their pages, clicks,
-                cart actions, and purchases in order.
-              </Text>
-              <Text as="p" tone="subdued">
-                New arrivals are collected after a snapshot starts. A session
-                ends after 30 minutes of inactivity. Collection depends on
-                storefront tracking and visitor consent.
-              </Text>
-            </BlockStack>
-          </Card>
-          <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd">
-                  Snapshot history
-                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Snapshot history
+                  </Text>
+                  <Tooltip content="New arrivals are collected after a snapshot starts. A session ends after 30 minutes of inactivity. Collection depends on storefront tracking and visitor consent.">
+                    <Icon source={InfoIcon} tone="subdued" />
+                  </Tooltip>
+                </InlineStack>
                 <Text as="span" tone="subdued">
                   {total} snapshots
                 </Text>
               </InlineStack>
               {!snapshots.length ? (
-                <BlockStack gap="200">
-                  <Text as="p">No customer snapshots yet.</Text>
-                  <Text as="p" tone="subdued">
-                    Start with one campaign to see which paths lead to a
-                    purchase and where visitors leave.
-                  </Text>
-                </BlockStack>
+                <Text as="p">No customer snapshots yet.</Text>
               ) : (
                 <div style={{ overflowX: "auto" }}>
                   <table
