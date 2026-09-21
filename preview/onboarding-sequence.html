@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onboarding sequence — current first-install experience</title>
+<style>
+  :root {
+    --bg: #f1f1f1; --surface: #fff; --text: #202223; --subdued: #6d7175;
+    --border: #e1e3e5; --border-subdued: #ebebeb;
+    --success-bg: #cdeadd; --success-text: #0d5c3f;
+    --info-bg: #d9e9f7; --info-text: #17457a;
+    --warn-bg: #ffea8a; --warn-text: #5c4803;
+    --panel-bg: #eaf4ff; --panel-border: #d4e5f3;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Inter, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px; color: var(--text); background: var(--bg); padding: 24px; }
+  .wrap { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 20px; }
+  .lede { color: var(--subdued); line-height: 1.5; }
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); padding: 10px 0; z-index: 10; }
+  .step-btn { border: 1px solid #c9cccf; background: #fff; border-radius: 999px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; color: var(--subdued); }
+  .step-btn.active { background: #1a1a1a; border-color: #1a1a1a; color: #fff; }
+  .screen { display: none; flex-direction: column; gap: 16px; }
+  .screen.active { display: flex; }
+  .card { background: var(--surface); border-radius: 12px; box-shadow: 0 1px 0 rgba(0,0,0,.05), 0 0 0 1px rgba(0,0,0,.05); padding: 20px; }
+  .note { border-left: 4px solid #b98900; background: #fff8e1; border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.5; }
+  .note strong { display: block; margin-bottom: 4px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .between { justify-content: space-between; }
+  .subdued { color: var(--subdued); font-size: 12px; }
+  .btn { font-size: 13px; font-weight: 550; padding: 6px 12px; border-radius: 8px; border: 1px solid #c9cccf; background: #fff; cursor: pointer; }
+  .btn.primary { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+  .btn.plain { border: 0; background: none; color: #2c6ecb; padding: 4px 6px; }
+  .btn.slim { padding: 4px 10px; font-size: 12px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 550; padding: 2px 10px; border-radius: 10px; background: #e4e5e7; }
+  .badge.info { background: var(--info-bg); color: var(--info-text); }
+  .badge.success { background: var(--success-bg); color: var(--success-text); }
+  .panel { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 18px; padding: 20px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .callout { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px; border-radius: 12px; border: 1px solid #c6dceb; background: rgba(255,255,255,.74); }
+  .empty-chart { height: 180px; display: grid; place-items: center; color: #66727d; font-size: 13px; border-top: 1px solid #cbddeb; border-bottom: 1px solid #cbddeb; }
+  .choice { display: flex; gap: 10px; padding: 8px 0; align-items: flex-start; }
+  .choice input { margin-top: 3px; }
+  .choice .help { color: var(--subdued); font-size: 12px; margin-top: 2px; }
+  .modal-mock { max-width: 620px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.15); }
+  .modal-mock .head { padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 650; font-size: 15px; display: flex; justify-content: space-between; }
+  .modal-mock .body { padding: 20px; }
+  .modal-mock .foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+  .field label { font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px; }
+  .field input { width: 100%; font-size: 13px; padding: 8px 12px; border: 1px solid #c9cccf; border-radius: 8px; }
+  .field .help { color: var(--subdued); font-size: 12px; margin-top: 4px; }
+  .field { margin-bottom: 14px; }
+  .install-box { border: 1px dashed #c9cccf; border-radius: 12px; padding: 24px; background: #fafbfb; display: flex; flex-direction: column; gap: 12px; }
+  .tabs-mock { display: flex; gap: 8px; padding: 12px 24px; border: 1px solid var(--border-subdued); border-radius: 8px; background: #fff; font-size: 13px; }
+  .tabs-mock span { padding: 6px 10px; border-radius: 6px; color: var(--text); }
+  .tabs-mock span.on { background: #f1f1f1; font-weight: 650; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Onboarding sequence — what a merchant sees today</h1>
+  <p class="lede">
+    Recreation of the current first-install experience, screen by screen, taken from the code on the
+    <code>tooltags</code> branch. <strong>Finding: the app has no dedicated onboarding wizard.</strong>
+    After Shopify's own install screen, the merchant lands straight on the dashboard in its first-run
+    state. The yellow notes flag gaps to consider in tomorrow's redesign.
+  </p>
+
+  <div class="steps">
+    <button class="step-btn active" data-s="s1" onclick="go('s1', this)">1 · Install</button>
+    <button class="step-btn" data-s="s2" onclick="go('s2', this)">2 · First dashboard</button>
+    <button class="step-btn" data-s="s3" onclick="go('s3', this)">3 · Tracking not active</button>
+    <button class="step-btn" data-s="s4" onclick="go('s4', this)">4 · Create New Audit</button>
+    <button class="step-btn" data-s="s5" onclick="go('s5', this)">5 · Create Audit form</button>
+    <button class="step-btn" data-s="s6" onclick="go('s6', this)">6 · Empty states</button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="screen active" id="s1">
+    <div class="install-box">
+      <div style="font-weight:700; font-size:15px;">Shopify App Store → Install</div>
+      <p class="subdued" style="font-size:13px; line-height:1.5;">
+        This screen is owned by Shopify: the merchant clicks Install on the app listing, then approves
+        the permission grant (read products/themes, write pixels, etc.). The app cannot customize it.
+        After approving, Shopify redirects into the embedded app — which lands directly on the Dashboard (step 2).
+      </p>
+    </div>
+    <div class="note">
+      <strong>Gap</strong>
+      There is no welcome screen, tour, or setup checklist between install and the dashboard.
+      The first thing a brand-new merchant sees is an analytics dashboard with no data in it.
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="screen" id="s2">
+    <div class="tabs-mock">
+      <span class="on">Dashboard</span><span>Store Snapshots</span><span>Channel Snapshots</span>
+      <span>Customer Snapshots</span><span>Page Snapshots</span><span>A/B Tests</span>
+    </div>
+
+    <div class="card" style="display:flex; flex-direction:column; gap:16px;">
+      <div class="row between">
+        <h2 style="font-size:20px;">Conversion progress</h2>
+        <div class="row">
+          <button class="btn slim">Clean graph</button>
+          <button class="btn primary">Log optimization</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="row between">
+          <div>
+            <div style="font-weight:650;">Conversion rate over time</div>
+            <div style="font-size:28px; font-weight:700; margin-top:4px;">—</div>
+            <div class="subdued">Month to date</div>
+          </div>
+          <span class="badge info">Shopify Analytics</span>
+        </div>
+        <div class="callout">
+          <div>
+            <div style="font-weight:600; font-size:12px;">Shopify app approval is still required</div>
+            <div class="subdued" style="margin-top:4px;">Shopify has not yet granted this store access to the reports API.</div>
+            <div class="subdued" style="margin-top:4px;">No additional store activity is needed. The Snapshot app owner must complete this approval in Shopify Partner Dashboard.</div>
+          </div>
+        </div>
+        <div class="empty-chart">Conversion data will appear here after Shopify grants access</div>
+      </div>
+      <div class="row between">
+        <div style="font-weight:650;">CRO activity</div>
+        <span class="subdued">0 total in this period</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <h2 style="font-size:16px;">Getting Started</h2>
+        <button class="btn plain">Dismiss</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="gap:32px; flex-wrap:wrap;">
+        <h2 style="font-size:16px;">Store snapshot</h2>
+        <div><div class="subdued" style="margin-bottom:3px;">Status</div><span class="badge info">Not started</span></div>
+        <div><div class="subdued" style="margin-bottom:3px;">Captured visits</div><div style="font-weight:650;">0</div></div>
+        <div><div class="subdued" style="margin-bottom:3px;">Audit types</div><div style="font-weight:650;">5</div></div>
+        <span style="flex:1;"></span>
+        <button class="btn primary">Start snapshot</button>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>Gaps</strong>
+      1) The "Getting Started" card is now just a heading with a Dismiss button — its body copy was removed
+      in the tooltags cleanup, so it teaches nothing. This is the natural home for a real setup checklist.<br>
+      2) The most prominent card on first load is an approval-blocked analytics panel the merchant can do
+      nothing about. Consider reordering or softening for first-run.
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="screen" id="s3">
+    <div class="card">
+      <div class="row between">
+        <span class="row" style="gap:10px;">
+          <span class="subdued" style="font-size:13px;">Rich storefront tracking</span>
+          <span class="badge">Not active</span>
+        </span>
+        <span class="row" style="gap:10px;">
+          <span class="subdued">hero-outfitters.myshopify.com</span>
+          <button class="btn plain slim">Retry</button>
+        </span>
+      </div>
+    </div>
+    <div class="note">
+      <strong>Biggest gap in the current flow</strong>
+      Rich tracking requires the merchant to enable the "tracking-embed" theme app embed in the theme
+      editor — but nothing anywhere in the app tells them this or links them there. The status row just
+      says "Not active" with a Retry button. A redesigned onboarding should deep-link to
+      <code>/admin/themes/current/editor?context=apps</code> with a clear "Enable tracking" step, and
+      verify automatically once it's on.
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="screen" id="s4">
+    <p class="subdued">Clicking "Create New Audit" (the dashboard's primary action) opens this modal — the merchant's first real decision:</p>
+    <div class="modal-mock">
+      <div class="head"><span>What do you want to track?</span><span style="color:#8c9196; cursor:pointer;">✕</span></div>
+      <div class="body">
+        <div style="font-weight:600; margin-bottom:8px;">Select page type</div>
+        <label class="choice"><input type="radio" name="pt" checked><span><div>Product page</div><div class="help">Track visitor engagement on a product page (/products/...)</div></span></label>
+        <label class="choice"><input type="radio" name="pt"><span><div>Collection page</div><div class="help">Track visitor engagement on a collection page (/collections/...)</div></span></label>
+        <label class="choice"><input type="radio" name="pt"><span><div>Homepage</div><div class="help">Track visitor engagement on your store homepage (/)</div></span></label>
+        <label class="choice"><input type="radio" name="pt"><span><div>Page</div><div class="help">Track visitor engagement on a custom page (/pages/...)</div></span></label>
+        <label class="choice"><input type="radio" name="pt"><span><div>Blog</div><div class="help">Track visitor engagement on a blog or blog post (/blogs/...)</div></span></label>
+      </div>
+      <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Continue</button></div>
+    </div>
+    <div class="note">
+      <strong>Observation</strong>
+      For product/collection types, Continue opens Shopify's native resource picker to choose the
+      product, then the Create Audit form (step 5). If tracking isn't enabled yet (step 3), the audit
+      will sit at 0 visitors with no explanation of why.
+    </div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="screen" id="s5">
+    <div class="modal-mock">
+      <div class="head"><span>Create Audit: Trail Runner 2</span><span style="color:#8c9196; cursor:pointer;">✕</span></div>
+      <div class="body">
+        <div class="field">
+          <label>Snapshot Name</label>
+          <input type="text" placeholder="e.g., Baseline, After Redesign">
+          <div class="help">Optional label for this measurement period</div>
+        </div>
+        <div class="field">
+          <label>Target Visitors</label>
+          <input type="number" value="1000">
+          <div class="help">Number of real visitors to collect before completing the snapshot</div>
+        </div>
+        <div class="subdued">Free plan limit: up to 1,000 visitors per snapshot.</div>
+      </div>
+      <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Create Audit</button></div>
+    </div>
+    <div class="note">
+      <strong>Known bug (also flagged on the tooltags branch)</strong>
+      The limit line always says "Free plan limit" even for paid merchants — the label is hardcoded.
+    </div>
+  </div>
+
+  <!-- STEP 6 -->
+  <div class="screen" id="s6">
+    <p class="subdued">Until data arrives, every other section shows an empty state (exact strings from code):</p>
+    <div class="card"><div style="font-weight:650; margin-bottom:8px;">Store snapshots</div><span class="subdued">No store snapshots yet.</span></div>
+    <div class="card">
+      <div style="font-weight:650; margin-bottom:8px;">Channel snapshots</div>
+      <div style="text-align:center; padding:12px 0;">
+        <div style="font-weight:650;">No channel snapshots yet</div>
+        <div class="subdued" style="margin-top:4px;">Start a snapshot to compare new arrivals by channel, source, and campaign.</div>
+      </div>
+    </div>
+    <div class="card"><div style="font-weight:650; margin-bottom:8px;">Customer snapshots</div><span class="subdued">No customer snapshots yet.</span></div>
+    <div class="card">
+      <div style="font-weight:650; margin-bottom:8px;">A/B tests</div>
+      <div style="text-align:center; padding:12px 0;">
+        <div style="font-weight:650;">No live A/B tests</div>
+        <div class="subdued" style="margin-top:4px;">Create a template test to compare the original page against a different Shopify template.</div>
+        <button class="btn primary" style="margin-top:10px;">Create a test</button>
+      </div>
+    </div>
+    <div class="note">
+      <strong>Redesign starting points for tomorrow</strong>
+      1) Replace the empty "Getting Started" card with a real checklist: Enable tracking → Start store
+      snapshot → Create first audit → (paid) Create A/B test, with live checkmarks.<br>
+      2) Add the theme-embed deep link + auto-verification.<br>
+      3) Consider a one-time welcome modal after install instead of dropping merchants on a data-less dashboard.<br>
+      4) First-run variant of the Conversion progress card that leads with "what happens next" rather than the approval warning.
+    </div>
+  </div>
+</div>
+
+<script>
+  function go(id, btn) {
+    document.querySelectorAll(".screen").forEach(function (s) { s.classList.remove("active"); });
+    document.querySelectorAll(".step-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.getElementById(id).classList.add("active");
+    btn.classList.add("active");
+  }
+</script>
+</body>
+</html>
