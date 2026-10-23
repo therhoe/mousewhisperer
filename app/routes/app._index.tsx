@@ -1,15 +1,14 @@
 import { useState } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Page } from "@shopify/polaris";
+import { BlockStack, Layout, Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { listGrowthProjects } from "../utils/growth-projects.server";
 import { GrowthProjectList } from "../components/GrowthProjectList";
 import { GrowthProjectForm } from "../components/GrowthProjectForm";
 import { GrowthOverviewCard } from "../components/GrowthOverviewCard";
+import { useLanguageActionGroup } from "../components/LanguageMenu";
 import { useI18n } from "../utils/i18n";
-import styles from "../styles/projects.css?url";
-export const links = () => [{ rel: "stylesheet", href: styles }];
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   // Shopify reports load independently, never on the critical navigation path.
@@ -22,6 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const language = useLanguageActionGroup();
   const [create, setCreate] = useState(false);
   return (
     <Page
@@ -33,11 +33,20 @@ export default function Dashboard() {
       secondaryActions={[
         { content: t("Create A/B test"), url: "/app/ab-tests?create=1" },
       ]}
+      actionGroups={[language]}
     >
-      <div className="gp-stack">
-        <GrowthOverviewCard shop={data.shop} />
-        <GrowthProjectList projects={data.projects} recent />
-      </div>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            <GrowthOverviewCard shop={data.shop} />
+            <GrowthProjectList
+              projects={data.projects}
+              recent
+              onCreate={() => setCreate(true)}
+            />
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
       {create && (
         <GrowthProjectForm
           open

@@ -1401,4 +1401,314 @@ export const catalog: Record<string, readonly [string, string, string]> = {
       "结果表示本报告中同一会话内的关联，不证明先后顺序或因果关系。使用已记录的会话 ID，而非跨设备用户身份。跟踪缺失可能导致结果不完整；不可用表示无法关联记录。环形图保留原始点击总数。",
       "結果表示本報告中同一工作階段內的關聯，不證明先後順序或因果關係。使用已記錄的工作階段 ID，而非跨裝置使用者身分。追蹤缺失可能導致結果不完整；無法取得表示無法關聯記錄。環圈圖保留原始點擊總數。",
     ],
+  "A project tracks one goal. Measure a page or your whole store, test ideas and see what moved the numbers.": [
+    "Ein Projekt verfolgt ein Ziel. Messen Sie eine Seite oder Ihren ganzen Shop, testen Sie Ideen und sehen Sie, was die Zahlen bewegt hat.",
+    "每个项目追踪一个目标。测量单个页面或整个商店，测试想法，看看是什么推动了数据变化。",
+    "每個專案追蹤一個目標。測量單一頁面或整個商店，測試想法，看看是什麼推動了數據變化。",
+  ],
+  "A/B test": [
+    "A/B-Test",
+    "A/B 测试",
+    "A/B 測試",
+  ],
+  "All counts every visitor. Active leaves out bots and visitors who didn't engage.": [
+    "Alle zählt jeden Besucher. Aktiv lässt Bots und Besucher ohne Interaktion weg.",
+    "“全部”统计所有访客；“活跃”排除机器人和未互动的访客。",
+    "「全部」統計所有訪客；「活躍」排除機器人和未互動的訪客。",
+  ],
+  "All projects": [
+    "Alle Projekte",
+    "所有项目",
+    "所有專案",
+  ],
+  "Apply": [
+    "Anwenden",
+    "应用",
+    "套用",
+  ],
+  "Average order value of online store orders, before returns.": [
+    "Durchschnittlicher Bestellwert der Onlineshop-Bestellungen, vor Rücksendungen.",
+    "在线商店订单的平均订单价值（退货前）。",
+    "網路商店訂單的平均訂單價值（退貨前）。",
+  ],
+  "Change page": [
+    "Seite ändern",
+    "更换页面",
+    "更換頁面",
+  ],
+  "Compared with {name} using the same filters. A before/after change suggests, but does not prove, that your change caused it. Use an A/B test for proof.": [
+    "Verglichen mit {name} bei gleichen Filtern. Eine Vorher/Nachher-Änderung deutet darauf hin, beweist aber nicht, dass Ihre Änderung die Ursache war. Nutzen Sie dafür einen A/B-Test.",
+    "使用相同筛选条件与 {name} 对比。前后变化只能提示、不能证明是你的改动造成的；如需证明，请使用 A/B 测试。",
+    "使用相同篩選條件與 {name} 比較。前後變化只能提示、不能證明是你的變更造成的；如需證明，請使用 A/B 測試。",
+  ],
+  "Complete this measurement?": [
+    "Diese Messung abschließen?",
+    "完成此测量？",
+    "完成此測量？",
+  ],
+  "Customer journeys": [
+    "Kundenpfade",
+    "客户旅程",
+    "顧客旅程",
+  ],
+  "Each row is one visit, using the filters above.": [
+    "Jede Zeile ist ein Besuch, gefiltert wie oben.",
+    "每一行是一次访问，使用上方的筛选条件。",
+    "每一列是一次造訪，使用上方的篩選條件。",
+  ],
+  "Every page of your store.": [
+    "Alle Seiten Ihres Shops.",
+    "商店的所有页面。",
+    "商店的所有頁面。",
+  ],
+  "From Shopify Analytics. Project results use Snapshot's own tracking, so numbers can differ slightly.": [
+    "Aus Shopify Analytics. Projektergebnisse nutzen das eigene Tracking von Snapshot, daher können die Zahlen leicht abweichen.",
+    "数据来自 Shopify Analytics。项目结果使用 Snapshot 自身的追踪，因此数字可能略有差异。",
+    "資料來自 Shopify Analytics。專案結果使用 Snapshot 自身的追蹤，因此數字可能略有差異。",
+  ],
+  "Growth levers": [
+    "Wachstumshebel",
+    "增长杠杆",
+    "成長槓桿",
+  ],
+  "It stops collecting now and can't be restarted. You can start a new measurement any time.": [
+    "Die Erfassung endet sofort und kann nicht neu gestartet werden. Sie können jederzeit eine neue Messung starten.",
+    "将立即停止收集数据且无法重新开始。你可以随时开始新的测量。",
+    "將立即停止收集資料且無法重新開始。你可以隨時開始新的測量。",
+  ],
+  "Journey tracking on": [
+    "Pfad-Tracking aktiv",
+    "已开启旅程追踪",
+    "已開啟旅程追蹤",
+  ],
+  "Latest measurement": [
+    "Letzte Messung",
+    "最新测量",
+    "最新測量",
+  ],
+  "Lifetime value is what customers who bought in this period have spent in total so far, not a forecast.": [
+    "Der Customer Lifetime Value ist, was Kunden, die in diesem Zeitraum gekauft haben, bisher insgesamt ausgegeben haben – keine Prognose.",
+    "生命周期价值是本期间下单的客户迄今为止的总消费，并非预测值。",
+    "終身價值是本期間下單的顧客至今的總消費，並非預測值。",
+  ],
+  "Log the changes you make so you can line them up with your results.": [
+    "Protokollieren Sie Ihre Änderungen, um sie mit Ihren Ergebnissen abzugleichen.",
+    "记录你所做的改动，方便与结果对照。",
+    "記錄你所做的變更，方便與結果對照。",
+  ],
+  "Medium and campaign": [
+    "Medium und Kampagne",
+    "媒介和广告系列",
+    "媒介和廣告活動",
+  ],
+  "More filters": [
+    "Weitere Filter",
+    "更多筛选",
+    "更多篩選",
+  ],
+  "No measurements yet": [
+    "Noch keine Messungen",
+    "暂无测量",
+    "尚無測量",
+  ],
+  "No measurements yet.": [
+    "Noch keine Messungen.",
+    "暂无测量。",
+    "尚無測量。",
+  ],
+  "Not started": [
+    "Nicht gestartet",
+    "未开始",
+    "未開始",
+  ],
+  "Nothing logged yet.": [
+    "Noch nichts protokolliert.",
+    "尚无记录。",
+    "尚無記錄。",
+  ],
+  "Observed spend per customer": [
+    "Bisherige Ausgaben pro Kunde",
+    "每位客户的实际消费",
+    "每位顧客的實際消費",
+  ],
+  "One product, collection, page or blog.": [
+    "Ein Produkt, eine Kollektion, eine Seite oder ein Blog.",
+    "单个产品、产品系列、页面或博客。",
+    "單一商品、商品系列、頁面或部落格。",
+  ],
+  "Online store orders": [
+    "Onlineshop-Bestellungen",
+    "在线商店订单",
+    "網路商店訂單",
+  ],
+  "Online store sessions": [
+    "Onlineshop-Sitzungen",
+    "在线商店会话",
+    "網路商店工作階段",
+  ],
+  "Open classic report": [
+    "Klassischen Bericht öffnen",
+    "打开经典报告",
+    "開啟經典報告",
+  ],
+  "Opens your results filtered to this source. Every source is still tracked.": [
+    "Ihre Ergebnisse öffnen gefiltert auf diese Quelle. Alle Quellen werden weiterhin erfasst.",
+    "结果将按此来源筛选打开。所有来源仍会被追踪。",
+    "結果將按此來源篩選開啟。所有來源仍會被追蹤。",
+  ],
+  "Optimization log": [
+    "Optimierungsprotokoll",
+    "优化记录",
+    "優化記錄",
+  ],
+  "Other source…": [
+    "Andere Quelle…",
+    "其他来源…",
+    "其他來源…",
+  ],
+  "Project results": [
+    "Projektergebnisse",
+    "项目结果",
+    "專案結果",
+  ],
+  "Records the path each visitor takes through your store. Uses one extra measurement from your plan.": [
+    "Zeichnet den Weg jedes Besuchers durch Ihren Shop auf. Verbraucht eine zusätzliche Messung Ihres Tarifs.",
+    "记录每位访客在商店中的浏览路径。会额外占用方案中的一次测量。",
+    "記錄每位訪客在商店中的瀏覽路徑。會額外佔用方案中的一次測量。",
+  ],
+  "Results": [
+    "Ergebnisse",
+    "结果",
+    "結果",
+  ],
+  "Sales metrics are not available for this store yet.": [
+    "Verkaufskennzahlen sind für diesen Shop noch nicht verfügbar.",
+    "此商店暂无销售指标。",
+    "此商店尚無銷售指標。",
+  ],
+  "Sessions that completed checkout": [
+    "Sitzungen mit abgeschlossenem Checkout",
+    "完成结账的会话",
+    "完成結帳的工作階段",
+  ],
+  "Snapshot Tracker must be turned on in your theme.": [
+    "Der Snapshot Tracker muss in Ihrem Theme aktiviert sein.",
+    "需要在主题中开启 Snapshot Tracker。",
+    "需要在佈景主題中開啟 Snapshot Tracker。",
+  ],
+  "Source name": [
+    "Name der Quelle",
+    "来源名称",
+    "來源名稱",
+  ],
+  "Start a measurement to record a baseline for this project.": [
+    "Starten Sie eine Messung, um einen Ausgangswert für dieses Projekt zu erfassen.",
+    "开始一次测量，为此项目记录基准数据。",
+    "開始一次測量，為此專案記錄基準資料。",
+  ],
+  "Start your first project": [
+    "Starten Sie Ihr erstes Projekt",
+    "开始你的第一个项目",
+    "開始你的第一個專案",
+  ],
+  "Started {date}": [
+    "Gestartet am {date}",
+    "开始于 {date}",
+    "開始於 {date}",
+  ],
+  "Stops after a fixed number of days.": [
+    "Endet nach einer festen Anzahl von Tagen.",
+    "在固定天数后停止。",
+    "在固定天數後停止。",
+  ],
+  "Stops after this many visits from real people.": [
+    "Endet nach dieser Anzahl von Besuchen echter Personen.",
+    "在达到这么多真人访问后停止。",
+    "在達到這麼多真人造訪後停止。",
+  ],
+  "Summary": [
+    "Übersicht",
+    "概览",
+    "概覽",
+  ],
+  "There is too much engagement data to show at once. Pick a source to narrow it down.": [
+    "Es gibt zu viele Interaktionsdaten für eine Ansicht. Wählen Sie eine Quelle, um sie einzugrenzen.",
+    "互动数据过多，无法一次显示。请选择一个来源来缩小范围。",
+    "互動資料過多，無法一次顯示。請選擇一個來源來縮小範圍。",
+  ],
+  "This older measurement may count repeat visits from the same browser as one session.": [
+    "Diese ältere Messung zählt wiederholte Besuche desselben Browsers möglicherweise als eine Sitzung.",
+    "这项较早的测量可能会把同一浏览器的多次访问算作一次会话。",
+    "這項較早的測量可能會把同一瀏覽器的多次造訪算作一次工作階段。",
+  ],
+  "This older measurement only recorded the source it was set up with.": [
+    "Diese ältere Messung hat nur die bei der Einrichtung gewählte Quelle erfasst.",
+    "这项较早的测量只记录了设置时选择的来源。",
+    "這項較早的測量只記錄了設定時選擇的來源。",
+  ],
+  "View results": [
+    "Ergebnisse ansehen",
+    "查看结果",
+    "查看結果",
+  ],
+  "What do you want to measure?": [
+    "Was möchten Sie messen?",
+    "你想测量什么？",
+    "你想測量什麼？",
+  ],
+  "comparison": [
+    "Vergleich",
+    "对比",
+    "比較",
+  ],
+  "e.g. After new hero image": [
+    "z. B. Nach neuem Titelbild",
+    "例如：更换首屏图片后",
+    "例如：更換首屏圖片後",
+  ],
+  "e.g. Lift product page sales": [
+    "z. B. Umsatz der Produktseite steigern",
+    "例如：提升产品页销量",
+    "例如：提升商品頁銷量",
+  ],
+  "e.g. Moved reviews above the fold": [
+    "z. B. Bewertungen nach oben verschoben",
+    "例如：把评价移到首屏",
+    "例如：把評價移到首屏",
+  ],
+  "measurement": [
+    "Messung",
+    "测量",
+    "測量",
+  ],
+  "measurements": [
+    "Messungen",
+    "测量",
+    "測量",
+  ],
+  "project": [
+    "Projekt",
+    "项目",
+    "專案",
+  ],
+  "projects": [
+    "Projekte",
+    "项目",
+    "專案",
+  ],
+  "{change} pts": [
+    "{change} Pkt.",
+    "{change} 个百分点",
+    "{change} 個百分點",
+  ],
+  "{count} added to cart": [
+    "{count} in den Warenkorb gelegt",
+    "{count} 次加入购物车",
+    "{count} 次加入購物車",
+  ],
+  "{value} in {name}": [
+    "{value} in {name}",
+    "{name}：{value}",
+    "{name}：{value}",
+  ],
 };

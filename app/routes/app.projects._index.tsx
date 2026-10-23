@@ -6,7 +6,13 @@ import {
   type LoaderFunctionArgs,
 } from "@remix-run/node";
 import { useLoaderData, useSearchParams } from "@remix-run/react";
-import { Button, Page } from "@shopify/polaris";
+import {
+  BlockStack,
+  InlineStack,
+  Layout,
+  Page,
+  Pagination,
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import {
   createGrowthProject,
@@ -16,9 +22,8 @@ import { GrowthProjectError } from "../utils/growth-projects";
 import { isPlanLimitError } from "../utils/billing.server";
 import { GrowthProjectForm } from "../components/GrowthProjectForm";
 import { GrowthProjectList } from "../components/GrowthProjectList";
+import { useLanguageActionGroup } from "../components/LanguageMenu";
 import { useI18n } from "../utils/i18n";
-import styles from "../styles/projects.css?url";
-export const links = () => [{ rel: "stylesheet", href: styles }];
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const page = Number(new URL(request.url).searchParams.get("page")) || 1;
@@ -70,6 +75,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function Projects() {
   const data = useLoaderData<typeof loader>();
   const { t, formatNumber } = useI18n();
+  const language = useLanguageActionGroup();
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(params.get("create") === "1");
   const requestedCreate = params.get("create");
@@ -86,7 +92,6 @@ export default function Projects() {
   return (
     <Page
       title={t("Projects")}
-      subtitle={t("Goals, measurements and experiments in one place.")}
       primaryAction={{
         content: t("Create project"),
         onAction: () => setOpen(true),
@@ -94,27 +99,32 @@ export default function Projects() {
       secondaryActions={[
         { content: t("Create A/B test"), url: "/app/ab-tests?create=1" },
       ]}
+      actionGroups={[language]}
     >
-      <div className="gp-stack">
-        <GrowthProjectList projects={data.projects} />
-        <div className="gp-pagination">
-          <Button disabled={data.page <= 1} url={`?page=${data.page - 1}`}>
-            {t("Previous")}
-          </Button>
-          <span>
-            {t("Page {page} of {pages}", {
-              page: formatNumber(data.page),
-              pages: formatNumber(data.pageCount),
-            })}
-          </span>
-          <Button
-            disabled={data.page >= data.pageCount}
-            url={`?page=${data.page + 1}`}
-          >
-            {t("Next")}
-          </Button>
-        </div>
-      </div>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            <GrowthProjectList
+              projects={data.projects}
+              onCreate={() => setOpen(true)}
+            />
+            {data.pageCount > 1 && (
+              <InlineStack align="center">
+                <Pagination
+                  hasPrevious={data.page > 1}
+                  previousURL={`?page=${data.page - 1}`}
+                  hasNext={data.page < data.pageCount}
+                  nextURL={`?page=${data.page + 1}`}
+                  label={t("Page {page} of {pages}", {
+                    page: formatNumber(data.page),
+                    pages: formatNumber(data.pageCount),
+                  })}
+                />
+              </InlineStack>
+            )}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
       {open && (
         <GrowthProjectForm
           open

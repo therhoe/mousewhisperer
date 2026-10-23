@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Banner, Button, Card, Select, Text } from "@shopify/polaris";
+import {
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  InlineGrid,
+  InlineStack,
+  Select,
+  SkeletonBodyText,
+  Text,
+} from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
 import { useBackgroundJson } from "../utils/background-json";
 import type { ConversionProgress } from "../types/conversion-progress";
@@ -50,7 +61,11 @@ export function GrowthLineChart({
   }, [hasData]);
   if (!hasData)
     return (
-      <div className="gp-empty">{t("No data available for this period.")}</div>
+      <Box paddingBlock="1000">
+        <Text as="p" alignment="center" tone="subdued">
+          {t("No data available for this period.")}
+        </Text>
+      </Box>
     );
   const max =
     Math.max(...valid.map((point) => point.value || 0), percent ? 1 : 0.01) *
@@ -83,9 +98,8 @@ export function GrowthLineChart({
   return (
     <svg
       ref={chartRef}
-      className="gp-chart"
       viewBox={`0 0 ${chartWidth} 270`}
-      style={{ height: 270 }}
+      style={{ width: "100%", height: 270, overflow: "visible" }}
       role="img"
       aria-label={title}
     >
@@ -99,14 +113,14 @@ export function GrowthLineChart({
               x2={plotRight}
               y1={y(value)}
               y2={y(value)}
-              stroke="#dce5eb"
+              stroke="#e3e3e3"
             />
             <text
               x="45"
               y={y(value) + 4}
               textAnchor="end"
               fontSize="11"
-              fill="#64717b"
+              fill="#616161"
             >
               {format(value)}
             </text>
@@ -116,7 +130,7 @@ export function GrowthLineChart({
       <path
         d={path}
         fill="none"
-        stroke="#0b9ed0"
+        stroke="#2c6ecb"
         strokeWidth="3"
         strokeLinejoin="round"
       />
@@ -126,7 +140,7 @@ export function GrowthLineChart({
           cx={x(point.date)}
           cy={y(point.value || 0)}
           r={valid.length === 1 ? 5 : 3}
-          fill="#0b9ed0"
+          fill="#2c6ecb"
           tabIndex={0}
         >
           <title>
@@ -155,7 +169,7 @@ export function GrowthLineChart({
                 : "middle"
           }
           fontSize="12"
-          fill="#64717b"
+          fill="#616161"
         >
           {formatDate(`${point.date}T12:00:00Z`, {
             month: "short",
@@ -167,6 +181,69 @@ export function GrowthLineChart({
     </svg>
   );
 }
+/** A headline number. When `onSelect` is set it behaves as a chart selector. */
+export function MetricTile({
+  label,
+  value,
+  caption,
+  selected = false,
+  onSelect,
+}: {
+  label: string;
+  value: string;
+  caption?: string;
+  selected?: boolean;
+  onSelect?: () => void;
+}) {
+  const body = (
+    <BlockStack gap="100">
+      <Text as="span" variant="bodySm" tone="subdued" fontWeight="medium">
+        {label}
+      </Text>
+      <Text as="span" variant="headingXl" numeric>
+        {value}
+      </Text>
+      {caption && (
+        <Text as="span" variant="bodySm" tone="subdued">
+          {caption}
+        </Text>
+      )}
+    </BlockStack>
+  );
+  const style = {
+    display: "block",
+    width: "100%",
+    minWidth: 0,
+    padding: "var(--p-space-400)",
+    borderRadius: "var(--p-border-radius-300)",
+    border: `var(--p-border-width-025) solid ${
+      selected ? "var(--p-color-border-emphasis)" : "var(--p-color-border)"
+    }`,
+    boxShadow: selected
+      ? "inset 0 0 0 1px var(--p-color-border-emphasis)"
+      : undefined,
+    background: selected
+      ? "var(--p-color-bg-surface-secondary)"
+      : "var(--p-color-bg-surface)",
+    color: "inherit",
+    font: "inherit",
+    textAlign: "left" as const,
+    cursor: onSelect ? "pointer" : undefined,
+  };
+  return onSelect ? (
+    <button
+      type="button"
+      style={style}
+      aria-pressed={selected}
+      onClick={onSelect}
+    >
+      {body}
+    </button>
+  ) : (
+    <div style={style}>{body}</div>
+  );
+}
+
 export function GrowthOverviewCard({ shop }: { shop: string }) {
   const { t, formatNumber, formatDate } = useI18n();
   const [period, setPeriod] = useState("month");
@@ -194,7 +271,7 @@ export function GrowthOverviewCard({ shop }: { shop: string }) {
       key: "traffic",
       label: t("Traffic"),
       value: ready ? formatNumber(progress.currentSessions) : "—",
-      hint: t("Human online-store sessions"),
+      hint: t("Online store sessions"),
     },
     {
       key: "cvr",
@@ -202,19 +279,19 @@ export function GrowthOverviewCard({ shop }: { shop: string }) {
       value: ready
         ? `${formatNumber(progress.currentRate, { maximumFractionDigits: 2 })}%`
         : "—",
-      hint: t("Checkout-completing sessions / sessions"),
+      hint: t("Sessions that completed checkout"),
     },
     {
       key: "aov",
-      label: t("AOV"),
+      label: t("Average order value"),
       value: money(data?.sales?.aov),
-      hint: t("Average order value"),
+      hint: t("Online store orders"),
     },
     {
       key: "ltv",
-      label: t("LTV"),
+      label: t("Customer lifetime value"),
       value: money(data?.sales?.ltv),
-      hint: t("Observed customer value"),
+      hint: t("Observed spend per customer"),
     },
   ];
   const points =
@@ -229,53 +306,73 @@ export function GrowthOverviewCard({ shop }: { shop: string }) {
           date: point.date,
           value: metric === "aov" ? point.aov : point.ltv,
         }));
+  const footnote =
+    metric === "ltv"
+      ? t(
+          "Lifetime value is what customers who bought in this period have spent in total so far, not a forecast.",
+        )
+      : metric === "aov"
+        ? t("Average order value of online store orders, before returns.")
+        : t(
+            "From Shopify Analytics. Project results use Snapshot's own tracking, so numbers can differ slightly.",
+          );
   return (
     <Card>
-      <div className="gp-stack" style={{ paddingBottom: 0 }}>
-        <div className="gp-heading">
-          <div>
-            <Text as="h2" variant="headingLg">
-              {t("Growth overview")}
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="start" gap="400">
+          <BlockStack gap="100">
+            <Text as="h2" variant="headingMd">
+              {t("Growth levers")}
             </Text>
-            <p className="gp-muted">
-              {t("Your four growth levers · Shopify Analytics")}
-            </p>
+            {progress && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {formatDate(`${progress.rangeStart}T12:00:00Z`, {
+                  dateStyle: "medium",
+                  timeZone: "UTC",
+                })}{" "}
+                –{" "}
+                {formatDate(`${progress.rangeEnd}T12:00:00Z`, {
+                  dateStyle: "medium",
+                  timeZone: "UTC",
+                })}
+              </Text>
+            )}
+          </BlockStack>
+          <div style={{ minWidth: 170 }}>
+            <Select
+              label={t("Period")}
+              labelHidden
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { label: t("Week to date"), value: "week" },
+                { label: t("Month to date"), value: "month" },
+                { label: t("Quarter to date"), value: "quarter" },
+                { label: t("Year to date"), value: "year" },
+              ]}
+            />
           </div>
-          <Select
-            label={t("Period")}
-            labelHidden
-            value={period}
-            onChange={setPeriod}
-            options={[
-              { label: t("Week to date"), value: "week" },
-              { label: t("Month to date"), value: "month" },
-              { label: t("Quarter to date"), value: "quarter" },
-              { label: t("Year to date"), value: "year" },
-            ]}
-          />
-        </div>
-        <div className="gp-grid">
+        </InlineStack>
+        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
           {metrics.map((item) => (
-            <button
-              type="button"
+            <MetricTile
               key={item.key}
-              className="gp-metric gp-focus"
-              data-selected={metric === item.key}
-              aria-pressed={metric === item.key}
-              onClick={() => setMetric(item.key)}
-            >
-              <strong>{item.label}</strong>
-              <span className="gp-value">
-                {loading && !data ? "…" : item.value}
-              </span>
-              <span className="gp-muted">{item.hint}</span>
-            </button>
+              label={item.label}
+              value={loading && !data ? "…" : item.value}
+              caption={item.hint}
+              selected={metric === item.key}
+              onSelect={() => setMetric(item.key)}
+            />
           ))}
-        </div>
+        </InlineGrid>
         {error ? (
           <Banner tone="warning">
-            <p>{error}</p>
-            <Button onClick={reload}>{t("Retry")}</Button>
+            <BlockStack gap="200">
+              <p>{error}</p>
+              <div>
+                <Button onClick={reload}>{t("Retry")}</Button>
+              </div>
+            </BlockStack>
           </Banner>
         ) : (
           progress &&
@@ -287,10 +384,15 @@ export function GrowthOverviewCard({ shop }: { shop: string }) {
             </Banner>
           )
         )}
+        {data && !data.sales && (metric === "ltv" || metric === "aov") && (
+          <Banner tone="info">
+            <p>{t("Sales metrics are not available for this store yet.")}</p>
+          </Banner>
+        )}
         {loading && !data ? (
-          <div className="gp-empty" role="status">
-            {t("Loading growth metrics…")}
-          </div>
+          <Box paddingBlock="400">
+            <SkeletonBodyText lines={6} />
+          </Box>
         ) : (
           <GrowthLineChart
             points={points}
@@ -298,40 +400,10 @@ export function GrowthOverviewCard({ shop }: { shop: string }) {
             title={metrics.find((item) => item.key === metric)?.label || ""}
           />
         )}
-        {progress && (
-          <p className="gp-muted">
-            {formatDate(`${progress.rangeStart}T12:00:00Z`, {
-              dateStyle: "medium",
-              timeZone: "UTC",
-            })}{" "}
-            –{" "}
-            {formatDate(`${progress.rangeEnd}T12:00:00Z`, {
-              dateStyle: "medium",
-              timeZone: "UTC",
-            })}
-          </p>
-        )}
-        <div className="gp-note gp-muted">
-          {metric === "ltv"
-            ? t(
-                "LTV is observed all-time spend for customers who bought in the selected period, not predicted future value. Each point represents that day's buying cohort.",
-              )
-            : metric === "aov"
-              ? t(
-                  "AOV is Shopify's average order value for online-store sales, before post-order adjustments.",
-                )
-              : t(
-                  "Store growth uses Shopify Analytics. Project results use Snapshot's recorded sessions and may differ.",
-                )}
-          {data && !data.sales && (metric === "ltv" || metric === "aov") && (
-            <p>
-              {t(
-                "Sales metrics are unavailable for this store. Missing data is not shown as zero.",
-              )}
-            </p>
-          )}
-        </div>
-      </div>
+        <Text as="p" variant="bodySm" tone="subdued">
+          {footnote}
+        </Text>
+      </BlockStack>
     </Card>
   );
 }

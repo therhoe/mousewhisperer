@@ -121,6 +121,55 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
   };
   Modal.Section = simple("div");
   const Field = ({ label, value }) => React.createElement("label", null, label, React.createElement("input", { value, readOnly: true }));
+  const Pagination = ({ label }) => React.createElement("nav", null, label);
+  const IndexTable = simple("table");
+  IndexTable.Row = simple("tr");
+  IndexTable.Cell = simple("td");
+  const FormLayout = simple("div");
+  FormLayout.Group = simple("div");
+  const polaris = new Proxy(
+    {
+      Modal,
+      FormLayout,
+      IndexTable,
+      Pagination,
+      Checkbox: Field,
+      TextField: Field,
+      Select: Field,
+      ChoiceList: ({ title }) => React.createElement("fieldset", null, title),
+      Page: ({ title, primaryAction, secondaryActions, children }) => {
+        state.primary = primaryAction;
+        state.pagePrimary = primaryAction;
+        state.secondary = secondaryActions;
+        return React.createElement(
+          "main",
+          null,
+          React.createElement("h1", null, title),
+          children,
+        );
+      },
+      Tabs: ({ tabs, selected, onSelect }) => {
+        state.tabs = { tabs, selected, onSelect };
+        return React.createElement("nav", null, tabs.map((tab) => tab.content).join("|"));
+      },
+      Link: ({ url, children }) => React.createElement("a", { href: url }, children),
+      Button: ({ children, onClick, url, disabled }) => {
+        state.buttons.push({ label: children, onClick, url, disabled });
+        return React.createElement("button", { disabled }, children);
+      },
+    },
+    {
+      get: (target, name) => {
+        if (!(name in target)) {
+          const stub = simple("div");
+          for (const part of ["Section", "Row", "Cell", "Group", "Item"])
+            stub[part] = simple("div");
+          target[name] = stub;
+        }
+        return target[name];
+      },
+    },
+  );
   const services = {
     listGrowthProjects: async (shop, page) => {
       state.calls.push(["list", shop, page]);
@@ -182,32 +231,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
       Link: ({ to, children, ...props }) =>
         React.createElement("a", { href: to, ...props }, children),
     },
-    "@shopify/polaris": {
-      Modal,
-      BlockStack: simple("div"),
-      InlineStack: simple("div"),
-      Checkbox: Field,
-      TextField: Field,
-      Select: Field,
-      Page: ({ title, primaryAction, secondaryActions, children }) => {
-        state.primary = primaryAction;
-        state.secondary = secondaryActions;
-        return React.createElement(
-          "main",
-          null,
-          React.createElement("h1", null, title),
-          children,
-        );
-      },
-      Card: simple("section"),
-      Text: simple("span"),
-      Badge: simple("span"),
-      Banner: simple("aside"),
-      Button: ({ children, onClick, url, disabled }) => {
-        state.buttons.push({ label: children, onClick, url, disabled });
-        return React.createElement("button", { disabled }, children);
-      },
-    },
+    "@shopify/polaris": polaris,
     "../shopify.server": {
       authenticate: {
         admin: async () => {
@@ -239,7 +263,12 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     "../utils/growth-report.server": reportPure,
     "../utils/billing.server": { isPlanLimitError: () => false },
     "../utils/i18n": i18n,
-    "@shopify/app-bridge-react": { useAppBridge: () => ({ resourcePicker: async () => [] }) },
+    "@shopify/app-bridge-react": {
+      useAppBridge: () => ({ resourcePicker: async () => [] }),
+      Modal: ({ open, children }) =>
+        React.createElement("dialog", { "data-open": String(open) }, children),
+      TitleBar: () => null,
+    },
     "../utils/snapshot-setup": { trackerEditorUrl: () => "https://owner.myshopify.com/admin/themes/current/editor" },
     "../components/GrowthProjectForm": {
       GrowthProjectForm: ({ projectId, next, onClose }) => {
@@ -250,7 +279,11 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
         });
       },
     },
-    "../components/GrowthProjectList": { GrowthProjectList: () => null },
+    "../components/GrowthProjectList": {
+      GrowthProjectList: () => null,
+      ScopeBadge: () => null,
+      StatusBadge: ({ status }) => React.createElement("span", null, status),
+    },
     "../components/GrowthMeasurementResults": {
       GrowthMeasurementResults: () => null,
     },
@@ -265,7 +298,49 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
           "data-campaign": filters.campaign,
         }),
     },
-    "../styles/projects.css?url": "test.css",
+    "../components/GrowthResultsSheet": {
+      GrowthResultsSheet: (props) => {
+        state.sheet = props;
+        return React.createElement("div", {
+          "data-results-open": String(props.open),
+          "data-measurement": props.selected.id,
+          "data-audience": props.filters.audience,
+          "data-source": props.filters.source,
+          "data-medium": props.filters.medium,
+        });
+      },
+    },
+    "../components/GrowthOverviewCard": {
+      MetricTile: ({ label, value }) => React.createElement("div", null, label, value),
+    },
+    "./GrowthOverviewCard": {
+      MetricTile: ({ label, value }) => React.createElement("div", null, label, value),
+    },
+    "../components/LanguageMenu": {
+      useLanguageActionGroup: () => ({ title: "Language", actions: [] }),
+    },
+    "../utils/background-json": {
+      useBackgroundJson: () => ({ data: undefined, loading: true, error: null, reload() {} }),
+    },
+    "./GrowthMeasurementResults": {
+      GrowthMeasurementResults: ({ measurementId, filters }) =>
+        React.createElement("div", { "data-results": measurementId, "data-audience": filters.audience }),
+    },
+    "./GrowthProjectJourneys": {
+      GrowthProjectJourneys: ({ projectId, measurementId, filters }) =>
+        React.createElement("div", {
+          "data-project-journeys": projectId,
+          "data-measurement": measurementId,
+          "data-audience": filters.audience,
+          "data-source": filters.source,
+          "data-medium": filters.medium,
+          "data-campaign": filters.campaign,
+        }),
+    },
+    "./GrowthProjectList": {
+      ScopeBadge: () => null,
+      StatusBadge: ({ status }) => React.createElement("span", null, status),
+    },
   };
   const route = compile(file, mocks);
   const render = (props) => {
@@ -273,7 +348,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     state.refIndex = 0;
     state.effectIndex = 0;
     state.buttons = [];
-    const html = renderToStaticMarkup(React.createElement(route.default || route.GrowthProjectForm, props));
+    const html = renderToStaticMarkup(React.createElement(route.default || route.GrowthProjectForm || route.GrowthResultsSheet, props));
     const effects = state.pending.splice(0);
     effects.forEach((effect) => effect());
     return html;
@@ -365,13 +440,13 @@ test("validation responses retain interpolation keys for translated error messag
   assert.equal(error.errorValues.maximum, 120);
 });
 
-test("project default filters can be explicitly cleared without changing collection or selected audience", () => {
+test("project default filters reach the results sheet and can be explicitly cleared without changing the audience", () => {
   const h = harness("app/routes/app.projects.$id.tsx");
   h.state.params = new URLSearchParams("audience=active");
   const html = h.render();
-  assert.match(html, /name="source"[^>]*value="facebook"/);
-  assert.match(html, /name="medium"[^>]*value="paid"/);
-  h.state.buttons.find((button) => button.label === "Clear filters").onClick();
+  assert.match(html, /data-results-open="false"/);
+  assert.match(html, /data-audience="active" data-source="facebook" data-medium="paid"/);
+  h.state.sheet.onChange({ source: "", medium: "", campaign: "" });
   assert.equal(h.state.params.get("source"), "");
   assert.equal(h.state.params.get("medium"), "");
   assert.equal(h.state.params.get("campaign"), "");
@@ -381,7 +456,20 @@ test("project default filters can be explicitly cleared without changing collect
   assert.equal(h.state.calls.filter((call) => call[0] === "submit").length, 0);
 });
 
-test("Project GET filters preserve public embedded context without resubmitting a stale launch token", () => {
+test("View results opens the full-screen sheet for the selected measurement and close removes it", () => {
+  const h = harness("app/routes/app.projects.$id.tsx");
+  h.render();
+  assert.equal(h.state.pagePrimary.content, "View results");
+  h.state.pagePrimary.onAction();
+  assert.equal(h.state.params.get("results"), "1");
+  assert.equal(h.state.params.get("measurement"), "measurement-one");
+  assert.match(h.render(), /data-results-open="true"/);
+  h.state.sheet.onClose();
+  assert.equal(h.state.params.has("results"), false);
+  assert.match(h.render(), /data-results-open="false"/);
+});
+
+test("Project report navigation preserves public embedded context without replaying a stale launch token", () => {
   const h = harness("app/routes/app.projects.$id.tsx");
   h.state.params = new URLSearchParams({
     shop: "owner.myshopify.com",
@@ -392,28 +480,28 @@ test("Project GET filters preserve public embedded context without resubmitting 
     hmac: "old-signature",
     timestamp: "123",
   });
-  const html = h.render();
-  const form = html.match(/<form[^>]*method="get"[\s\S]*?<\/form>/)?.[0];
-  assert.ok(form);
-  for (const [name, value] of Object.entries({ shop: "owner.myshopify.com", host: "encoded-admin-host", embedded: "1", locale: "de" })) {
-    assert.match(form, new RegExp(`type="hidden" name="${name}" value="${value}"`));
+  h.render();
+  h.state.sheet.onChange({ audience: "active" });
+  for (const [name, value] of Object.entries({ shop: "owner.myshopify.com", host: "encoded-admin-host", embedded: "1", locale: "de", audience: "active" })) {
+    assert.equal(h.state.params.get(name), value);
   }
-  assert.doesNotMatch(form, /expired-launch-token|old-signature|name="(?:id_token|hmac|timestamp)"/);
+  for (const name of ["id_token", "hmac", "timestamp"]) assert.equal(h.state.params.has(name), false);
 });
 
-test("Project GET filters restore missing launch context from the authenticated parent loader", () => {
+test("Project report navigation restores missing launch context from the authenticated parent loader", () => {
   const h = harness("app/routes/app.projects.$id.tsx");
   h.state.appData.embeddedContext = {
     shop: "owner.myshopify.com",
     host: "authenticated-admin-host",
     embedded: "1",
   };
-  const form = h.render().match(/<form[^>]*method="get"[\s\S]*?<\/form>/)?.[0];
-  assert.ok(form);
+  h.render();
+  h.state.sheet.onChange({ source: "google" });
   for (const [name, value] of Object.entries(h.state.appData.embeddedContext)) {
-    assert.match(form, new RegExp(`type="hidden" name="${name}" value="${value}"`));
+    assert.equal(h.state.params.get(name), value);
   }
-  assert.doesNotMatch(form, /name="(?:id_token|hmac|timestamp|session)"/);
+  assert.equal(h.state.params.get("source"), "google");
+  assert.equal(h.state.params.has("session"), false);
 });
 
 test("before/after report API authorizes the Project and passes identical filters to both tenant-scoped measurements", async () => {
@@ -457,11 +545,12 @@ test("Project tabs preserve filters and A/B shortcut preselects the containing p
   const h = harness("app/routes/app.projects.$id.tsx");
   h.state.params = new URLSearchParams("tab=tests&source=facebook");
   const html = h.render();
-  assert.match(
-    html,
-    /href="\?tab=measurements&amp;source=facebook&amp;listPage=1"/,
-  );
+  assert.equal(h.state.tabs.selected, 1);
   assert.match(html, /href="\/app\/ab-tests\/test-one"/);
+  h.state.tabs.onSelect(0);
+  assert.equal(h.state.params.get("tab"), "measurements");
+  assert.equal(h.state.params.get("source"), "facebook");
+  assert.equal(h.state.params.get("listPage"), "1");
   assert.equal(
     h.state.secondary.find((action) => action.content === "Create A/B test")
       .url,
@@ -469,28 +558,32 @@ test("Project tabs preserve filters and A/B shortcut preselects the containing p
   );
 });
 
-test("native journeys require enabled tracking and a companion capture and use the selected report filters", () => {
+test("results sheet shows journeys only with enabled tracking and a companion capture, using the selected filters", () => {
+  const h = harness("app/components/GrowthResultsSheet.tsx");
   const selected = { ...project.measurements[0], customerSnapshotId: "journey-one" };
-  const h = harness("app/routes/app.projects.$id.tsx", {
-    project: { ...project, journeyTracking: true, measurements: [selected] },
+  const filters = { audience: "active", source: "google", medium: "cpc", campaign: "sale" };
+  const props = {
+    open: true,
+    onClose() {},
+    onChange() {},
     shop: "owner.myshopify.com",
-  });
-  h.state.params = new URLSearchParams("audience=active&source=google&medium=cpc&campaign=sale");
-  const html = h.render();
+    project: { ...project, journeyTracking: true, measurements: [selected] },
+    selected,
+    filters,
+  };
+  const html = h.render(props);
+  assert.match(html, /data-results="measurement-one" data-audience="active"/);
   assert.match(html, /data-project-journeys="project-one"/);
-  assert.match(html, /data-measurement="measurement-one"/);
   assert.match(html, /data-audience="active" data-source="google" data-medium="cpc" data-campaign="sale"/);
-  h.state.data.project.journeyTracking = false;
-  assert.doesNotMatch(h.render(), /data-project-journeys/);
-  h.state.data.project.journeyTracking = true;
-  h.state.data.project.measurements = project.measurements;
-  assert.doesNotMatch(h.render(), /data-project-journeys/);
+  assert.doesNotMatch(h.render({ ...props, project: { ...props.project, journeyTracking: false } }), /data-project-journeys/);
+  assert.doesNotMatch(h.render({ ...props, selected: project.measurements[0] }), /data-project-journeys/);
+  assert.doesNotMatch(h.render({ ...props, open: false }), /data-results=/);
 });
 
 test("successful measurement redirect closes the same-route modal", () => {
   const h = harness("app/routes/app.projects.$id.tsx");
   h.render();
-  h.state.primary.onAction();
+  h.state.secondary.find((action) => action.content === "Start measurement").onAction();
   assert.match(h.render(), /data-create-project="project-one"/);
   h.state.params = new URLSearchParams("measurement=measurement-two");
   h.render();
@@ -548,7 +641,7 @@ test("Project lists paginate ten items and clamp stale page numbers", () => {
   const html = h.render();
   assert.match(html, /Measurement 10/);
   assert.match(html, /Measurement 11/);
-  assert.doesNotMatch(html, />Measurement 0</);
+  assert.doesNotMatch(html, /<td><div>Measurement 0</);
   assert.match(html, /Page 2 of 2/);
 });
 

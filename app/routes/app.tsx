@@ -1,6 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import type { ShouldRevalidateFunction } from "@remix-run/react";
-import type { action as localeAction } from "./api.locale";
 import {
   Link,
   Outlet,
@@ -8,7 +7,6 @@ import {
   useLocation,
   useNavigation,
   useRouteError,
-  useFetcher,
 } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -23,13 +21,7 @@ import { authenticate } from "../shopify.server";
 import { embeddedContextForShop } from "../utils/embedded-filter-context.server";
 import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
-import {
-  I18nProvider,
-  useI18n,
-  LOCALE_LABELS,
-  SUPPORTED_LOCALES,
-  type AppLocale,
-} from "../utils/i18n";
+import { I18nProvider, useI18n } from "../utils/i18n";
 import { resolveRequestLocale } from "../utils/i18n.server";
 import {
   isPageSnapshotsPath,
@@ -180,60 +172,6 @@ function InstantRouteShell({ pathname }: { pathname: string }) {
   );
 }
 
-function AppLocalNav({ activePathname }: { activePathname: string }) {
-  const { t } = useI18n();
-  const location = useLocation();
-  const pathname = activePathname || location.pathname;
-
-  return (
-    <nav
-      aria-label={t("Snapshot sections")}
-      style={{
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        padding: "12px 24px",
-        margin: "12px 16px 0",
-        border: "1px solid var(--p-color-border-subdued)",
-        borderRadius: 8,
-        background: "var(--p-color-bg-surface)",
-        overflowX: "auto",
-      }}
-    >
-      {APP_NAV_ITEMS.map((item) => {
-        const active = isNavItemActive(pathname, item.to);
-
-        return (
-          <Link
-            key={item.to}
-            to={item.to}
-            prefetch="intent"
-            aria-current={active ? "page" : undefined}
-            style={{
-              flex: "0 0 auto",
-              padding: "6px 10px",
-              borderRadius: 6,
-              color: active
-                ? "var(--p-color-text-brand)"
-                : "var(--p-color-text)",
-              background: active
-                ? "var(--p-color-bg-surface-brand-selected)"
-                : "transparent",
-              fontSize: 13,
-              fontWeight: active ? 650 : 500,
-              lineHeight: "20px",
-              textDecoration: "none",
-            }}
-          >
-            {t(item.label)}
-          </Link>
-        );
-      })}
-      <LanguagePicker />
-    </nav>
-  );
-}
-
 function AppBridgeNav() {
   const { t } = useI18n();
   const { pathname } = useLocation();
@@ -254,53 +192,6 @@ function AppBridgeNav() {
         <Link to="/app/challenges">{t("Challenges")}</Link>
       )}
     </NavMenu>
-  );
-}
-
-function LanguagePicker() {
-  const { locale, setLocale, t } = useI18n();
-  const fetcher = useFetcher<typeof localeAction>();
-  const location = useLocation();
-  return (
-    <label
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        marginLeft: "auto",
-        paddingLeft: 16,
-        flexShrink: 0,
-        fontSize: 13,
-      }}
-    >
-      <span>{t("Language")}</span>
-      <select
-        aria-label={t("Language")}
-        value={locale}
-        onChange={(event) => {
-          const next = event.target.value as AppLocale;
-          setLocale(next);
-          fetcher.submit(
-            { locale: next },
-            { method: "post", action: `/api/locale${location.search}` },
-          );
-        }}
-        style={{
-          padding: "6px 8px",
-          borderRadius: 6,
-          border: "1px solid var(--p-color-border)",
-          background: "var(--p-color-bg-surface)",
-          color: "var(--p-color-text)",
-          font: "inherit",
-        }}
-      >
-        {SUPPORTED_LOCALES.map((option) => (
-          <option key={option} value={option}>
-            {LOCALE_LABELS[option]}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -334,7 +225,6 @@ function AppContent({ apiKey }: { apiKey: string }) {
     >
       <BackgroundBillingSync />
       <AppBridgeNav />
-      <AppLocalNav activePathname={pendingPathname || location.pathname} />
       {isRouteTransition ? (
         <InstantRouteShell pathname={pendingPathname} />
       ) : (

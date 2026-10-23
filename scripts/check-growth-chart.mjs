@@ -94,8 +94,12 @@ function harness(withObserver = true) {
               formatNumber: String,
             }),
           };
-        if (id === "../utils/background-json" || id === "@shopify/polaris")
-          return {};
+        if (id === "@shopify/polaris") {
+          const stub = ({ children }) =>
+            React.createElement("div", null, children);
+          return { Box: stub, Text: stub };
+        }
+        if (id === "../utils/background-json") return {};
         return require(id);
       },
     },

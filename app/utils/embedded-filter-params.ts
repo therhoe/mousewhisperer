@@ -30,3 +30,27 @@ export function embeddedFilterParams(
   }
   return next;
 }
+
+const TRANSIENT_LAUNCH_PARAMS = ["id_token", "hmac", "timestamp", "session"];
+
+/**
+ * Client-side report navigation (results sheet, filters, tabs) keeps the
+ * current query, applies the changed values, restores public embedded context
+ * and drops transient signed launch values that must never be replayed.
+ */
+export function mergeReportParams(
+  current: URLSearchParams,
+  values: Record<string, string>,
+  authenticatedContext?: EmbeddedFilterContext | null,
+): URLSearchParams {
+  const next = new URLSearchParams(current);
+  for (const key of TRANSIENT_LAUNCH_PARAMS) next.delete(key);
+  for (const [key, value] of Object.entries(values)) next.set(key, value);
+  for (const [key, value] of embeddedFilterParams(
+    current,
+    {},
+    authenticatedContext,
+  ))
+    next.set(key, value);
+  return next;
+}

@@ -63,7 +63,8 @@ const result = await build({
 const polaris = readFileSync(
   "node_modules/@shopify/polaris/build/esm/styles.css",
 );
-const projects = readFileSync("app/styles/projects.css");
+// Project screens now use Polaris only; no separate stylesheet is served.
+const projects = "";
 createServer((req, res) => {
   const url = new URL(req.url, "http://127.0.0.1:4190");
   if (url.searchParams.has("mobile")) {

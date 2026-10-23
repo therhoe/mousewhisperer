@@ -6,6 +6,8 @@ import {
   BlockStack,
   Button,
   Checkbox,
+  ChoiceList,
+  FormLayout,
   InlineStack,
   Modal,
   Select,
@@ -53,6 +55,7 @@ export function GrowthProjectForm({
   const [pageType, setPageType] = useState("HOMEPAGE");
   const [page, setPage] = useState<Resource | null>(null);
   const [source, setSource] = useState("");
+  const [customSource, setCustomSource] = useState(false);
   const [medium, setMedium] = useState("");
   const [campaign, setCampaign] = useState("");
   const [advanced, setAdvanced] = useState(false);
@@ -131,6 +134,13 @@ export function GrowthProjectForm({
     });
   }
   const editorUrl = trackerEditorUrl(shop, app?.apiKey || "");
+  const knownSources = sourceFetcher.data?.sources || sources;
+  const OTHER = "__other__";
+  const sourceOptions = [
+    { label: t("All sources"), value: "" },
+    ...knownSources.map((item) => ({ label: item, value: item })),
+    { label: t("Other source…"), value: OTHER },
+  ];
   return (
     <Modal
       open={open}
@@ -157,20 +167,24 @@ export function GrowthProjectForm({
       ]}
     >
       <Modal.Section>
-        <BlockStack gap="400">
+        <FormLayout>
           {fetcher.data?.error && (
             <Banner tone="critical">
-              <p>
-                {t(
-                  fetcher.data.errorKey || fetcher.data.error,
-                  fetcher.data.errorValues,
+              <BlockStack gap="200">
+                <p>
+                  {t(
+                    fetcher.data.errorKey || fetcher.data.error,
+                    fetcher.data.errorValues,
+                  )}
+                </p>
+                {editorUrl && !projectOnly && (
+                  <div>
+                    <Button url={editorUrl} external>
+                      {t("Open theme editor")}
+                    </Button>
+                  </div>
                 )}
-              </p>
-              {editorUrl && !projectOnly && (
-                <Button url={editorUrl} external variant="primary">
-                  {t("Open theme editor")}
-                </Button>
-              )}
+              </BlockStack>
             </Banner>
           )}
           <TextField
@@ -179,33 +193,37 @@ export function GrowthProjectForm({
             onChange={setTitle}
             autoComplete="off"
             maxLength={120}
+            placeholder={t(
+              projectId ? "e.g. After new hero image" : "e.g. Lift product page sales",
+            )}
           />
           {!projectId && (
             <>
-              {editorUrl && !projectOnly && (
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="span">{t("Snapshot Tracker")}</Text>
-                  <Button url={editorUrl} external variant="primary">
-                    {t("Open theme editor")}
-                  </Button>
-                </InlineStack>
-              )}
               <TextField
                 label={t("Goal")}
                 value={goal}
                 onChange={setGoal}
                 autoComplete="off"
                 maxLength={1000}
+                multiline={2}
                 placeholder={t("What do you want to improve?")}
               />
-              <Select
-                label={t("Scope")}
-                options={[
-                  { label: t("Store-level"), value: "STORE" },
-                  { label: t("Page-level"), value: "PAGE" },
+              <ChoiceList
+                title={t("What do you want to measure?")}
+                choices={[
+                  {
+                    label: t("Store-level"),
+                    value: "STORE",
+                    helpText: t("Every page of your store."),
+                  },
+                  {
+                    label: t("Page-level"),
+                    value: "PAGE",
+                    helpText: t("One product, collection, page or blog."),
+                  },
                 ]}
-                value={scope}
-                onChange={setScope}
+                selected={[scope]}
+                onChange={(value) => setScope(value[0] || "STORE")}
               />
               {scope === "PAGE" && (
                 <BlockStack gap="300">
@@ -222,17 +240,23 @@ export function GrowthProjectForm({
                     ]}
                   />
                   {(pageType === "PRODUCT" || pageType === "COLLECTION") && (
-                    <InlineStack gap="300" blockAlign="center">
-                      <Button onClick={pickResource}>{t("Choose page")}</Button>
-                      <Text as="span">
-                        {page?.title || t("No page selected")}
-                      </Text>
-                    </InlineStack>
-                  )}
-                  {pageType === "PRODUCT" && (
-                    <Text as="p" tone="subdued">
-                      {t("Only products published to the Online Store are shown.")}
-                    </Text>
+                    <BlockStack gap="100">
+                      <InlineStack gap="300" blockAlign="center">
+                        <Button onClick={pickResource}>
+                          {t(page ? "Change page" : "Choose page")}
+                        </Button>
+                        <Text as="span" tone={page ? undefined : "subdued"}>
+                          {page?.title || t("No page selected")}
+                        </Text>
+                      </InlineStack>
+                      {pageType === "PRODUCT" && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t(
+                            "Only products published to the Online Store are shown.",
+                          )}
+                        </Text>
+                      )}
+                    </BlockStack>
                   )}
                   {(pageType === "PAGE" || pageType === "BLOG") && (
                     <Select
@@ -262,60 +286,61 @@ export function GrowthProjectForm({
                   {pickerError && <Banner tone="warning">{pickerError}</Banner>}
                 </BlockStack>
               )}
-              <label style={{ display: "grid", gap: 6 }}>
-                {t("Source")}
-                <input
-                  className="gp-input"
-                  list="project-sources"
-                  value={source}
-                  onChange={(event) => setSource(event.target.value)}
-                  placeholder={t("All sources")}
-                  maxLength={160}
-                />
-                <datalist id="project-sources">
-                  {(sourceFetcher.data?.sources || sources).map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </label>
-              <Text as="p" tone="subdued">
-                {t(
-                  "Sets your initial results filter. All sources are still collected.",
-                )}
-              </Text>
-              <Button
-                variant="plain"
-                onClick={() => setAdvanced(!advanced)}
-                ariaExpanded={advanced}
-              >
-                {t(advanced ? "Hide advanced filters" : "Advanced filters")}
-              </Button>
-              {advanced && (
-                <InlineStack gap="400">
-                  <TextField
-                    label={t("Medium")}
-                    value={medium}
-                    onChange={setMedium}
-                    autoComplete="off"
-                  />
-                  <TextField
-                    label={t("Campaign")}
-                    value={campaign}
-                    onChange={setCampaign}
-                    autoComplete="off"
-                  />
-                </InlineStack>
-              )}
-              {scope === "STORE" && (
-                <Checkbox
-                  label={t("Enable journey tracking")}
+              <BlockStack gap="200">
+                <Select
+                  label={t("Source")}
+                  options={sourceOptions}
+                  value={
+                    customSource || (source && !knownSources.includes(source))
+                      ? OTHER
+                      : source
+                  }
+                  onChange={(value) => {
+                    setCustomSource(value === OTHER);
+                    setSource(value === OTHER ? "" : value);
+                  }}
                   helpText={t(
-                    "Follow recorded sessions across your store. Uses one additional journey measurement allowance.",
+                    "Opens your results filtered to this source. Every source is still tracked.",
                   )}
-                  checked={journey}
-                  onChange={setJourney}
                 />
-              )}
+                {customSource && (
+                  <TextField
+                    label={t("Source name")}
+                    value={source}
+                    onChange={setSource}
+                    autoComplete="off"
+                    maxLength={160}
+                    placeholder="facebook"
+                  />
+                )}
+                <div>
+                  <Button
+                    variant="plain"
+                    disclosure={advanced ? "up" : "down"}
+                    onClick={() => setAdvanced(!advanced)}
+                    ariaExpanded={advanced}
+                  >
+                    {t("Medium and campaign")}
+                  </Button>
+                </div>
+                {advanced && (
+                  <FormLayout.Group>
+                    <TextField
+                      label={t("Medium")}
+                      value={medium}
+                      onChange={setMedium}
+                      autoComplete="off"
+                      placeholder="cpc"
+                    />
+                    <TextField
+                      label={t("Campaign")}
+                      value={campaign}
+                      onChange={setCampaign}
+                      autoComplete="off"
+                    />
+                  </FormLayout.Group>
+                )}
+              </BlockStack>
             </>
           )}
           {projectOnly ? (
@@ -325,15 +350,23 @@ export function GrowthProjectForm({
               )}
             </Text>
           ) : (
-            <>
-              <Select
-                label={t("Complete measurement by")}
-                value={mode}
-                onChange={setMode}
-                options={[
-                  { label: t("Visitor target"), value: "VISITORS" },
-                  { label: t("Duration"), value: "DURATION" },
+            <BlockStack gap="200">
+              <ChoiceList
+                title={t("Complete measurement by")}
+                choices={[
+                  {
+                    label: t("Visitor target"),
+                    value: "VISITORS",
+                    helpText: t("Stops after this many visits from real people."),
+                  },
+                  {
+                    label: t("Duration"),
+                    value: "DURATION",
+                    helpText: t("Stops after a fixed number of days."),
+                  },
                 ]}
+                selected={[mode]}
+                onChange={(value) => setMode(value[0] || "VISITORS")}
               />
               {mode === "VISITORS" ? (
                 <TextField
@@ -355,21 +388,27 @@ export function GrowthProjectForm({
                   autoComplete="off"
                 />
               )}
-              <Text as="p" tone="subdued">
-                {t(
-                  "The measurement ends at the selected limit. Your Project stays open.",
-                )}
-              </Text>
-              {mode === "VISITORS" && (
-                <Text as="p" tone="subdued">
-                  {t(
-                    "The target counts human acquisition sessions, not page views or unique people.",
-                  )}
-                </Text>
-              )}
-            </>
+            </BlockStack>
           )}
-        </BlockStack>
+          {!projectId && scope === "STORE" && (
+            <Checkbox
+              label={t("Enable journey tracking")}
+              helpText={t(
+                "Records the path each visitor takes through your store. Uses one extra measurement from your plan.",
+              )}
+              checked={journey}
+              onChange={setJourney}
+            />
+          )}
+          {editorUrl && !projectOnly && !projectId && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {t("Snapshot Tracker must be turned on in your theme.")}{" "}
+              <Button url={editorUrl} external variant="plain">
+                {t("Open theme editor")}
+              </Button>
+            </Text>
+          )}
+        </FormLayout>
       </Modal.Section>
     </Modal>
   );

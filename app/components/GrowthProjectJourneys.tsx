@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Banner, Button, Card, Text } from "@shopify/polaris";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  DataTable,
+  InlineStack,
+  Pagination,
+  Text,
+} from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
 import { useBackgroundJson } from "../utils/background-json";
 import type { GrowthReportFilters } from "../utils/growth-report";
@@ -61,105 +72,115 @@ export function GrowthProjectJourneys({
   });
   const move = (next: number) => setPaging({ key: filterKey, page: next });
   return (
-    <Card>
-      <div className="gp-heading">
-        <Text as="h2" variant="headingMd">
-          {t("Recorded journeys")}
-        </Text>
-        <Button onClick={reload} loading={loading}>
-          {t("Refresh")}
-        </Button>
-      </div>
-      <p className="gp-muted">
-        {t(
-          "These journeys use the same audience and source filters as the measurement above. Each row is one recorded session, not a lifetime customer profile.",
-        )}
-      </p>
-      {error && <Banner tone="warning">{error}</Banner>}
+    <Card padding="0">
+      <Box padding="400" paddingBlockEnd="200">
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <BlockStack gap="050">
+            <Text as="h2" variant="headingMd">
+              {t("Customer journeys")}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {t("Each row is one visit, using the filters above.")}
+            </Text>
+          </BlockStack>
+          <Button variant="tertiary" onClick={reload} loading={loading}>
+            {t("Refresh")}
+          </Button>
+        </InlineStack>
+      </Box>
+      {error && (
+        <Box paddingInline="400" paddingBlockEnd="300">
+          <Banner tone="warning">{error}</Banner>
+        </Box>
+      )}
       {!data ? (
-        <div className="gp-empty" role="status">
-          {t(loading ? "Loading journeys…" : "No journeys available.")}
-        </div>
-      ) : (
-        <>
-          <div className="gp-table-wrap">
-            <table className="gp-table">
-              <thead>
-                <tr>
-                  {[
-                    "Started",
-                    "Source",
-                    "Medium",
-                    "Campaign",
-                    "Pages visited",
-                    "Events",
-                    "Added to cart",
-                    "Purchased",
-                    "Actions",
-                  ].map((label) => (
-                    <th key={label}>{t(label)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.sessions.map((session) => (
-                  <tr key={session.id}>
-                    <td>
-                      {formatDate(session.startedAt, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })}
-                    </td>
-                    <td>{session.source || "—"}</td>
-                    <td>{session.medium || "—"}</td>
-                    <td>{session.campaign || "—"}</td>
-                    <td>{formatNumber(session.pageCount)}</td>
-                    <td>{formatNumber(session.eventCount)}</td>
-                    <td>{t(session.addedToCart ? "Yes" : "No")}</td>
-                    <td>{t(session.converted ? "Yes" : "No")}</td>
-                    <td>
-                      <Button url={session.detailUrl}>
-                        {t("View journey")}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <Box padding="400">
+          <div role="status">
+            <Text as="p" tone="subdued">
+              {t(loading ? "Loading journeys…" : "No journeys available.")}
+            </Text>
           </div>
-          {!data.sessions.length && (
-            <div className="gp-empty">
-              {t("No journeys match these filters.")}
-            </div>
-          )}
-          <div className="gp-pagination">
-            <span className="gp-muted">
+        </Box>
+      ) : !data.sessions.length ? (
+        <Box padding="400">
+          <Text as="p" tone="subdued">
+            {t("No journeys match these filters.")}
+          </Text>
+        </Box>
+      ) : (
+        <DataTable
+          columnContentTypes={[
+            "text",
+            "text",
+            "numeric",
+            "numeric",
+            "text",
+            "text",
+            "text",
+          ]}
+          headings={[
+            t("Started"),
+            t("Source"),
+            t("Pages visited"),
+            t("Events"),
+            t("Added to cart"),
+            t("Purchased"),
+            "",
+          ]}
+          rows={data.sessions.map((session) => [
+            formatDate(session.startedAt, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            }),
+            [session.source, session.medium, session.campaign]
+              .filter(Boolean)
+              .join(" / ") || "—",
+            formatNumber(session.pageCount),
+            formatNumber(session.eventCount),
+            session.addedToCart ? (
+              <Badge tone="info">{t("Yes")}</Badge>
+            ) : (
+              t("No")
+            ),
+            session.converted ? (
+              <Badge tone="success">{t("Yes")}</Badge>
+            ) : (
+              t("No")
+            ),
+            <Button
+              key={session.id}
+              url={session.detailUrl}
+              variant="plain"
+            >
+              {t("View journey")}
+            </Button>,
+          ])}
+        />
+      )}
+      {data && (
+        <Box padding="300">
+          <InlineStack align="space-between" blockAlign="center" gap="200">
+            <Text as="span" variant="bodySm" tone="subdued">
               {data.total === 1
                 ? t("1 recorded session")
                 : t("{count} recorded sessions", {
                     count: formatNumber(data.total),
                   })}
-            </span>
-            <Button
-              disabled={loading || data.page <= 1}
-              onClick={() => move(data.page - 1)}
-            >
-              {t("Previous")}
-            </Button>
-            <span>
-              {t("Page {page} of {pages}", {
-                page: formatNumber(data.page),
-                pages: formatNumber(Math.max(1, data.pageCount)),
-              })}
-            </span>
-            <Button
-              disabled={loading || data.page >= data.pageCount}
-              onClick={() => move(data.page + 1)}
-            >
-              {t("Next")}
-            </Button>
-          </div>
-        </>
+            </Text>
+            {data.pageCount > 1 && (
+              <Pagination
+                hasPrevious={!loading && data.page > 1}
+                onPrevious={() => move(data.page - 1)}
+                hasNext={!loading && data.page < data.pageCount}
+                onNext={() => move(data.page + 1)}
+                label={t("Page {page} of {pages}", {
+                  page: formatNumber(data.page),
+                  pages: formatNumber(Math.max(1, data.pageCount)),
+                })}
+              />
+            )}
+          </InlineStack>
+        </Box>
       )}
     </Card>
   );

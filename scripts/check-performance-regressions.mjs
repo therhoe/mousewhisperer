@@ -361,7 +361,7 @@ test("Projects dashboard returns recent projects without requesting Shopify anal
     "../shopify.server": { authenticate: { admin: async () => ({ session: { shop: "qa.myshopify.com" }, admin: { graphql: () => { analyticsRequests++; return new Promise(() => {}); } } }) } },
     "../utils/growth-projects.server": { listGrowthProjects: async (shop) => { lookups.push(shop); return { projects: Array.from({ length: 8 }, (_, index) => ({ id: `project-${index}` })) }; } },
     "../components/GrowthProjectList": {}, "../components/GrowthProjectForm": {}, "../components/GrowthOverviewCard": {},
-    "../utils/i18n": {}, "../styles/projects.css?url": "test.css",
+    "../components/LanguageMenu": {}, "../utils/i18n": {},
   });
   const response = await route.loader({ request: new Request("https://qa.test/app?shop=other.myshopify.com") });
   const data = await response.json();

@@ -7,15 +7,31 @@ import {
   type LoaderFunctionArgs,
 } from "@remix-run/node";
 import {
-  Form,
-  Link,
   useFetcher,
   useLoaderData,
   useSearchParams,
   useRouteLoaderData,
   type ShouldRevalidateFunction,
 } from "@remix-run/react";
-import { Badge, Banner, Button, Card, Page, Text } from "@shopify/polaris";
+import {
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  EmptyState,
+  IndexTable,
+  InlineGrid,
+  InlineStack,
+  Layout,
+  Link,
+  Modal,
+  Page,
+  Pagination,
+  Tabs,
+  Text,
+  TextField,
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
@@ -27,12 +43,13 @@ import { GrowthProjectError, projectText } from "../utils/growth-projects";
 import { growthReportFilters } from "../utils/growth-report";
 import { isPlanLimitError } from "../utils/billing.server";
 import { GrowthProjectForm } from "../components/GrowthProjectForm";
-import { GrowthMeasurementResults } from "../components/GrowthMeasurementResults";
-import { GrowthProjectJourneys } from "../components/GrowthProjectJourneys";
+import { GrowthResultsSheet } from "../components/GrowthResultsSheet";
+import { MetricTile } from "../components/GrowthOverviewCard";
+import { ScopeBadge, StatusBadge } from "../components/GrowthProjectList";
+import { useBackgroundJson } from "../utils/background-json";
+import type { GrowthReport } from "../utils/growth-report";
 import { useI18n } from "../utils/i18n";
-import { embeddedFilterParams } from "../utils/embedded-filter-params";
-import styles from "../styles/projects.css?url";
-export const links = () => [{ rel: "stylesheet", href: styles }];
+import { mergeReportParams } from "../utils/embedded-filter-params";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   try {
@@ -132,6 +149,68 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     );
   }
 };
+const TABS = ["measurements", "tests", "activity"] as const;
+const GOALS: Record<string, string> = {
+  CONVERSION: "Conversion rate",
+  REVENUE: "Revenue per visitor",
+  ADD_TO_CART: "Add-to-cart rate",
+  CLICK_THROUGH: "Clickthrough rate",
+  ENGAGEMENT: "Engagement",
+};
+type SummaryPayload = { report: GrowthReport };
+const isSummary = (value: unknown): value is SummaryPayload =>
+  !!value &&
+  typeof value === "object" &&
+  typeof (value as SummaryPayload).report?.sessions === "number";
+
+function LatestSummary({
+  shop,
+  projectId,
+  measurementId,
+}: {
+  shop: string;
+  projectId: string;
+  measurementId: string;
+}) {
+  const { t, formatNumber } = useI18n();
+  const query = new URLSearchParams({
+    projectId,
+    measurement: measurementId,
+    compare: "",
+    audience: "all",
+    source: "",
+    medium: "",
+    campaign: "",
+  });
+  const { data, loading } = useBackgroundJson<SummaryPayload>({
+    path: `/api/growth-report?${query}`,
+    scopeKey: shop,
+    isData: isSummary,
+    errorMessage: t("Measurement results could not load. Please retry."),
+  });
+  const report = data?.report;
+  const value = (format: (report: GrowthReport) => string) =>
+    report ? format(report) : loading ? "…" : "—";
+  const percent = (number: number) =>
+    `${formatNumber(number, { maximumFractionDigits: 2 })}%`;
+  return (
+    <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
+      <MetricTile
+        label={t("Sessions")}
+        value={value((item) => formatNumber(item.sessions))}
+      />
+      <MetricTile
+        label={t("Add-to-cart rate")}
+        value={value((item) => percent(item.atcRate))}
+      />
+      <MetricTile
+        label={t("Conversion rate")}
+        value={value((item) => percent(item.conversionRate))}
+      />
+    </InlineGrid>
+  );
+}
+
 export default function ProjectDetail() {
   const { project, shop } = useLoaderData<typeof loader>();
   const { t, formatDate, formatNumber } = useI18n();
@@ -143,15 +222,18 @@ export default function ProjectDetail() {
     errorValues?: Record<string, string | number>;
   }>();
   const [create, setCreate] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [logTitle, setLogTitle] = useState("");
+  const [logNotes, setLogNotes] = useState("");
+  const [confirmComplete, setConfirmComplete] = useState("");
   const measurementId = params.get("measurement");
   useEffect(() => {
     setCreate(false);
   }, [project.id, measurementId]);
-  const tab = ["overview", "measurements", "tests", "activity"].includes(
-    params.get("tab") || "",
-  )
-    ? params.get("tab")!
-    : "overview";
+  const requested = params.get("tab") || "";
+  const tab = (TABS as readonly string[]).includes(requested)
+    ? requested
+    : "measurements";
   const selected =
     project.measurements.find(
       (item) => item.id === params.get("measurement"),
@@ -160,6 +242,7 @@ export default function ProjectDetail() {
     (item) => item.id === params.get("compare") && item.id !== selected?.id,
   );
   const filters = growthReportFilters(params, project);
+  const resultsOpen = Boolean(selected) && params.get("results") === "1";
   const page = Math.max(1, Math.floor(Number(params.get("listPage")) || 1));
   const list =
     tab === "tests"
@@ -171,495 +254,463 @@ export default function ProjectDetail() {
   const currentPage = Math.min(page, pages);
   const sliceStart = (currentPage - 1) * 10;
   function change(values: Record<string, string>) {
-    const next = new URLSearchParams(params);
-    for (const [key, value] of Object.entries(values)) next.set(key, value);
+    setParams(mergeReportParams(params, values, appData?.embeddedContext));
+  }
+  function openResults(id = selected?.id || "") {
+    change({ results: "1", measurement: id });
+  }
+  function closeResults() {
+    const next = mergeReportParams(params, {}, appData?.embeddedContext);
+    next.delete("results");
     setParams(next);
   }
-  function href(values: Record<string, string>) {
-    const next = new URLSearchParams(params);
-    for (const [key, value] of Object.entries(values)) next.set(key, value);
-    return `?${next}`;
-  }
-  const status = (value: string) =>
-    t(
-      (
-        {
-          ACTIVE: "Running",
-          COMPLETED: "Completed",
-          PAUSED: "Paused",
-          LIVE: "Live",
-          DRAFT: "Draft",
-          ENDED: "Ended",
-        } as Record<string, string>
-      )[value] || value,
+  function transition(id: string, value: string) {
+    mutations.submit(
+      { intent: "transition", measurementId: id, transition: value },
+      { method: "post" },
     );
+  }
+  function logActivity() {
+    mutations.submit(
+      { intent: "log-activity", title: logTitle, description: logNotes },
+      { method: "post" },
+    );
+    setLogOpen(false);
+    setLogTitle("");
+    setLogNotes("");
+  }
+  const completion = (item: (typeof project.measurements)[number]) =>
+    item.completionMode === "DURATION"
+      ? t("{days} days", { days: item.durationDays || 0 })
+      : t("{count} visitors", {
+          count: formatNumber(item.targetVisitors || 0),
+        });
+  const tabs = [
+    {
+      id: "measurements",
+      content: t("Measurements"),
+      badge: formatNumber(project.measurements.length),
+    },
+    {
+      id: "tests",
+      content: t("A/B tests"),
+      badge: formatNumber(project.abTests.length),
+    },
+    { id: "activity", content: t("Optimization log") },
+  ];
   return (
     <Page
       title={project.title}
       subtitle={project.goal}
+      titleMetadata={<ScopeBadge scope={project.scope} />}
       backAction={{ content: t("Projects"), url: "/app/projects" }}
-      primaryAction={{
-        content: t("Start measurement"),
-        onAction: () => setCreate(true),
-      }}
+      primaryAction={
+        selected
+          ? { content: t("View results"), onAction: () => openResults() }
+          : { content: t("Start measurement"), onAction: () => setCreate(true) }
+      }
       secondaryActions={[
+        ...(selected
+          ? [
+              {
+                content: t("Start measurement"),
+                onAction: () => setCreate(true),
+              },
+            ]
+          : []),
         {
           content: t("Create A/B test"),
           url: `/app/ab-tests?create=1&projectId=${project.id}`,
         },
       ]}
     >
-      <div className="gp-stack">
-        <div className="gp-actions">
-          <Badge>
-            {t(project.scope === "PAGE" ? "Page-level" : "Store-level")}
-          </Badge>
-          {project.resourceProject && (
-            <span>{project.resourceProject.productTitle}</span>
-          )}
-          {project.journeyTracking && <Badge>{t("Journey tracking")}</Badge>}
-        </div>
-        <nav className="gp-tabs" aria-label={t("Project sections")}>
-          {[
-            ["overview", "Overview"],
-            ["measurements", "Measurements"],
-            ["tests", "A/B tests"],
-            ["activity", "Activity"],
-          ].map(([key, label]) => (
-            <Link
-              key={key}
-              to={href({ tab: key, listPage: "1" })}
-              aria-current={tab === key ? "page" : undefined}
-            >
-              {t(label)}
-            </Link>
-          ))}
-        </nav>
-        {mutations.data?.error && (
-          <Banner tone="critical">
-            {t(
-              mutations.data.errorKey || mutations.data.error,
-              mutations.data.errorValues,
-            )}
-          </Banner>
-        )}
-        {tab === "overview" && (
-          <>
-            {selected ? (
-              <>
-                <Card>
-                  <Form
-                    method="get"
-                    className="gp-filters"
-                    key={`${project.id}:${params}`}
-                  >
-                    {Array.from(
-                      embeddedFilterParams(params, {}, appData?.embeddedContext),
-                    ).map(([name, value]) => (
-                      <input key={name} type="hidden" name={name} value={value} />
-                    ))}
-                    <input type="hidden" name="tab" value="overview" />
-                    <input
-                      type="hidden"
-                      name="audience"
-                      value={filters.audience}
-                    />
-                    <label>
-                      {t("Measurement")}
-                      <select
-                        className="gp-input"
-                        name="measurement"
-                        defaultValue={selected.id}
-                      >
-                        {project.measurements.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      {t("Compare with")}
-                      <select
-                        className="gp-input"
-                        name="compare"
-                        defaultValue={comparison?.id || ""}
-                      >
-                        <option value="">{t("No comparison")}</option>
-                        {project.measurements
-                          .filter((item) => item.id !== selected.id)
-                          .map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                    <label>
-                      {t("Source")}
-                      <input
-                        className="gp-input"
-                        name="source"
-                        defaultValue={filters.source}
-                        placeholder={t("All sources")}
-                        maxLength={160}
-                      />
-                    </label>
-                    <label>
-                      {t("Medium")}
-                      <input
-                        className="gp-input"
-                        name="medium"
-                        defaultValue={filters.medium}
-                        placeholder={t("All mediums")}
-                        maxLength={100}
-                      />
-                    </label>
-                    <label>
-                      {t("Campaign")}
-                      <input
-                        className="gp-input"
-                        name="campaign"
-                        defaultValue={filters.campaign}
-                        placeholder={t("All campaigns")}
-                        maxLength={240}
-                      />
-                    </label>
-                    <Button submit>{t("Apply filters")}</Button>
-                    <Button
-                      onClick={() =>
-                        change({ source: "", medium: "", campaign: "" })
-                      }
-                    >
-                      {t("Clear filters")}
-                    </Button>
-                    <div className="gp-toggle" aria-label={t("Audience")}>
-                      {["all", "active"].map((value) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={filters.audience === value}
-                          onClick={() => change({ audience: value })}
-                        >
-                          {t(value === "all" ? "All" : "Active")}
-                        </button>
-                      ))}
-                    </div>
-                  </Form>
-                  <p className="gp-muted" style={{ marginTop: 12 }}>
-                    {t(
-                      "Filters change your report, never which visitors are collected.",
-                    )}
-                  </p>
-                </Card>
-                {selected.customerSnapshot &&
-                  !selected.customerSnapshot.captureAllSources &&
-                  !selected.storeSnapshotId && (
-                    <Banner tone="info">
-                      {t(
-                        "This historical measurement only contains its originally selected source. New measurements collect all sources.",
-                      )}
-                    </Banner>
-                  )}
-                {(selected.snapshot?.usesAcquisitionSessions === false ||
-                  selected.storeSnapshot?.usesAcquisitionSessions ===
-                    false) && (
-                  <Banner tone="info">
-                    {t(
-                      "Historical measurements use their original session identifiers. Separate visits by the same browser may be grouped together; new measurements distinguish each acquisition session.",
-                    )}
-                  </Banner>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {mutations.data?.error && (
+              <Banner tone="critical">
+                {t(
+                  mutations.data.errorKey || mutations.data.error,
+                  mutations.data.errorValues,
                 )}
-                <GrowthMeasurementResults
-                  key={`${project.id}:${selected.id}:${comparison?.id || ""}:${JSON.stringify(filters)}`}
-                  shop={shop}
-                  projectId={project.id}
-                  measurementId={selected.id}
-                  comparisonId={comparison?.id || ""}
-                  filters={filters}
-                />
-                {project.journeyTracking && selected.customerSnapshotId && (
-                  <GrowthProjectJourneys
-                    key={`${selected.id}:${JSON.stringify(filters)}`}
+              </Banner>
+            )}
+            {selected ? (
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack
+                    align="space-between"
+                    blockAlign="start"
+                    gap="300"
+                  >
+                    <BlockStack gap="100">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="h2" variant="headingMd">
+                          {selected.name}
+                        </Text>
+                        <StatusBadge status={selected.status} />
+                      </InlineStack>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {[
+                          project.resourceProject?.productTitle,
+                          completion(selected),
+                          selected.startedAt || selected.createdAt
+                            ? t("Started {date}", {
+                                date: formatDate(
+                                  selected.startedAt || selected.createdAt,
+                                  { dateStyle: "medium" },
+                                ),
+                              })
+                            : null,
+                          project.journeyTracking
+                            ? t("Journey tracking on")
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    </BlockStack>
+                    <Button variant="primary" onClick={() => openResults()}>
+                      {t("View results")}
+                    </Button>
+                  </InlineStack>
+                  <LatestSummary
+                    key={selected.id}
                     shop={shop}
                     projectId={project.id}
                     measurementId={selected.id}
-                    filters={filters}
                   />
-                )}
-                <div className="gp-actions">
-                  <Button url={selected.reportUrl}>
-                    {t("Open detailed engagement report")}
-                  </Button>
-                  {selected.journeyUrl && (
-                    <Button url={selected.journeyUrl}>
-                      {t("Explore journeys")}
-                    </Button>
-                  )}
-                </div>
-                <p className="gp-muted">
-                  {t(
-                    "Detailed legacy reports retain their original reporting definitions and filters.",
-                  )}
-                </p>
-              </>
+                </BlockStack>
+              </Card>
             ) : (
               <Card>
-                <div className="gp-empty">
-                  {t("Start a measurement to see results for this Project.")}
-                </div>
+                <EmptyState
+                  heading={t("No measurements yet")}
+                  action={{
+                    content: t("Start measurement"),
+                    onAction: () => setCreate(true),
+                  }}
+                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                >
+                  <p>
+                    {t(
+                      "Start a measurement to record a baseline for this project.",
+                    )}
+                  </p>
+                </EmptyState>
               </Card>
             )}
-          </>
-        )}
-        {tab === "measurements" && (
-          <Card>
-            <Text as="h2" variant="headingMd">
-              {t("Measurements")}
-            </Text>
-            <div className="gp-table-wrap">
-              <table className="gp-table">
-                <thead>
-                  <tr>
-                    {[
-                      "Measurement",
-                      "Status",
-                      "Completion",
-                      "Started",
-                      "Actions",
-                    ].map((label) => (
-                      <th key={label}>{t(label)}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {project.measurements
-                    .slice(sliceStart, sliceStart + 10)
-                    .map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <Link
-                            to={href({
-                              tab: "overview",
-                              measurement: item.id,
-                              compare: "",
-                            })}
-                          >
-                            {item.name}
-                          </Link>
-                        </td>
-                        <td>
-                          <Badge>{status(item.status)}</Badge>
-                        </td>
-                        <td>
-                          {item.completionMode === "DURATION"
-                            ? t("{days} days", { days: item.durationDays || 0 })
-                            : t("{count} visitors", {
-                                count: formatNumber(item.targetVisitors || 0),
-                              })}
-                        </td>
-                        <td>
-                          {formatDate(item.startedAt || item.createdAt, {
-                            dateStyle: "medium",
-                          })}
-                        </td>
-                        <td>
-                          <div className="gp-actions">
-                            {item.status !== "COMPLETED" && (
-                              <>
-                                <Button
-                                  disabled={mutations.state !== "idle"}
-                                  onClick={() =>
-                                    mutations.submit(
-                                      {
-                                        intent: "transition",
-                                        measurementId: item.id,
-                                        transition:
-                                          item.status === "PAUSED"
-                                            ? "resume"
-                                            : "pause",
-                                      },
-                                      { method: "post" },
-                                    )
-                                  }
-                                >
-                                  {t(
-                                    item.status === "PAUSED"
-                                      ? "Resume"
-                                      : "Pause",
-                                  )}
-                                </Button>
-                                <Button
-                                  disabled={mutations.state !== "idle"}
-                                  onClick={() =>
-                                    mutations.submit(
-                                      {
-                                        intent: "transition",
-                                        measurementId: item.id,
-                                        transition: "complete",
-                                      },
-                                      { method: "post" },
-                                    )
-                                  }
-                                >
-                                  {t("Complete")}
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-        {tab === "tests" && (
-          <Card>
-            <div className="gp-heading">
-              <Text as="h2" variant="headingMd">
-                {t("A/B tests")}
-              </Text>
-              <Button
-                url={`/app/ab-tests?create=1&projectId=${project.id}`}
-                variant="primary"
-              >
-                {t("Create A/B test")}
-              </Button>
-            </div>
-            {!project.abTests.length ? (
-              <div className="gp-empty">
-                {t(
-                  "No experiments yet. Test an idea against your Project goal.",
-                )}
-              </div>
-            ) : (
-              <div className="gp-table-wrap">
-                <table className="gp-table">
-                  <thead>
-                    <tr>
-                      {["Test", "Status", "Success metric", "Created"].map(
-                        (label) => (
-                          <th key={label}>{t(label)}</th>
-                        ),
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {project.abTests
+            <Card padding="0">
+              <Tabs
+                tabs={tabs}
+                selected={TABS.indexOf(tab as (typeof TABS)[number])}
+                onSelect={(index) =>
+                  change({ tab: TABS[index], listPage: "1" })
+                }
+              />
+              {tab === "measurements" &&
+                (project.measurements.length ? (
+                  <IndexTable
+                    resourceName={{
+                      singular: t("measurement"),
+                      plural: t("measurements"),
+                    }}
+                    itemCount={project.measurements.length}
+                    selectable={false}
+                    headings={[
+                      { title: t("Measurement") },
+                      { title: t("Status") },
+                      { title: t("Completion") },
+                      { title: t("Started") },
+                      { title: t("Actions"), alignment: "end" },
+                    ]}
+                  >
+                    {project.measurements
                       .slice(sliceStart, sliceStart + 10)
-                      .map((test) => (
-                        <tr key={test.id}>
-                          <td>
-                            <Link to={`/app/ab-tests/${test.id}`}>
-                              {test.name}
-                            </Link>
-                          </td>
-                          <td>
-                            <Badge>{status(test.status)}</Badge>
-                          </td>
-                          <td>
-                            {t(
-                              (
-                                {
-                                  CONVERSION: "Conversion rate",
-                                  REVENUE: "Revenue per visitor",
-                                  ADD_TO_CART: "Add-to-cart rate",
-                                  CLICK_THROUGH: "Clickthrough rate",
-                                  ENGAGEMENT: "Engagement",
-                                } as Record<string, string>
-                              )[test.goal] || test.goal,
-                            )}
-                          </td>
-                          <td>
-                            {formatDate(test.createdAt, {
+                      .map((item, index) => (
+                        <IndexTable.Row
+                          id={item.id}
+                          key={item.id}
+                          position={index}
+                        >
+                          <IndexTable.Cell>
+                            <Text as="span" fontWeight="semibold">
+                              {item.name}
+                            </Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <StatusBadge status={item.status} />
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>{completion(item)}</IndexTable.Cell>
+                          <IndexTable.Cell>
+                            {formatDate(item.startedAt || item.createdAt, {
                               dateStyle: "medium",
                             })}
-                          </td>
-                        </tr>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <InlineStack align="end" gap="200" wrap={false}>
+                              <Button
+                                size="slim"
+                                onClick={() => openResults(item.id)}
+                              >
+                                {t("Results")}
+                              </Button>
+                              {item.status !== "COMPLETED" && (
+                                <>
+                                  <Button
+                                    size="slim"
+                                    disabled={mutations.state !== "idle"}
+                                    onClick={() =>
+                                      transition(
+                                        item.id,
+                                        item.status === "PAUSED"
+                                          ? "resume"
+                                          : "pause",
+                                      )
+                                    }
+                                  >
+                                    {t(
+                                      item.status === "PAUSED"
+                                        ? "Resume"
+                                        : "Pause",
+                                    )}
+                                  </Button>
+                                  <Button
+                                    size="slim"
+                                    disabled={mutations.state !== "idle"}
+                                    onClick={() => setConfirmComplete(item.id)}
+                                  >
+                                    {t("Complete")}
+                                  </Button>
+                                </>
+                              )}
+                            </InlineStack>
+                          </IndexTable.Cell>
+                        </IndexTable.Row>
                       ))}
-                  </tbody>
-                </table>
-              </div>
+                  </IndexTable>
+                ) : (
+                  <Box padding="400">
+                    <Text as="p" tone="subdued">
+                      {t("No measurements yet.")}
+                    </Text>
+                  </Box>
+                ))}
+              {tab === "tests" &&
+                (project.abTests.length ? (
+                  <IndexTable
+                    resourceName={{
+                      singular: t("A/B test"),
+                      plural: t("A/B tests"),
+                    }}
+                    itemCount={project.abTests.length}
+                    selectable={false}
+                    headings={[
+                      { title: t("Test") },
+                      { title: t("Status") },
+                      { title: t("Success metric") },
+                      { title: t("Created"), alignment: "end" },
+                    ]}
+                  >
+                    {project.abTests
+                      .slice(sliceStart, sliceStart + 10)
+                      .map((test, index) => (
+                        <IndexTable.Row
+                          id={test.id}
+                          key={test.id}
+                          position={index}
+                        >
+                          <IndexTable.Cell>
+                            <Link
+                              url={`/app/ab-tests/${test.id}`}
+                              monochrome
+                              removeUnderline
+                              dataPrimaryLink
+                            >
+                              <Text as="span" fontWeight="semibold">
+                                {test.name}
+                              </Text>
+                            </Link>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <StatusBadge status={test.status} />
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            {t(GOALS[test.goal] || test.goal)}
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Text as="span" alignment="end" numeric>
+                              {formatDate(test.createdAt, {
+                                dateStyle: "medium",
+                              })}
+                            </Text>
+                          </IndexTable.Cell>
+                        </IndexTable.Row>
+                      ))}
+                  </IndexTable>
+                ) : (
+                  <Box padding="400">
+                    <BlockStack gap="300" inlineAlign="start">
+                      <Text as="p" tone="subdued">
+                        {t(
+                          "No experiments yet. Test an idea against your Project goal.",
+                        )}
+                      </Text>
+                      <Button
+                        url={`/app/ab-tests?create=1&projectId=${project.id}`}
+                      >
+                        {t("Create A/B test")}
+                      </Button>
+                    </BlockStack>
+                  </Box>
+                ))}
+              {tab === "activity" && (
+                <Box padding="400">
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" tone="subdued">
+                        {t(
+                          "Log the changes you make so you can line them up with your results.",
+                        )}
+                      </Text>
+                      <Button onClick={() => setLogOpen(true)}>
+                        {t("Log optimization")}
+                      </Button>
+                    </InlineStack>
+                    {project.activities
+                      .slice(sliceStart, sliceStart + 10)
+                      .map((item) => (
+                        <Box
+                          key={item.id}
+                          paddingBlockStart="300"
+                          borderBlockStartWidth="025"
+                          borderColor="border-secondary"
+                        >
+                          <BlockStack gap="100">
+                            <InlineStack
+                              align="space-between"
+                              blockAlign="center"
+                              gap="200"
+                            >
+                              <Text as="h3" fontWeight="semibold">
+                                {item.title}
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {formatDate(item.createdAt, {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                })}
+                              </Text>
+                            </InlineStack>
+                            {item.description && (
+                              <Text as="p">{item.description}</Text>
+                            )}
+                          </BlockStack>
+                        </Box>
+                      ))}
+                    {!project.activities.length && (
+                      <Text as="p" tone="subdued">
+                        {t("Nothing logged yet.")}
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Box>
+              )}
+              {pages > 1 && (
+                <Box padding="300">
+                  <InlineStack align="center">
+                    <Pagination
+                      hasPrevious={currentPage > 1}
+                      onPrevious={() =>
+                        change({ listPage: String(currentPage - 1) })
+                      }
+                      hasNext={currentPage < pages}
+                      onNext={() =>
+                        change({ listPage: String(currentPage + 1) })
+                      }
+                      label={t("Page {page} of {pages}", {
+                        page: currentPage,
+                        pages,
+                      })}
+                    />
+                  </InlineStack>
+                </Box>
+              )}
+            </Card>
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+      {selected && (
+        <GrowthResultsSheet
+          open={resultsOpen}
+          onClose={closeResults}
+          shop={shop}
+          project={project}
+          selected={selected}
+          comparison={comparison}
+          filters={filters}
+          onChange={change}
+        />
+      )}
+      <Modal
+        open={Boolean(confirmComplete)}
+        onClose={() => setConfirmComplete("")}
+        title={t("Complete this measurement?")}
+        primaryAction={{
+          content: t("Complete"),
+          destructive: true,
+          onAction: () => {
+            transition(confirmComplete, "complete");
+            setConfirmComplete("");
+          },
+        }}
+        secondaryActions={[
+          { content: t("Cancel"), onAction: () => setConfirmComplete("") },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            {t(
+              "It stops collecting now and can't be restarted. You can start a new measurement any time.",
             )}
-          </Card>
-        )}
-        {tab === "activity" && (
-          <Card>
-            <Text as="h2" variant="headingMd">
-              {t("Optimization activity")}
-            </Text>
-            <mutations.Form
-              method="post"
-              className="gp-filters"
-              style={{ marginTop: 16 }}
-            >
-              <input type="hidden" name="intent" value="log-activity" />
-              <label>
-                {t("Optimization title")}
-                <input
-                  required
-                  maxLength={120}
-                  name="title"
-                  className="gp-input"
-                />
-              </label>
-              <label>
-                {t("Notes")}
-                <input
-                  name="description"
-                  maxLength={2000}
-                  className="gp-input"
-                />
-              </label>
-              <Button submit loading={mutations.state !== "idle"}>
-                {t("Log optimization")}
-              </Button>
-            </mutations.Form>
-            {project.activities
-              .slice(sliceStart, sliceStart + 10)
-              .map((item) => (
-                <div key={item.id} className="gp-activity">
-                  <strong>{item.title}</strong>
-                  <p>{item.description}</p>
-                  <span className="gp-muted">
-                    {formatDate(item.createdAt, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </span>
-                </div>
-              ))}
-            {!project.activities.length && (
-              <div className="gp-empty">
-                {t(
-                  "Only changes you log appear here. Measurements and tests are not automatically called optimizations.",
-                )}
-              </div>
-            )}
-          </Card>
-        )}
-        {tab !== "overview" && (
-          <div className="gp-pagination">
-            <Button
-              disabled={currentPage <= 1}
-              onClick={() => change({ listPage: String(currentPage - 1) })}
-            >
-              {t("Previous")}
-            </Button>
-            <span>
-              {t("Page {page} of {pages}", { page: currentPage, pages })}
-            </span>
-            <Button
-              disabled={currentPage >= pages}
-              onClick={() => change({ listPage: String(currentPage + 1) })}
-            >
-              {t("Next")}
-            </Button>
-          </div>
-        )}
-      </div>
+          </Text>
+        </Modal.Section>
+      </Modal>
+      <Modal
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        title={t("Log optimization")}
+        primaryAction={{
+          content: t("Save"),
+          disabled: !logTitle.trim(),
+          loading: mutations.state !== "idle",
+          onAction: logActivity,
+        }}
+        secondaryActions={[
+          { content: t("Cancel"), onAction: () => setLogOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <TextField
+              label={t("Optimization title")}
+              value={logTitle}
+              onChange={setLogTitle}
+              maxLength={120}
+              autoComplete="off"
+              placeholder={t("e.g. Moved reviews above the fold")}
+            />
+            <TextField
+              label={t("Notes")}
+              value={logNotes}
+              onChange={setLogNotes}
+              maxLength={2000}
+              multiline={3}
+              autoComplete="off"
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
       {create && (
         <GrowthProjectForm
           open
