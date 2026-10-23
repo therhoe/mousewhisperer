@@ -48,11 +48,13 @@ export function GrowthProjectJourneys({
   projectId,
   measurementId,
   filters,
+  onOpenJourney,
 }: {
   shop: string;
   projectId: string;
   measurementId: string;
   filters: GrowthReportFilters;
+  onOpenJourney: (url: string) => void;
 }) {
   const { t, formatNumber, formatDate } = useI18n();
   const filterKey = JSON.stringify([projectId, measurementId, filters]);
@@ -149,7 +151,7 @@ export function GrowthProjectJourneys({
             ),
             <Button
               key={session.id}
-              url={session.detailUrl}
+              onClick={() => onOpenJourney(session.detailUrl)}
               variant="plain"
             >
               {t("View journey")}

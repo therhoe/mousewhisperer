@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher, useNavigate } from "@remix-run/react";
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import {
   Banner,
@@ -61,6 +61,13 @@ export function GrowthResultsSheet({
   onChange: (values: Record<string, string>) => void;
 }) {
   const { t } = useI18n();
+  const navigate = useNavigate();
+  // Modal content runs in its own frame, so an href would load the URL there
+  // without the embedded session. Close the sheet and route the main app.
+  const openInApp = (url: string) => {
+    onClose();
+    navigate(url);
+  };
   const sources = useFetcher<{ sources: string[] }>();
   const loadSources = useRef(sources.load);
   useEffect(() => {
@@ -266,6 +273,7 @@ export function GrowthResultsSheet({
                   projectId={project.id}
                   measurementId={selected.id}
                   filters={filters}
+                  onOpenJourney={openInApp}
                 />
               )}
               <Box paddingBlockEnd="600">
@@ -275,7 +283,10 @@ export function GrowthResultsSheet({
                       "All counts every visitor. Active leaves out bots and visitors who didn't engage.",
                     )}
                   </Text>
-                  <Button variant="plain" url={selected.reportUrl}>
+                  <Button
+                    variant="plain"
+                    onClick={() => openInApp(selected.reportUrl)}
+                  >
                     {t("Open classic report")}
                   </Button>
                 </InlineStack>

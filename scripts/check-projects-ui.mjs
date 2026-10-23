@@ -226,6 +226,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
         },
       ],
       useFetcher: () => fetcher,
+      useNavigate: () => (url) => state.calls.push(["navigate", url]),
       Form: ({ children, ...props }) =>
         React.createElement("form", props, children),
       Link: ({ to, children, ...props }) =>
@@ -575,6 +576,11 @@ test("results sheet shows journeys only with enabled tracking and a companion ca
   assert.match(html, /data-results="measurement-one" data-audience="active"/);
   assert.match(html, /data-project-journeys="project-one"/);
   assert.match(html, /data-audience="active" data-source="google" data-medium="cpc" data-campaign="sale"/);
+  // The sheet is its own frame; an href there would load the bare URL without the embedded session.
+  const classic = h.state.buttons.find((button) => button.label === "Open classic report");
+  assert.equal(classic.url, undefined);
+  classic.onClick();
+  assert.deepEqual(h.state.calls.at(-1), ["navigate", "/app/store-snapshots/capture-one"]);
   assert.doesNotMatch(h.render({ ...props, project: { ...props.project, journeyTracking: false } }), /data-project-journeys/);
   assert.doesNotMatch(h.render({ ...props, selected: project.measurements[0] }), /data-project-journeys/);
   assert.doesNotMatch(h.render({ ...props, open: false }), /data-results=/);
