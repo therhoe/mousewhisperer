@@ -10,6 +10,23 @@ const read = (path) =>
 const tomlString = (content, name) =>
   content.match(new RegExp(`^\\s*${name}\\s*=\\s*"([^"]*)"`, "m"))?.[1];
 
+test("public landing introduces Projects, their A/B tests, and four growth levers", () => {
+  const landing = read("app/routes/_index/route.tsx").replace(/\s+/g, " ");
+  assert.match(landing, /Goal-focused Projects/);
+  assert.match(landing, /store-level or page-level goal/);
+  assert.match(landing, /A\/B tests within Projects/);
+  assert.match(
+    landing,
+    /traffic, conversion rate, average order value \(AOV\), and observed customer value \(LTV\)/,
+  );
+  assert.doesNotMatch(
+    landing,
+    /Store and channel snapshots|Page snapshots|compare snapshots/,
+  );
+  assert.match(landing, /action="\/auth\/login"/);
+  assert.match(landing, /name="shop"/);
+});
+
 test("Shopify display names use Snapshot while installation, URLs, and extension handles stay stable", () => {
   const app = read("shopify.app.toml");
   assert.equal(tomlString(app, "name"), "Snapshot");
@@ -76,7 +93,7 @@ test("active UI, onboarding, analytics messages, and generated reports use the n
     "app/routes/_index/route.tsx",
     "app/routes/auth.login/route.tsx",
     "app/routes/app.tsx",
-    "app/routes/app._index.tsx",
+    "app/components/LegacySnapshotDashboard.tsx",
     "app/routes/app.channel-snapshots._index.tsx",
     "app/routes/app.channel-snapshots.$id.tsx",
     "app/routes/app.upgrade.tsx",
@@ -99,6 +116,9 @@ test("active UI, onboarding, analytics messages, and generated reports use the n
     );
   }
   assert.match(read("app/root.tsx"), /title:\s*"Snapshot"/);
+  // The Projects dashboard inherits the brand from the app shell rather than
+  // repeating its name in every page. The preserved legacy surface still names it.
+  assert.doesNotMatch(read("app/routes/app._index.tsx"), /Mouse\s+Whisperer/);
   assert.ok(
     read("app/routes/auth.login/route.tsx").includes("Log in to Snapshot"),
   );

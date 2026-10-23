@@ -46,7 +46,6 @@ import {
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
 import {
-  assertCanCreateNormalSnapshots,
   assertSnapshotTargetAllowed,
   getBillingDisplayAccess,
   isPlanLimitError,
@@ -60,6 +59,7 @@ import {
 } from "../utils/click-engagement";
 import { getPageSnapshotResourcePath } from "../utils/page-snapshot-navigation";
 import { EngagementOutcomesView } from "../components/EngagementOutcomes";
+import { GrowthProjectError, transitionGrowthMeasurement } from "../utils/growth-projects.server";
 
 const INSIGHT_CATEGORIES = [
   { label: "Select a category", value: "" },
@@ -1985,6 +1985,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Project ID required", { status: 400 });
   }
 
+
   try {
     // Get snapshot ID from URL or use active/latest
     const snapshotIdParam = url.searchParams.get("snapshot");
@@ -2228,8 +2229,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = formData.get("action");
 
-  if (!projectId) {
-    return json({ error: "Project ID required" }, { status: 400 });
+  if (!projectId) return json({ error: "Project ID required" }, { status: 400 });
+  if (!await prisma.project.findFirst({ where: { id: projectId, shop }, select: { id: true } }))
+    return json({ error: "Project not found" }, { status: 404 });
+  const requestedSnapshotId = String(formData.get("snapshotId") || "");
+  if (requestedSnapshotId && !await prisma.snapshot.findFirst({ where: { id: requestedSnapshotId, projectId, project: { shop } }, select: { id: true } }))
+    return json({ error: "Snapshot not found" }, { status: 404 });
+
+  if (["pause-snapshot", "resume-snapshot", "edit-snapshot"].includes(String(actionType)) && requestedSnapshotId) {
+    const linked = await prisma.growthMeasurement.findFirst({ where: { snapshotId: requestedSnapshotId, project: { shop } }, select: { id: true, projectId: true } });
+    if (linked) {
+      if (actionType === "edit-snapshot") return json({ error: "This measurement belongs to a Project. Start a new measurement to use a different completion target." }, { status: 409 });
+      try {
+        await transitionGrowthMeasurement(shop, linked.projectId, linked.id, actionType === "pause-snapshot" ? "pause" : "resume");
+        clearProjectRouteCaches(shop, projectId);
+        return json({ success: true });
+      } catch (error) {
+        if (error instanceof GrowthProjectError) return json({ error: error.message }, { status: error.status });
+        throw error;
+      }
+    }
+  }
+
+  if (actionType === "create-snapshot") {
+    const ongoing = await prisma.growthProject.findFirst({ where: { resourceProjectId: projectId, shop }, select: { id: true } });
+    return redirect(ongoing ? `/app/projects/${ongoing.id}` : "/app/projects?create=1");
   }
 
   if (actionType === "pause-snapshot") {
@@ -2262,55 +2286,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
-  if (actionType === "create-snapshot") {
-    const snapshotName = formData.get("snapshotName") as string | null;
-    const targetVisitors =
-      parseInt(formData.get("targetVisitors") as string) || 1000;
-
-    try {
-      await assertCanCreateNormalSnapshots(shop, 1);
-      await assertSnapshotTargetAllowed(shop, targetVisitors);
-    } catch (error) {
-      if (isPlanLimitError(error)) {
-        return json(planLimitPayload(error), { status: error.status });
-      }
-      throw error;
-    }
-
-    // Check if there's already an active snapshot
-    const activeSnapshot = await prisma.snapshot.findFirst({
-      where: { projectId, status: "ACTIVE" },
-    });
-    if (activeSnapshot) {
-      return json(
-        {
-          error:
-            "Another snapshot is already active. Pause or complete it first.",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Get next snapshot number
-    const lastSnapshot = await prisma.snapshot.findFirst({
-      where: { projectId },
-      orderBy: { number: "desc" },
-    });
-
-    await prisma.snapshot.create({
-      data: {
-        projectId: projectId!,
-        number: (lastSnapshot?.number || 0) + 1,
-        name: snapshotName || null,
-        targetVisitors,
-        status: "ACTIVE",
-      },
-    });
-
-    clearProjectRouteCaches(shop, projectId);
-    return json({ success: true });
-  }
-
+  // Creation has moved to the goal-led Projects flow above.
   if (actionType === "edit-snapshot") {
     const snapshotId = formData.get("snapshotId") as string;
     const snapshotName = formData.get("snapshotName") as string | null;
@@ -2391,6 +2367,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         select: { id: true },
       }));
 
+    if (await prisma.growthMeasurement.findFirst({ where: { snapshotId, project: { shop } }, select: { id: true } }))
+      return json({ error: "This measurement belongs to a Project. Its history is preserved and cannot be deleted from the legacy report." }, { status: 409 });
     await prisma.snapshot.delete({ where: { id: snapshotId } });
     clearProjectRouteCaches(shop, projectId);
     return redirect(
@@ -2401,6 +2379,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (actionType === "delete-project") {
+    if (await prisma.growthProject.findFirst({ where: { resourceProjectId: projectId, shop }, select: { id: true } }))
+      return json({ error: "This page belongs to an ongoing Project. Its measurements and tests cannot be deleted from the legacy report." }, { status: 409 });
     await prisma.project.delete({ where: { id: projectId } });
     clearProjectRouteCaches(shop, projectId);
     return json({ success: true, redirect: "/app" });

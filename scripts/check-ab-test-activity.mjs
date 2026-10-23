@@ -37,6 +37,7 @@ function compile(source, mocks = {}, globals = {}) {
     require: (specifier) =>
       specifier in mocks ? mocks[specifier] : require(specifier),
     URL,
+    URLSearchParams,
     Request,
     Response,
     FormData,
@@ -142,6 +143,10 @@ function harness(source = listSource) {
     load: (url) => state.loads.push(url),
   };
   const mocks = {
+    "../utils/ab-project-targeting": compile(
+      read("app/utils/ab-project-targeting.ts"),
+    ),
+    "../utils/i18n": { useI18n: () => ({ t: (key) => key }) },
     react: {
       ...React,
       useRef: (value) => ({ current: value }),
@@ -180,6 +185,9 @@ function harness(source = listSource) {
     "../utils/loader-cache.server": cache,
     "../utils/dashboard-activity.server": activity,
     "../utils/ab-test-activity.server": activityCache,
+    "../utils/storefront-product.server": {
+      requirePublishedProductTarget: async () => {},
+    },
     "../utils/billing.server": {
       getBillingDisplayAccess: async (shop) => {
         calls.push({ kind: "displayBilling", shop });
@@ -197,6 +205,11 @@ function harness(source = listSource) {
       planLimitPayload: (error) => ({ error: error.message }),
     },
     "../utils/ab-tests.server": {
+      requireAbGrowthProject: async (shop, id) => ({
+        id,
+        shop,
+        scope: "STORE",
+      }),
       getThemeTemplateOptions: async () => {
         calls.push({ kind: "templates" });
         return {
@@ -211,6 +224,7 @@ function harness(source = listSource) {
       createTemplateAbTest: (args) => mutation("create", args),
     },
     "../db.server": {
+      growthProject: { findMany: async () => [] },
       abTest: {
         findMany: async (args) => {
           calls.push({ kind: "tests", args });
@@ -478,6 +492,8 @@ test("creating a test keeps fresh billing authorization and invalidates the grap
     status: 402,
   });
   const form = {
+    growthProjectId: "project-one",
+    targetPagePath: "/products/one",
     targetPageType: "PRODUCT",
     variantTemplateSuffix: "test-b",
     variantTemplateFileName: "templates/product.test-b.json",

@@ -30,20 +30,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Deleting all data for shop: ${shop}`);
 
   try {
-    // Includes all acquisition sessions and visits through cascading relations.
-    await db.channelSnapshot.deleteMany({ where: { shop } });
-    await db.customerSnapshot.deleteMany({ where: { shop } });
-    // Delete all sessions for this shop
-    const deletedSessions = await db.session.deleteMany({
-      where: { shop },
-    });
-    console.log(`Deleted ${deletedSessions.count} sessions for ${shop}`);
-
-    // Delete all projects for this shop (cascades to Snapshots and Visits due to onDelete: Cascade)
-    const deletedProjects = await db.project.deleteMany({
-      where: { shop },
-    });
-    console.log(`Deleted ${deletedProjects.count} projects for ${shop}`);
+    // Project links deliberately restrict individual legacy report deletion.
+    // Redaction removes the merchant's containers first, then every capture in
+    // one transaction; no partially redacted tenant or orphaned projects remain.
+    await db.$transaction(async (tx) => {
+      await tx.growthProject.deleteMany({ where: { shop } });
+      await tx.abTest.deleteMany({ where: { shop } });
+      await tx.storeSnapshot.deleteMany({ where: { shop } });
+      await tx.channelSnapshot.deleteMany({ where: { shop } });
+      await tx.customerSnapshot.deleteMany({ where: { shop } });
+      await tx.project.deleteMany({ where: { shop } });
+      await tx.optimizationEvent.deleteMany({ where: { shop } });
+      await tx.notification.deleteMany({ where: { shop } });
+      await tx.shopSettings.deleteMany({ where: { shop } });
+      await tx.shopBilling.deleteMany({ where: { shop } });
+      await tx.insightProfile.deleteMany({ where: { shop } });
+      await tx.session.deleteMany({ where: { shop } });
+    }, { timeout: 30_000 });
 
     console.log(`Shop redaction complete for ${shop}`);
   } catch (error) {

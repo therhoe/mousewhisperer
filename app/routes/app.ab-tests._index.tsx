@@ -3,7 +3,10 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
   useFetcher,
+  useActionData,
   useLoaderData,
+  useSearchParams,
+  useNavigate,
   useNavigation,
   useSubmit,
 } from "@remix-run/react";
@@ -15,6 +18,7 @@ import {
   Card,
   InlineStack,
   Page,
+  Select,
   SkeletonBodyText,
   SkeletonDisplayText,
   Text,
@@ -23,6 +27,7 @@ import {
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { requirePublishedProductTarget } from "../utils/storefront-product.server";
 import {
   AbTestDetailReport,
   type AbTestReportStatsRow,
@@ -33,9 +38,16 @@ import {
   getThemeTemplateOptions,
   normalizeAbTestGoal,
   normalizeAbTestPageType,
+  requireAbGrowthProject,
   type SnapshotTemplateTransformation,
   type ThemeTemplateOption,
 } from "../utils/ab-tests.server";
+import {
+  abTargetPathForResource,
+  abTargetPathMatchesType,
+  normalizeAbTargetPath,
+} from "../utils/ab-project-targeting";
+import { useI18n } from "../utils/i18n";
 import {
   cachedValue,
   clearCacheKey,
@@ -998,6 +1010,7 @@ function TemplatePreview({
   muted?: boolean;
   height?: number;
 }) {
+  const { t } = useI18n();
   const [failed, setFailed] = useState(false);
   const showImage = Boolean(imageUrl && !failed);
 
@@ -1112,7 +1125,7 @@ function TemplatePreview({
             color: "#5f6368",
           }}
         >
-          {label || "Theme preview"}
+          {label || t("Theme preview")}
         </div>
       ) : null}
       {!showImage && pageUrl ? (
@@ -1271,6 +1284,7 @@ function DashboardTestCard({
   onOpenDetails: (testId: string) => void;
   onSubmitStatus: (action: string, testId: string) => void;
 }) {
+  const { t } = useI18n();
   const { test, control, variant, controlStats, variantStats } = item;
   const controlVisitors = controlStats?.visitors || 0;
   const variantVisitors = variantStats?.visitors || 0;
@@ -1349,15 +1363,15 @@ function DashboardTestCard({
               <Badge>
                 {PAGE_TYPE_LABELS[test.targetPageType] || test.targetPageType}
               </Badge>
-              <Badge tone="info">{goalLabel(test.goal)}</Badge>
+              <Badge tone="info">{t(goalLabel(test.goal))}</Badge>
               <Badge>{`${variantTrafficLabel(test)} split`}</Badge>
             </InlineStack>
             <Text as="h3" variant="headingMd">
               {test.name}
             </Text>
             <Text as="p" tone="subdued">
-              {control?.templateName || "Original"} vs{" "}
-              {variant?.templateName || "Variant"} · Started{" "}
+              {control?.templateName || t("Original")} {t("vs")}{" "}
+              {variant?.templateName || t("Variant")} {t("· Started")}{" "}
               {formatCompactDate(test.launchedAt || test.createdAt)}
               {test.endedAt
                 ? ` · Ended ${formatCompactDate(test.endedAt)}`
@@ -1375,17 +1389,17 @@ function DashboardTestCard({
           }}
         >
           <MetricBlock
-            label="Visitors"
+            label={t("Visitors")}
             value={item.totalVisitors.toLocaleString()}
             detail={`A ${controlVisitors.toLocaleString()} · B ${variantVisitors.toLocaleString()}`}
           />
           <MetricBlock
-            label="CVR"
+            label={t("CVR")}
             value={`${variantRate.toFixed(1)}%`}
             detail={`A ${controlRate.toFixed(1)}%`}
           />
           <MetricBlock
-            label="Lift"
+            label={t("Lift")}
             value={item.liftLabel}
             detail={item.liftDetail}
             tone={item.liftTone}
@@ -1404,7 +1418,7 @@ function DashboardTestCard({
         >
           <div>
             <Text as="span" tone="subdued">
-              Progress
+              {t("Progress")}
             </Text>
             <div style={{ marginTop: 8 }}>
               <MiniProgressBar
@@ -1421,7 +1435,7 @@ function DashboardTestCard({
           <div onClick={(event) => event.stopPropagation()}>
             <InlineStack gap="150" align="end" wrap>
               <Button size="slim" onClick={() => onOpenDetails(test.id)}>
-                View details
+                {t("View details")}
               </Button>
               {test.status === "DRAFT" ? (
                 <Button
@@ -1430,7 +1444,7 @@ function DashboardTestCard({
                   onClick={() => onSubmitStatus("launch-test", test.id)}
                   loading={isLoading}
                 >
-                  Launch
+                  {t("Launch")}
                 </Button>
               ) : null}
               {test.status === "LIVE" ? (
@@ -1439,7 +1453,7 @@ function DashboardTestCard({
                   onClick={() => onSubmitStatus("pause-test", test.id)}
                   loading={isLoading}
                 >
-                  Pause
+                  {t("Pause")}
                 </Button>
               ) : null}
               {test.status === "PAUSED" ? (
@@ -1449,7 +1463,7 @@ function DashboardTestCard({
                   onClick={() => onSubmitStatus("launch-test", test.id)}
                   loading={isLoading}
                 >
-                  Resume
+                  {t("Resume")}
                 </Button>
               ) : null}
               {test.status === "LIVE" || test.status === "PAUSED" ? (
@@ -1458,7 +1472,7 @@ function DashboardTestCard({
                   onClick={() => onSubmitStatus("end-test", test.id)}
                   loading={isLoading}
                 >
-                  End
+                  {t("End")}
                 </Button>
               ) : null}
             </InlineStack>
@@ -1494,6 +1508,7 @@ function TemplateSummaryCard({
   showAction?: boolean;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -1519,7 +1534,7 @@ function TemplateSummaryCard({
           </InlineStack>
           {showAction ? (
             <Button onClick={onSwap} disabled={disabled}>
-              {side === "A" ? "Swap template" : "Select template"}
+              {side === "A" ? t("Swap template") : t("Select template")}
             </Button>
           ) : null}
         </InlineStack>
@@ -1527,7 +1542,7 @@ function TemplateSummaryCard({
       <TemplatePreview
         imageUrl={previewImageUrl}
         pageUrl={previewPageUrl}
-        label={suffix ? `?view=${suffix}` : "Default view"}
+        label={suffix ? `?view=${suffix}` : t("Default view")}
         height={360}
       />
       <div style={{ padding: 20 }}>
@@ -1542,7 +1557,7 @@ function TemplateSummaryCard({
             {suffix ? (
               <Badge tone="info">{`Uses ?view=${suffix}`}</Badge>
             ) : (
-              <Badge>Default template</Badge>
+              <Badge>{t("Default template")}</Badge>
             )}
             {assignedLabel ? (
               <Badge tone="success">{assignedLabel}</Badge>
@@ -1650,11 +1665,14 @@ function PageTypeRail({
   activeType,
   templateCounts,
   onSelect,
+  lockedType,
 }: {
   activeType: string;
   templateCounts: Record<string, number>;
   onSelect: (value: string) => void;
+  lockedType?: string | null;
 }) {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -1664,7 +1682,7 @@ function PageTypeRail({
       }}
     >
       <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">
-        Page type
+        {t("Page type")}
       </Text>
       <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
         {PAGE_TYPE_OPTIONS.map((option) => {
@@ -1674,6 +1692,7 @@ function PageTypeRail({
             <button
               key={option.value}
               type="button"
+              disabled={Boolean(lockedType && lockedType !== option.value)}
               onClick={() => onSelect(option.value)}
               style={{
                 display: "flex",
@@ -1700,7 +1719,7 @@ function PageTypeRail({
                   flex: "0 0 auto",
                 }}
               />
-              <span style={{ flex: 1 }}>{option.label}</span>
+              <span style={{ flex: 1 }}>{t(option.label)}</span>
               {count > 0 ? (
                 <span style={{ color: active ? "#2c6ecb" : "#6d7175" }}>
                   {count}
@@ -1729,6 +1748,7 @@ function TemplateListOption({
   disabledReason?: string;
   onSelect: () => void;
 }) {
+  const { t } = useI18n();
   function handleSelect() {
     if (!disabled) onSelect();
   }
@@ -1799,7 +1819,7 @@ function TemplateListOption({
       </span>
       <span style={{ flex: "0 0 auto" }}>
         <Badge tone={template.isDefault ? "success" : undefined}>
-          {template.isDefault ? "Default" : "Alternate"}
+          {template.isDefault ? t("Default") : t("Alternate")}
         </Badge>
       </span>
       {template.assignedCount !== null &&
@@ -1830,6 +1850,7 @@ function SnapshotListOption({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
@@ -1854,10 +1875,10 @@ function SnapshotListOption({
             <Text as="span" tone="subdued">
               {snapshot.name || `Snapshot ${snapshot.number}`} ·{" "}
               {snapshot.realCount.toLocaleString()}/
-              {snapshot.targetVisitors.toLocaleString()} real visitors
+              {snapshot.targetVisitors.toLocaleString()} {t("real visitors")}
             </Text>
           </BlockStack>
-          <Badge tone="success">Completed</Badge>
+          <Badge tone="success">{t("Completed")}</Badge>
         </InlineStack>
         <div
           style={{
@@ -1867,23 +1888,23 @@ function SnapshotListOption({
           }}
         >
           <MetricBlock
-            label="ATC"
+            label={t("ATC")}
             value={formatPercentValue(snapshot.atcRate)}
             detail="add-to-cart"
           />
           <MetricBlock
-            label="CVR"
+            label={t("CVR")}
             value={formatPercentValue(snapshot.convRate)}
             detail="conversion"
           />
           <MetricBlock
-            label="Exit"
+            label={t("Exit")}
             value={formatPercentValue(snapshot.exitRate)}
             detail="leaving"
             tone={snapshot.exitRate > 35 ? "negative" : "neutral"}
           />
           <MetricBlock
-            label="Scroll"
+            label={t("Scroll")}
             value={formatPercentValue(snapshot.avgScrollDepth)}
             detail="avg depth"
           />
@@ -1910,6 +1931,7 @@ function ManualTemplateFields({
   setTemplateSuffix: (value: string) => void;
   onApply: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <details style={{ marginTop: 12 }}>
       <summary
@@ -1920,24 +1942,24 @@ function ManualTemplateFields({
           marginBottom: 10,
         }}
       >
-        Advanced manual {side} template
+        {t("Advanced manual")} {side} {t("template")}
       </summary>
       <BlockStack gap="200">
         <TextField
-          label="Template name"
+          label={t("Template name")}
           value={templateName}
           onChange={setTemplateName}
           autoComplete="off"
         />
         <TextField
-          label="Template suffix"
+          label={t("Template suffix")}
           value={templateSuffix}
           onChange={setTemplateSuffix}
           autoComplete="off"
           helpText={`File: ${buildManualFilename(pageType, templateSuffix)}`}
         />
         <InlineStack align="end">
-          <Button onClick={onApply}>Use manual template</Button>
+          <Button onClick={onApply}>{t("Use manual template")}</Button>
         </InlineStack>
       </BlockStack>
     </details>
@@ -1974,7 +1996,7 @@ async function getAbTestsIndexData({
 }: Awaited<ReturnType<typeof authenticate.admin>>) {
   const shop = session.shop;
 
-  const [tests, themeTemplates, completedSnapshots, billingAccess] =
+  const [tests, themeTemplates, completedSnapshots, billingAccess, projects] =
     await Promise.all([
       prisma.abTest.findMany({
         where: { shop },
@@ -2003,6 +2025,11 @@ async function getAbTestsIndexData({
         },
       }),
       getBillingDisplayAccess(shop),
+      prisma.growthProject.findMany({
+        where: { shop },
+        orderBy: { updatedAt: "desc" },
+        include: { resourceProject: true },
+      }),
     ]);
   const assignmentGroups = tests.length
     ? await prisma.abTestAssignment.groupBy({
@@ -2041,6 +2068,15 @@ async function getAbTestsIndexData({
 
   return json({
     shop,
+    projects: projects.map((project) => ({
+      id: project.id,
+      title: project.title,
+      scope: project.scope,
+      pageType: project.resourceProject?.resourceType || null,
+      pagePath: project.resourceProject
+        ? abTargetPathForResource(project.resourceProject)
+        : null,
+    })),
     billingAccess,
     themeTemplates,
     rowStatsByVariant,
@@ -2088,6 +2124,7 @@ async function getAbTestsIndexData({
 }
 
 function AbTestActivityPanel({ shop }: { shop: string }) {
+  const { t } = useI18n();
   const fetcher = useFetcher<AbTestActivityData>();
   const loadRef = useRef(fetcher.load);
   const data = fetcher.data?.shop === shop ? fetcher.data : null;
@@ -2113,7 +2150,7 @@ function AbTestActivityPanel({ shop }: { shop: string }) {
       <Card>
         <BlockStack gap="300">
           <Text as="h2" variant="headingMd">
-            Performance graph unavailable
+            {t("Performance graph unavailable")}
           </Text>
           <Text as="p" tone="subdued">
             {data.error}
@@ -2123,7 +2160,7 @@ function AbTestActivityPanel({ shop }: { shop: string }) {
               onClick={() => loadRef.current("/app/ab-tests?_activity=1")}
               loading={fetcher.state !== "idle"}
             >
-              Retry graph
+              {t("Retry graph")}
             </Button>
           </div>
         </BlockStack>
@@ -2132,11 +2169,11 @@ function AbTestActivityPanel({ shop }: { shop: string }) {
   }
 
   return (
-    <div role="status" aria-label="Loading A/B test performance">
+    <div role="status" aria-label={t("Loading A/B test performance")}>
       <Card>
         <BlockStack gap="300">
           <Text as="h2" variant="headingLg" fontWeight="semibold">
-            A/B test performance
+            {t("A/B test performance")}
           </Text>
           <div aria-hidden="true">
             <SkeletonBodyText lines={1} />
@@ -2177,6 +2214,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = session.shop;
   const formData = await request.formData();
   const actionType = String(formData.get("action") || "");
+  const isCreation = [
+    "duplicate-template-variant",
+    "snapshot-template-variant",
+    "create-template-test",
+  ].includes(actionType);
+  const growthProjectId = String(formData.get("growthProjectId") || "").trim();
+  let targetPagePath = normalizeAbTargetPath(
+    String(formData.get("targetPagePath") || ""),
+  );
+  if (isCreation) {
+    // Validate tenant ownership and page scope BEFORE any Shopify theme write.
+    try {
+      const pageType = String(formData.get("targetPageType") || "");
+      const project = await requireAbGrowthProject(
+        shop,
+        growthProjectId,
+        pageType,
+      );
+      if (project.scope === "PAGE" && project.resourceProject) {
+        const expectedPath = abTargetPathForResource(project.resourceProject);
+        if (targetPagePath !== expectedPath)
+          throw new Error("The test must target the project's page.");
+        targetPagePath = expectedPath;
+      }
+      if (!abTargetPathMatchesType(targetPagePath, pageType))
+        throw new Error("Choose the exact storefront page for this test.");
+      if (pageType === "PRODUCT")
+        await requirePublishedProductTarget(admin, targetPagePath!);
+      const selectedControl = parseOptionValue(
+        String(formData.get("controlOption") || ""),
+      );
+      const selectedVariant = parseOptionValue(
+        String(formData.get("variantOption") || ""),
+      );
+      if (
+        (selectedControl?.pageType && selectedControl.pageType !== pageType) ||
+        (selectedVariant?.pageType && selectedVariant.pageType !== pageType)
+      ) {
+        throw new Error("Both templates must match the selected page type.");
+      }
+    } catch (error) {
+      return json(
+        {
+          ok: false,
+          error:
+            error instanceof Error ? error.message : "Choose a valid project.",
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   if (
     actionType === "duplicate-template-variant" ||
@@ -2343,6 +2431,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const test = await createTemplateAbTest({
       shop,
+      growthProjectId,
+      targetPagePath: targetPagePath!,
       name: String(formData.get("name") || "Untitled template test"),
       targetPageType,
       goal: normalizeAbTestGoal(formData.get("goal")),
@@ -2383,6 +2473,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         targetPageType: test.targetPageType,
         status: "LIVE",
         id: { not: test.id },
+        ...(test.targetPagePath
+          ? {
+              OR: [
+                { targetPagePath: null },
+                { targetPagePath: test.targetPagePath },
+              ],
+            }
+          : {}),
       },
       data: { status: "PAUSED", pausedAt: new Date() },
     });
@@ -2427,6 +2525,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function AbTestsIndex() {
+  const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const actionData = useActionData<typeof action>();
   const {
     shop,
     tests,
@@ -2435,19 +2536,40 @@ export default function AbTestsIndex() {
     rowStatsByVariant,
     completedSnapshots,
     billingAccess,
+    projects,
   } = useLoaderData<typeof getAbTestsIndexData>();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const submit = useSubmit();
   const variantCreateFetcher = useFetcher<VariantCreateActionData>();
   const reportFetcher = useFetcher<AbTestReportData>();
   const isLoading = navigation.state !== "idle";
   const isCreatingVariant = variantCreateFetcher.state !== "idle";
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(
+    searchParams.get("create") === "1",
+  );
+  const [growthProjectId, setGrowthProjectId] = useState(() =>
+    projects.some((project) => project.id === searchParams.get("projectId"))
+      ? searchParams.get("projectId")!
+      : "",
+  );
+  const selectedProject = projects.find(
+    (project) => project.id === growthProjectId,
+  );
+  const [targetPagePath, setTargetPagePath] = useState(
+    () =>
+      projects.find((project) => project.id === searchParams.get("projectId"))
+        ?.pagePath || "",
+  );
   const [statusFilter, setStatusFilter] = useState("LIVE");
   const [dashboardSearch, setDashboardSearch] = useState("");
   const [dashboardSort, setDashboardSort] = useState<DashboardSort>("newest");
   const [name, setName] = useState(untitledNameForPageType("PRODUCT"));
-  const [targetPageType, setTargetPageType] = useState("PRODUCT");
+  const [targetPageType, setTargetPageType] = useState<string>(
+    () =>
+      projects.find((project) => project.id === searchParams.get("projectId"))
+        ?.pageType || "PRODUCT",
+  );
   const [goal, setGoal] = useState("CONVERSION");
   const [trafficSplit, setTrafficSplit] = useState("50");
   const [controlOption, setControlOption] = useState("");
@@ -2541,6 +2663,11 @@ export default function AbTestsIndex() {
     ? false
     : rawSameTemplateSelected;
   const canSave =
+    Boolean(selectedProject) &&
+    abTargetPathMatchesType(
+      normalizeAbTargetPath(targetPagePath),
+      targetPageType,
+    ) &&
     Boolean(controlOption || controlTemplateName.trim()) &&
     Boolean(
       variantOption || variantTemplateName.trim() || hasPendingDuplicate,
@@ -2595,23 +2722,40 @@ export default function AbTestsIndex() {
   );
   const trafficA = clampTrafficPercent(Number(trafficSplit || 50));
   const trafficB = 100 - trafficA;
-  const controlAssignedCount =
-    selectedControl?.assignedCount !== undefined
-      ? selectedControl.assignedCount
-      : null;
-  const targetingNoun = pageTargetNoun(targetPageType, controlAssignedCount);
-  const targetingSummary =
-    typeof controlAssignedCount === "number"
-      ? `Targeting ${controlAssignedCount.toLocaleString()} ${targetingNoun} assigned to your Original (A) template.`
-      : `Targeting ${targetingNoun} assigned to your Original (A) template.`;
-  const selectedPageTypeLabel =
-    PAGE_TYPE_LABELS[targetPageType] || targetPageType;
+  const targetingSummary = t(
+    "Only visitors to {path} using the original template enter this test.",
+    { path: normalizeAbTargetPath(targetPagePath) || "—" },
+  );
+  const selectedPageTypeLabel = t(
+    PAGE_TYPE_LABELS[targetPageType] || targetPageType,
+  );
   const currentThemeName =
-    themeTemplates.templates?.[0]?.themeName || "Live theme";
+    themeTemplates.templates?.[0]?.themeName || t("Live theme");
   const variantEditorUrl = buildThemeEditorUrl(
     shop,
     parseOptionValue(variantOption),
   );
+
+  const requestedCreate = searchParams.get("create");
+  const requestedProjectId = searchParams.get("projectId") || "";
+  useEffect(() => {
+    if (requestedCreate !== "1") return;
+    setCreateOpen(true);
+    const requestedProject = projects.find(
+      (project) => project.id === requestedProjectId,
+    );
+    if (requestedProject) {
+      setGrowthProjectId(requestedProject.id);
+      setTargetPageType(requestedProject.pageType || "PRODUCT");
+      setTargetPagePath(requestedProject.pagePath || "");
+      setControlOption("");
+      setVariantOption("");
+      setVariantBuildMode(null);
+      setWizardStep("setup");
+    }
+    // Apply deep-link intent once per URL change, not after every action revalidation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedCreate, requestedProjectId]);
 
   useEffect(() => {
     if (!createOpen || controlOption) return;
@@ -2654,7 +2798,13 @@ export default function AbTestsIndex() {
   }, [selectedSnapshotId, variantBuildMode, variantCreateFetcher.data]);
 
   function updateTargetPageType(value: string) {
+    if (selectedProject?.scope === "PAGE" && value !== selectedProject.pageType)
+      return;
     setTargetPageType(value);
+    setTargetPagePath(
+      selectedProject?.pagePath ||
+        (value === "HOMEPAGE" ? "/" : value === "CART" ? "/cart" : ""),
+    );
     setControlOption("");
     setControlTemplateName("");
     setControlTemplateSuffix("");
@@ -2681,7 +2831,9 @@ export default function AbTestsIndex() {
   function openTestDetails(testId: string) {
     setDetailTestId(testId);
     setLoadingReportTestId(testId);
-    reportFetcher.load(`/app/ab-tests/${testId}/report`);
+    reportFetcher.load(
+      `/app/ab-tests/${testId}/report?audience=active&source=&medium=&campaign=`,
+    );
   }
 
   function selectControlTemplate(template: ThemeTemplateOption) {
@@ -2689,6 +2841,9 @@ export default function AbTestsIndex() {
     setControlOption(value);
     setControlTemplateName(template.templateName);
     setControlTemplateSuffix(template.templateSuffix || "");
+    if (selectedProject?.scope === "STORE" && !targetPagePath) {
+      setTargetPagePath(normalizeAbTargetPath(template.previewPageUrl) || "");
+    }
     if (isSameTemplateOption(parseOptionValue(value), selectedVariant)) {
       setVariantOption("");
       setVariantTemplateName("");
@@ -2741,7 +2896,16 @@ export default function AbTestsIndex() {
   }
 
   function createVariantFromControl(action: VariantCreateAction) {
-    if (!controlOption || isCreatingVariant) return;
+    if (
+      !controlOption ||
+      isCreatingVariant ||
+      !selectedProject ||
+      !abTargetPathMatchesType(
+        normalizeAbTargetPath(targetPagePath),
+        targetPageType,
+      )
+    )
+      return;
     setVariantBuildMode(
       action === "snapshot-template-variant" ? "snapshot" : "duplicate",
     );
@@ -2750,6 +2914,9 @@ export default function AbTestsIndex() {
     );
     const formData = new FormData();
     formData.append("action", action);
+    formData.append("growthProjectId", growthProjectId);
+    formData.append("targetPagePath", targetPagePath);
+    formData.append("targetPageType", targetPageType);
     formData.append("controlOption", controlOption);
     if (action === "snapshot-template-variant") {
       formData.append("snapshotId", selectedSnapshotId);
@@ -2793,6 +2960,8 @@ export default function AbTestsIndex() {
     if (!canSave) return;
     const formData = new FormData();
     formData.append("action", "create-template-test");
+    formData.append("growthProjectId", growthProjectId);
+    formData.append("targetPagePath", targetPagePath);
     formData.append("name", name);
     formData.append("targetPageType", targetPageType);
     formData.append("goal", goal);
@@ -2851,40 +3020,53 @@ export default function AbTestsIndex() {
     setDuplicateTemplateState("idle");
   }
 
+  function createProjectForTest() {
+    closeCreateWizard();
+    // The modal renders in a separate document; anchors can leave the embedded
+    // admin. Use the parent router so the project handoff stays in this app.
+    navigate("/app/projects?create=1&next=ab-test");
+  }
+
   return (
     <Page
-      title="A/B tests"
-      subtitle="Test Shopify templates against each other and measure the winning storefront experience."
+      title={t("A/B tests")}
+      subtitle={t(
+        "Test Shopify templates against each other and measure the winning storefront experience.",
+      )}
       primaryAction={{
         content: billingAccess.canCreateAbTest
-          ? "Create a test"
-          : "Upgrade to create A/B test",
+          ? t("Create A/B test")
+          : t("Upgrade to create A/B test"),
         ...(billingAccess.canCreateAbTest
           ? { onAction: openCreateWizard }
           : { url: "/app/upgrade" }),
       }}
     >
-      <TitleBar title="A/B tests" />
+      {actionData && "error" in actionData && actionData.error ? (
+        <Banner tone="critical">{t(actionData.error)}</Banner>
+      ) : null}
+      <TitleBar title={t("A/B tests")} />
       <BlockStack gap="500">
         <AbTestActivityPanel shop={shop} />
         {themeTemplates.needsThemeScope ? (
           <Banner
             tone="warning"
-            title="Theme template discovery needs theme access"
+            title={t("Theme template discovery needs theme access")}
           >
             <Text as="p">
-              The app could not read live theme templates. You can still create
-              drafts manually by entering template suffixes. Live template
-              discovery requires Shopify theme scope to be deployed and
-              approved.
+              {t(
+                "The app could not read live theme templates. You can still create drafts manually by entering template suffixes. Live template discovery requires Shopify theme scope to be deployed and approved.",
+              )}
             </Text>
           </Banner>
         ) : null}
 
         {!billingAccess.canCreateAbTest ? (
           <PremiumGateCard
-            title="A/B testing is available on paid plans"
-            message="Free stores can run audits and one store snapshot. Upgrade to compare Shopify templates and measure winners."
+            title={t("A/B testing is available on paid plans")}
+            message={t(
+              "Free stores can run audits and one store snapshot. Upgrade to compare Shopify templates and measure winners.",
+            )}
           />
         ) : null}
 
@@ -2919,7 +3101,7 @@ export default function AbTestsIndex() {
                       }}
                     >
                       <TinyIcon type={tab.icon} />
-                      <span>{tab.label}</span>
+                      <span>{t(tab.label)}</span>
                       <span
                         style={{
                           borderRadius: 999,
@@ -2942,16 +3124,16 @@ export default function AbTestsIndex() {
                 </Button>
                 <div style={{ width: 260 }}>
                   <TextField
-                    label="Search tests"
+                    label={t("Search tests")}
                     labelHidden
                     value={dashboardSearch}
                     onChange={setDashboardSearch}
                     autoComplete="off"
-                    prefix="Search"
+                    prefix={t("Search")}
                   />
                 </div>
                 <select
-                  aria-label="Sort tests"
+                  aria-label={t("Sort tests")}
                   value={dashboardSort}
                   onChange={(event) =>
                     setDashboardSort(event.currentTarget.value as DashboardSort)
@@ -2966,10 +3148,10 @@ export default function AbTestsIndex() {
                     color: "#303030",
                   }}
                 >
-                  <option value="newest">Newest</option>
-                  <option value="visitors">Visitors</option>
-                  <option value="lift">Lift</option>
-                  <option value="progress">Progress</option>
+                  <option value="newest">{t("Newest")}</option>
+                  <option value="visitors">{t("Visitors")}</option>
+                  <option value="lift">{t("Lift")}</option>
+                  <option value="progress">{t("Progress")}</option>
                 </select>
               </InlineStack>
             </InlineStack>
@@ -2997,22 +3179,28 @@ export default function AbTestsIndex() {
                       border: "1px dashed var(--p-color-border)",
                     }}
                   >
-                    <TemplatePreview muted label="No tests" height={110} />
+                    <TemplatePreview muted label={t("No tests")} height={110} />
                   </div>
                   <Text as="h2" variant="headingMd">
-                    No {statusFilter.toLowerCase()} A/B tests
+                    {t("No {status} A/B tests", {
+                      status: t(
+                        STATUS_TABS.find((tab) => tab.value === statusFilter)
+                          ?.label || statusFilter,
+                      ),
+                    })}
                   </Text>
                   <Text as="p" tone="subdued" alignment="center">
-                    Create a template test to compare the original page against
-                    a different Shopify template.
+                    {t(
+                      "Create a template test to compare the original page against a different Shopify template.",
+                    )}
                   </Text>
                   {billingAccess.canCreateAbTest ? (
                     <Button variant="primary" onClick={openCreateWizard}>
-                      Create a test
+                      {t("Create a test")}
                     </Button>
                   ) : (
                     <Button variant="primary" url="/app/upgrade">
-                      Upgrade to create A/B test
+                      {t("Upgrade to create A/B test")}
                     </Button>
                   )}
                 </BlockStack>
@@ -3038,7 +3226,7 @@ export default function AbTestsIndex() {
         variant="max"
         onHide={closeCreateWizard}
       >
-        <TitleBar title="Create New A/B Test" />
+        <TitleBar title={t("Create A/B test")} />
         <div
           style={{
             minHeight: "calc(100vh - 72px)",
@@ -3052,22 +3240,86 @@ export default function AbTestsIndex() {
                 <BlockStack gap="100">
                   <InlineStack gap="200" blockAlign="center">
                     <Text as="h2" variant="heading2xl">
-                      Create New A/B Test
+                      {t("Create A/B test")}
                     </Text>
                   </InlineStack>
                   <Text as="p" tone="subdued">
-                    Pick a page type, choose the original template, then set up
-                    the variant to test against it.
+                    {t(
+                      "Choose a project and page, then set up Control A and Variant B.",
+                    )}
                   </Text>
                 </BlockStack>
                 <InlineStack gap="200" blockAlign="center">
                   {wizardStep === "settings" ? (
-                    <Button onClick={() => setWizardStep("setup")}>Back</Button>
+                    <Button onClick={() => setWizardStep("setup")}>
+                      {t("Back")}
+                    </Button>
                   ) : null}
                 </InlineStack>
               </InlineStack>
 
-              {wizardStep === "setup" ? (
+              <Card>
+                <BlockStack gap="300">
+                  <Select
+                    label={t("Project")}
+                    options={[
+                      { label: t("Choose a project"), value: "" },
+                      ...projects.map((project) => ({
+                        label: project.title,
+                        value: project.id,
+                      })),
+                    ]}
+                    value={growthProjectId}
+                    onChange={(id) => {
+                      const project = projects.find((item) => item.id === id);
+                      setGrowthProjectId(id);
+                      setTargetPageType(project?.pageType || "PRODUCT");
+                      setTargetPagePath(project?.pagePath || "");
+                      setControlOption("");
+                      setVariantOption("");
+                      setVariantBuildMode(null);
+                      setDuplicateTemplateState("idle");
+                      setSnapshotPlan(null);
+                      setSelectedSnapshotId("");
+                      setWizardStep("setup");
+                    }}
+                  />
+                  <InlineStack gap="300" blockAlign="center">
+                    <Button onClick={createProjectForTest}>
+                      {t("Create a new project")}
+                    </Button>
+                    <Text as="p" tone="subdued">
+                      {t(
+                        "Project source filters affect reports, not test enrollment.",
+                      )}
+                    </Text>
+                  </InlineStack>
+                  {selectedProject ? (
+                    <TextField
+                      label={t("Test page URL or path")}
+                      value={targetPagePath}
+                      onChange={setTargetPagePath}
+                      readOnly={selectedProject.scope === "PAGE"}
+                      autoComplete="off"
+                      placeholder="/products/example"
+                      helpText={t(
+                        "Only this page is tested. Its original template must match Control A.",
+                      )}
+                      error={
+                        targetPagePath &&
+                        !abTargetPathMatchesType(
+                          normalizeAbTargetPath(targetPagePath),
+                          targetPageType,
+                        )
+                          ? t("Choose a page matching the selected page type.")
+                          : undefined
+                      }
+                    />
+                  ) : null}
+                </BlockStack>
+              </Card>
+
+              {!selectedProject ? null : wizardStep === "setup" ? (
                 <div
                   style={{
                     background: "var(--p-color-bg-surface)",
@@ -3085,10 +3337,12 @@ export default function AbTestsIndex() {
                   >
                     <BlockStack gap="100">
                       <Text as="h3" variant="headingLg">
-                        What do you want to test?
+                        {t("What do you want to test?")}
                       </Text>
                       <Text as="p" tone="subdued">
-                        A and B always compare templates of the same page type.
+                        {t(
+                          "A and B always compare templates of the same page type.",
+                        )}
                       </Text>
                     </BlockStack>
                   </div>
@@ -3102,6 +3356,11 @@ export default function AbTestsIndex() {
                     }}
                   >
                     <PageTypeRail
+                      lockedType={
+                        selectedProject.scope === "PAGE"
+                          ? selectedProject.pageType
+                          : null
+                      }
                       activeType={targetPageType}
                       templateCounts={templateCountsByType}
                       onSelect={updateTargetPageType}
@@ -3120,9 +3379,9 @@ export default function AbTestsIndex() {
                           blockAlign="center"
                           gap="300"
                         >
-                          <VariantBadge label="A · Original" tone="blue" />
+                          <VariantBadge label={t("A · Original")} tone="blue" />
                           <Text as="span" tone="subdued">
-                            {selectedPageTypeLabel} templates
+                            {selectedPageTypeLabel} {t("templates")}
                           </Text>
                         </InlineStack>
                         <div
@@ -3159,8 +3418,9 @@ export default function AbTestsIndex() {
                               }}
                             >
                               <Text as="p" tone="subdued">
-                                No {selectedPageTypeLabel.toLowerCase()}{" "}
-                                templates found.
+                                {t("No {type} templates found.", {
+                                  type: selectedPageTypeLabel,
+                                })}
                               </Text>
                             </div>
                           )}
@@ -3203,7 +3463,7 @@ export default function AbTestsIndex() {
                           color: "#6d7175",
                         }}
                       >
-                        vs
+                        {t("vs")}
                       </span>
                     </div>
 
@@ -3225,17 +3485,17 @@ export default function AbTestsIndex() {
                             >
                               <BlockStack gap="100">
                                 <VariantBadge
-                                  label="B · Variant"
+                                  label={t("B · Variant")}
                                   tone="yellow"
                                 />
                                 <Text as="span" tone="subdued">
-                                  Choose an existing{" "}
-                                  {selectedPageTypeLabel.toLowerCase()}{" "}
-                                  template.
+                                  {t("Choose an existing {type} template.", {
+                                    type: selectedPageTypeLabel,
+                                  })}
                                 </Text>
                               </BlockStack>
                               <Button onClick={returnToVariantBuildOptions}>
-                                Back
+                                {t("Back")}
                               </Button>
                             </InlineStack>
 
@@ -3264,7 +3524,9 @@ export default function AbTestsIndex() {
                                       disabled={isSameAsControl}
                                       disabledReason={
                                         isSameAsControl
-                                          ? "Already selected as Original (A)"
+                                          ? t(
+                                              "Already selected as Original (A)",
+                                            )
                                           : undefined
                                       }
                                       onSelect={() =>
@@ -3283,7 +3545,7 @@ export default function AbTestsIndex() {
                                   }}
                                 >
                                   <Text as="p" tone="subdued">
-                                    No matching variant templates found.
+                                    {t("No matching variant templates found.")}
                                   </Text>
                                 </div>
                               )}
@@ -3310,36 +3572,37 @@ export default function AbTestsIndex() {
                             >
                               <BlockStack gap="100">
                                 <VariantBadge
-                                  label="B · Variant"
+                                  label={t("B · Variant")}
                                   tone="yellow"
                                 />
                                 <Text as="span" tone="subdued">
-                                  Select a completed{" "}
-                                  {selectedPageTypeLabel.toLowerCase()} snapshot
-                                  to guide the B template.
+                                  {t(
+                                    "Select a completed {type} snapshot to guide the B template.",
+                                    { type: selectedPageTypeLabel },
+                                  )}
                                 </Text>
                               </BlockStack>
                               <Button onClick={returnToVariantBuildOptions}>
-                                Back
+                                {t("Back")}
                               </Button>
                             </InlineStack>
 
                             {showVariantCreateError ? (
                               <Banner
                                 tone="critical"
-                                title="Could not create variant"
+                                title={t("Could not create variant")}
                               >
                                 <Text as="p">{variantCreateError}</Text>
                               </Banner>
                             ) : null}
 
                             <TextField
-                              label="Search completed snapshots"
+                              label={t("Search completed snapshots")}
                               labelHidden
                               value={snapshotSearch}
                               onChange={setSnapshotSearch}
                               autoComplete="off"
-                              prefix="Search"
+                              prefix={t("Search")}
                             />
                             <div
                               style={{
@@ -3374,13 +3637,13 @@ export default function AbTestsIndex() {
                                 >
                                   <BlockStack gap="150" inlineAlign="center">
                                     <Text as="p" fontWeight="semibold">
-                                      No completed snapshots found
+                                      {t("No completed snapshots found")}
                                     </Text>
                                     <Text as="p" tone="subdued">
-                                      Complete a{" "}
-                                      {selectedPageTypeLabel.toLowerCase()}{" "}
-                                      snapshot first, then use it to generate a
-                                      focused B template.
+                                      {t(
+                                        "Complete a {type} snapshot first, then use it to generate a focused B template.",
+                                        { type: selectedPageTypeLabel },
+                                      )}
                                     </Text>
                                   </BlockStack>
                                 </div>
@@ -3388,7 +3651,7 @@ export default function AbTestsIndex() {
                             </div>
                             <InlineStack align="end" gap="200">
                               <Button onClick={returnToVariantBuildOptions}>
-                                Cancel
+                                {t("Cancel")}
                               </Button>
                               <Button
                                 variant="primary"
@@ -3405,7 +3668,7 @@ export default function AbTestsIndex() {
                                   isCreatingVariant
                                 }
                               >
-                                Create B from snapshot
+                                {t("Create B from snapshot")}
                               </Button>
                             </InlineStack>
                           </>
@@ -3416,16 +3679,19 @@ export default function AbTestsIndex() {
                               blockAlign="center"
                               gap="300"
                             >
-                              <VariantBadge label="B · Variant" tone="yellow" />
+                              <VariantBadge
+                                label={t("B · Variant")}
+                                tone="yellow"
+                              />
                               <Text as="span" tone="subdued">
-                                How to build it
+                                {t("How to build it")}
                               </Text>
                             </InlineStack>
 
                             {showVariantCreateError ? (
                               <Banner
                                 tone="critical"
-                                title="Could not create variant"
+                                title={t("Could not create variant")}
                               >
                                 <Text as="p">{variantCreateError}</Text>
                               </Banner>
@@ -3439,16 +3705,21 @@ export default function AbTestsIndex() {
                             >
                               <VariantChoiceCard
                                 icon="select"
-                                title="Select an existing template"
-                                description={`Test against another ${selectedPageTypeLabel.toLowerCase()} template already in your theme.`}
+                                title={t("Select an existing template")}
+                                description={t(
+                                  "Test against another {type} template already in your theme.",
+                                  { type: selectedPageTypeLabel },
+                                )}
                                 accent="amber"
                                 onClick={openExistingTemplatePicker}
                                 disabled={isCreatingVariant}
                               />
                               <VariantChoiceCard
                                 icon="duplicate"
-                                title="Duplicate template"
-                                description="Copy the original template into a fresh variant you can edit before launch."
+                                title={t("Duplicate template")}
+                                description={t(
+                                  "Copy the original template into a fresh variant you can edit before launch.",
+                                )}
                                 selected={variantBuildMode === "duplicate"}
                                 accent="amber"
                                 onClick={selectDuplicateTemplate}
@@ -3459,9 +3730,11 @@ export default function AbTestsIndex() {
                                 }
                                 disabledReason={
                                   !controlOption
-                                    ? "Choose Original (A) first."
+                                    ? t("Choose Original (A) first.")
                                     : !canWriteThemes
-                                      ? "Requires write_themes access and Shopify theme-file approval."
+                                      ? t(
+                                          "Requires write_themes access and Shopify theme-file approval.",
+                                        )
                                       : undefined
                                 }
                               />
@@ -3495,14 +3768,14 @@ export default function AbTestsIndex() {
                                     {`${snapshotPlan.confidence}% confidence`}
                                   </Badge>
                                 ) : (
-                                  <Badge>Snapshot plan</Badge>
+                                  <Badge>{t("Snapshot plan")}</Badge>
                                 )}
                               </InlineStack>
                               <Text as="p" tone="subdued">
                                 {snapshotPlan.summary}
                               </Text>
                               <Text as="span" tone="subdued">
-                                Source: {snapshotPlan.sourceLabel}
+                                {t("Source:")} {snapshotPlan.sourceLabel}
                               </Text>
                               {snapshotPlan.transformation ? (
                                 <div
@@ -3516,20 +3789,20 @@ export default function AbTestsIndex() {
                                 >
                                   <BlockStack gap="100">
                                     <Text as="span" fontWeight="semibold">
-                                      Applied change:{" "}
+                                      {t("Applied change:")}{" "}
                                       {
                                         snapshotPlan.transformation
                                           .primaryWeakness
                                       }
                                     </Text>
                                     <Text as="span" tone="subdued">
-                                      Evidence:{" "}
+                                      {t("Evidence:")}{" "}
                                       {snapshotPlan.transformation.evidence}
                                     </Text>
                                     {snapshotPlan.transformation
                                       .insertedSectionId ? (
                                       <Text as="span" tone="subdued">
-                                        Inserted section:{" "}
+                                        {t("Inserted section:")}{" "}
                                         {
                                           snapshotPlan.transformation
                                             .insertedSectionId
@@ -3599,37 +3872,39 @@ export default function AbTestsIndex() {
                       tone={sameTemplateSelected ? "critical" : "subdued"}
                     >
                       {!controlOption && !controlTemplateName.trim() ? (
-                        <>
-                          Select an <strong>A</strong> template to continue.
-                        </>
+                        <>{t("Select an A template to continue.")}</>
                       ) : !variantOption &&
                         !variantTemplateName.trim() &&
                         !hasPendingDuplicate ? (
                         <>
-                          <strong>A:</strong> {controlName} · choose how to
-                          build <strong>B</strong>.
+                          <strong>A:</strong> {controlName}{" "}
+                          {t("· choose how to build")} <strong>B</strong>.
                         </>
                       ) : sameTemplateSelected ? (
-                        <>A and B cannot use the exact same Shopify template.</>
+                        <>
+                          {t(
+                            "A and B cannot use the exact same Shopify template.",
+                          )}
+                        </>
                       ) : (
                         <>
                           <strong>A:</strong> {controlName}{" "}
-                          <span style={{ fontStyle: "italic" }}>vs</span>{" "}
+                          <span style={{ fontStyle: "italic" }}>{t("vs")}</span>{" "}
                           <strong>B:</strong>{" "}
                           {hasPendingDuplicate
                             ? `${controlName} copy`
-                            : variantName || "Manual variant"}
+                            : variantName || t("Manual variant")}
                         </>
                       )}
                     </Text>
                     <div style={{ marginLeft: "auto" }} />
-                    <Button onClick={closeCreateWizard}>Cancel</Button>
+                    <Button onClick={closeCreateWizard}>{t("Cancel")}</Button>
                     <Button
                       variant="primary"
                       onClick={() => setWizardStep("settings")}
                       disabled={!canContinueToSettings}
                     >
-                      Next: Traffic & Goal
+                      {t("Next: Traffic & Goal")}
                     </Button>
                   </div>
                 </div>
@@ -3638,15 +3913,16 @@ export default function AbTestsIndex() {
                   <InlineStack align="space-between" gap="400" wrap>
                     <BlockStack gap="100">
                       <Text as="h3" variant="headingLg">
-                        Traffic & Goal
+                        {t("Traffic & Goal")}
                       </Text>
                       <Text as="p" tone="subdued">
-                        Review the templates, name the test, then choose how to
-                        split traffic and judge the result.
+                        {t(
+                          "Review the templates, name the test, then choose how to split traffic and judge the result.",
+                        )}
                       </Text>
                     </BlockStack>
                     <Button onClick={() => setWizardStep("setup")}>
-                      Change setup
+                      {t("Change setup")}
                     </Button>
                   </InlineStack>
 
@@ -3663,15 +3939,16 @@ export default function AbTestsIndex() {
                       <BlockStack gap="400">
                         <BlockStack gap="100">
                           <Text as="h3" variant="headingMd">
-                            Template previews
+                            {t("Template previews")}
                           </Text>
                           <Text as="p" tone="subdued">
-                            {selectedPageTypeLabel} test on {currentThemeName}.
+                            {selectedPageTypeLabel} {t("test on")}{" "}
+                            {currentThemeName}.
                           </Text>
                         </BlockStack>
                         <TemplateSummaryCard
                           side="A"
-                          title="Original"
+                          title={t("Original")}
                           templateName={controlName}
                           filename={
                             selectedControl?.templateFileName ||
@@ -3686,7 +3963,7 @@ export default function AbTestsIndex() {
                         />
                         <TemplateSummaryCard
                           side="B"
-                          title="Variant"
+                          title={t("Variant")}
                           templateName={
                             hasPendingDuplicate
                               ? `${controlName} copy`
@@ -3727,10 +4004,10 @@ export default function AbTestsIndex() {
                       <Card>
                         <BlockStack gap="300">
                           <Text as="h3" variant="headingMd">
-                            Test name
+                            {t("Test name")}
                           </Text>
                           <TextField
-                            label="Test name"
+                            label={t("Test name")}
                             labelHidden
                             value={name}
                             onChange={setName}
@@ -3742,10 +4019,12 @@ export default function AbTestsIndex() {
                       <Card>
                         <BlockStack gap="300">
                           <Text as="h3" variant="headingMd">
-                            Page targeting
+                            {t("Page targeting")}
                           </Text>
                           <Text as="p" tone="subdued">
-                            This test runs on pages assigned to Original (A).
+                            {t(
+                              "Only this page is tested. Its original template must match Control A.",
+                            )}
                           </Text>
                           <div
                             style={{
@@ -3755,26 +4034,7 @@ export default function AbTestsIndex() {
                               background: "var(--p-color-bg-surface-secondary)",
                             }}
                           >
-                            <Text as="p">
-                              {typeof controlAssignedCount === "number" ? (
-                                <>
-                                  Targeting{" "}
-                                  <span
-                                    style={{
-                                      color: "#008060",
-                                      fontWeight: 700,
-                                    }}
-                                  >
-                                    {controlAssignedCount.toLocaleString()}{" "}
-                                    {targetingNoun}
-                                  </span>{" "}
-                                  assigned to your <strong>Original (A)</strong>{" "}
-                                  template.
-                                </>
-                              ) : (
-                                <>{targetingSummary}</>
-                              )}
-                            </Text>
+                            <Text as="p">{targetingSummary}</Text>
                           </div>
                         </BlockStack>
                       </Card>
@@ -3783,11 +4043,12 @@ export default function AbTestsIndex() {
                         <BlockStack gap="400">
                           <BlockStack gap="100">
                             <Text as="h3" variant="headingMd">
-                              Traffic split
+                              {t("Traffic split")}
                             </Text>
                             <Text as="p" tone="subdued">
-                              Allocate traffic between Original (A) and Variant
-                              (B).
+                              {t(
+                                "Allocate traffic between Original (A) and Variant (B).",
+                              )}
                             </Text>
                           </BlockStack>
 
@@ -3812,12 +4073,14 @@ export default function AbTestsIndex() {
                                   A
                                 </span>
                                 <Text as="span" fontWeight="semibold">
-                                  {trafficA}% traffic
+                                  {trafficA}
+                                  {t("% traffic")}
                                 </Text>
                               </InlineStack>
                               <InlineStack gap="200" blockAlign="center">
                                 <Text as="span" fontWeight="semibold">
-                                  {trafficB}% traffic
+                                  {trafficB}
+                                  {t("% traffic")}
                                 </Text>
                                 <span
                                   style={{
@@ -3870,7 +4133,7 @@ export default function AbTestsIndex() {
                                 ||
                               </span>
                               <input
-                                aria-label="A traffic percent"
+                                aria-label={t("A traffic percent")}
                                 type="range"
                                 min={5}
                                 max={95}
@@ -3895,7 +4158,7 @@ export default function AbTestsIndex() {
                             >
                               <div style={{ width: 120 }}>
                                 <TextField
-                                  label="A traffic percentage"
+                                  label={t("A traffic percentage")}
                                   labelHidden
                                   type="number"
                                   min={5}
@@ -3908,7 +4171,7 @@ export default function AbTestsIndex() {
                               </div>
                               <div style={{ width: 120 }}>
                                 <TextField
-                                  label="B traffic percentage"
+                                  label={t("B traffic percentage")}
                                   labelHidden
                                   type="number"
                                   min={5}
@@ -3928,11 +4191,12 @@ export default function AbTestsIndex() {
                         <BlockStack gap="300">
                           <BlockStack gap="100">
                             <Text as="h3" variant="headingMd">
-                              Goal
+                              {t("Goal")}
                             </Text>
                             <Text as="p" tone="subdued">
-                              Choose the primary metric used to judge the
-                              winner.
+                              {t(
+                                "Choose the primary metric used to judge the winner.",
+                              )}
                             </Text>
                           </BlockStack>
                           <div
@@ -3963,10 +4227,10 @@ export default function AbTestsIndex() {
                                 >
                                   <BlockStack gap="050">
                                     <Text as="span" variant="headingMd">
-                                      {option.label}
+                                      {t(option.label)}
                                     </Text>
                                     <Text as="span" tone="subdued">
-                                      {option.description}
+                                      {t(option.description)}
                                     </Text>
                                   </BlockStack>
                                 </button>
@@ -3980,16 +4244,16 @@ export default function AbTestsIndex() {
                         <Card>
                           <BlockStack gap="300">
                             <Text as="h3" variant="headingMd">
-                              Duplicate editing
+                              {t("Duplicate editing")}
                             </Text>
                             <Text as="p" tone="subdued">
-                              The duplicate template is only created when you
-                              save the draft, unless you create it here to edit
-                              it first.
+                              {t(
+                                "The duplicate template is only created when you save the draft, unless you create it here to edit it first.",
+                              )}
                             </Text>
                             {variantEditorUrl ? (
                               <Button url={variantEditorUrl} target="_blank">
-                                Edit in Theme Customizer
+                                {t("Edit in Theme Customizer")}
                               </Button>
                             ) : (
                               <Button
@@ -4001,7 +4265,7 @@ export default function AbTestsIndex() {
                                 loading={isCreatingVariant}
                                 disabled={!controlOption || isCreatingVariant}
                               >
-                                Create duplicate template
+                                {t("Create duplicate template")}
                               </Button>
                             )}
                             {showVariantCreateError ? (
@@ -4016,15 +4280,17 @@ export default function AbTestsIndex() {
                   </div>
 
                   <InlineStack align="end" gap="200">
-                    <Button onClick={() => setWizardStep("setup")}>Back</Button>
-                    <Button onClick={closeCreateWizard}>Cancel</Button>
+                    <Button onClick={() => setWizardStep("setup")}>
+                      {t("Back")}
+                    </Button>
+                    <Button onClick={closeCreateWizard}>{t("Cancel")}</Button>
                     <Button
                       variant="primary"
                       onClick={submitCreate}
                       loading={isLoading}
                       disabled={!canSave}
                     >
-                      Save draft
+                      {t("Save draft")}
                     </Button>
                   </InlineStack>
                 </BlockStack>

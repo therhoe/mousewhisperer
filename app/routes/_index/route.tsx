@@ -24,8 +24,8 @@ export default function App() {
       <div className={styles.content}>
         <h1 className={styles.heading}>Snapshot</h1>
         <p className={styles.text}>
-          Understand storefront traffic, compare snapshots, and test
-          improvements in your Shopify store.
+          Turn CRO ideas into Projects. Measure your Shopify store, test
+          improvements, and compare results.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -41,16 +41,17 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Store and channel snapshots</strong>. See traffic quality
-            and where your visitors come from.
+            <strong>Goal-focused Projects</strong>. Set a store-level or
+            page-level goal, then measure and compare progress.
           </li>
           <li>
-            <strong>Page snapshots</strong>. Review engagement across products,
-            collections, pages, and blogs.
+            <strong>A/B tests within Projects</strong>. Keep experiments,
+            measurements, and optimization notes together. Filter results by
+            traffic source.
           </li>
           <li>
-            <strong>A/B tests</strong>. Compare storefront variants and track
-            their results.
+            <strong>Four growth levers</strong>. Follow traffic, conversion
+            rate, average order value (AOV), and observed customer value (LTV).
           </li>
         </ul>
       </div>

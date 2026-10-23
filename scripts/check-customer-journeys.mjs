@@ -62,6 +62,8 @@ const otherShop = "journey-other.myshopify.com";
 let started;
 let snapshot;
 beforeEach(async () => {
+  // Migration replay may have imported this disposable fixture into Projects.
+  await db.growthProject.deleteMany({ where: { shop: { in: [shop, otherShop] } } });
   await db.customerSnapshot.deleteMany({
     where: { shop: { in: [shop, otherShop] } },
   });

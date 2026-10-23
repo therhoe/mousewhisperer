@@ -1,5 +1,6 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import type { ShouldRevalidateFunction } from "@remix-run/react";
+import type { action as localeAction } from "./api.locale";
 import {
   Link,
   Outlet,
@@ -7,15 +8,29 @@ import {
   useLocation,
   useNavigation,
   useRouteError,
+  useFetcher,
 } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import enPolaris from "@shopify/polaris/locales/en.json";
+import dePolaris from "@shopify/polaris/locales/de.json";
+import zhCNPolaris from "@shopify/polaris/locales/zh-CN.json";
+import zhTWPolaris from "@shopify/polaris/locales/zh-TW.json";
 
 import { authenticate } from "../shopify.server";
+import { embeddedContextForShop } from "../utils/embedded-filter-context.server";
 import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
+import {
+  I18nProvider,
+  useI18n,
+  LOCALE_LABELS,
+  SUPPORTED_LOCALES,
+  type AppLocale,
+} from "../utils/i18n";
+import { resolveRequestLocale } from "../utils/i18n.server";
 import {
   isPageSnapshotsPath,
   PAGE_SNAPSHOTS_PATH,
@@ -25,7 +40,7 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   if (process.env.NODE_ENV === "development") {
     console.info("[MW Perf] app layout loader", {
@@ -34,25 +49,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    shop: session.shop,
+    embeddedContext: embeddedContextForShop(session.shop),
+    locale: await resolveRequestLocale(request, session.shop),
+  };
 };
 
-export const shouldRevalidate: ShouldRevalidateFunction = () => false;
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  formAction,
+  currentUrl,
+  nextUrl,
+}) =>
+  Boolean(
+    formAction && new URL(formAction, currentUrl).pathname === "/api/locale",
+  ) ||
+  currentUrl.searchParams.get("locale") !==
+    nextUrl.searchParams.get("locale") ||
+  currentUrl.searchParams.get("shop") !== nextUrl.searchParams.get("shop");
 
 const APP_NAV_ITEMS = [
   { label: "Dashboard", to: "/app" },
-  { label: "Store Snapshots", to: "/app/store-snapshots" },
-  { label: "Channel Snapshots", to: "/app/channel-snapshots" },
-  { label: "Customer Snapshots", to: "/app/customer-snapshots" },
-  { label: "Page Snapshots", to: PAGE_SNAPSHOTS_PATH },
-  { label: "A/B Tests", to: "/app/ab-tests" },
+  { label: "Projects", to: "/app/projects" },
 ];
 
 function getRouteTitle(pathname: string) {
   if (pathname === "/app") return "Dashboard";
+  if (pathname.startsWith("/app/projects")) return "Projects";
   if (pathname.startsWith("/app/store-snapshots")) return "Store Snapshots";
   if (pathname.startsWith("/app/channel-snapshots")) return "Channel Snapshots";
-  if (pathname.startsWith("/app/customer-snapshots")) return "Customer Snapshots";
+  if (pathname.startsWith("/app/customer-snapshots"))
+    return "Customer Snapshots";
   if (pathname.startsWith("/app/ab-tests")) return "A/B Tests";
   if (isPageSnapshotsPath(pathname)) return "Page Snapshots";
   if (pathname.includes("/challenges")) return "Challenges";
@@ -66,7 +94,8 @@ function isNavItemActive(pathname: string, destination: string) {
 }
 
 function InstantRouteShell({ pathname }: { pathname: string }) {
-  const title = getRouteTitle(pathname);
+  const { t } = useI18n();
+  const title = t(getRouteTitle(pathname));
 
   return (
     <main
@@ -152,12 +181,13 @@ function InstantRouteShell({ pathname }: { pathname: string }) {
 }
 
 function AppLocalNav({ activePathname }: { activePathname: string }) {
+  const { t } = useI18n();
   const location = useLocation();
   const pathname = activePathname || location.pathname;
 
   return (
     <nav
-      aria-label="Snapshot sections"
+      aria-label={t("Snapshot sections")}
       style={{
         display: "flex",
         gap: 8,
@@ -195,15 +225,17 @@ function AppLocalNav({ activePathname }: { activePathname: string }) {
               textDecoration: "none",
             }}
           >
-            {item.label}
+            {t(item.label)}
           </Link>
         );
       })}
+      <LanguagePicker />
     </nav>
   );
 }
 
 function AppBridgeNav() {
+  const { t } = useI18n();
   const { pathname } = useLocation();
 
   return (
@@ -215,18 +247,72 @@ function AppBridgeNav() {
           rel={item.to === "/app" ? "home" : undefined}
           aria-current={isNavItemActive(pathname, item.to) ? "page" : undefined}
         >
-          {item.label}
+          {t(item.label)}
         </Link>
       ))}
       {COMMUNITY_FEATURES_ENABLED && (
-        <Link to="/app/challenges">Challenges</Link>
+        <Link to="/app/challenges">{t("Challenges")}</Link>
       )}
     </NavMenu>
   );
 }
 
-export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+function LanguagePicker() {
+  const { locale, setLocale, t } = useI18n();
+  const fetcher = useFetcher<typeof localeAction>();
+  const location = useLocation();
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginLeft: "auto",
+        paddingLeft: 16,
+        flexShrink: 0,
+        fontSize: 13,
+      }}
+    >
+      <span>{t("Language")}</span>
+      <select
+        aria-label={t("Language")}
+        value={locale}
+        onChange={(event) => {
+          const next = event.target.value as AppLocale;
+          setLocale(next);
+          fetcher.submit(
+            { locale: next },
+            { method: "post", action: `/api/locale${location.search}` },
+          );
+        }}
+        style={{
+          padding: "6px 8px",
+          borderRadius: 6,
+          border: "1px solid var(--p-color-border)",
+          background: "var(--p-color-bg-surface)",
+          color: "var(--p-color-text)",
+          font: "inherit",
+        }}
+      >
+        {SUPPORTED_LOCALES.map((option) => (
+          <option key={option} value={option}>
+            {LOCALE_LABELS[option]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+const polarisTranslations = {
+  en: enPolaris,
+  de: dePolaris,
+  "zh-CN": zhCNPolaris,
+  "zh-TW": zhTWPolaris,
+};
+
+function AppContent({ apiKey }: { apiKey: string }) {
+  const { locale } = useI18n();
   const location = useLocation();
   const navigation = useNavigation();
   const pendingPathname = navigation.location?.pathname;
@@ -241,7 +327,11 @@ export default function App() {
     !isPageSnapshotCategoryTransition;
 
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
+    <AppProvider
+      isEmbeddedApp
+      apiKey={apiKey}
+      i18n={polarisTranslations[locale]}
+    >
       <BackgroundBillingSync />
       <AppBridgeNav />
       <AppLocalNav activePathname={pendingPathname || location.pathname} />
@@ -251,6 +341,15 @@ export default function App() {
         <Outlet />
       )}
     </AppProvider>
+  );
+}
+
+export default function App() {
+  const { apiKey, locale, shop } = useLoaderData<typeof loader>();
+  return (
+    <I18nProvider locale={locale} shop={shop}>
+      <AppContent apiKey={apiKey} />
+    </I18nProvider>
   );
 }
 

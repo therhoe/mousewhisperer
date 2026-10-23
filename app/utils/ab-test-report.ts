@@ -113,14 +113,16 @@ export function buildCumulativeAbTestTrend(
     startAt,
     endAt,
     maxPoints = 45,
+    audience = "active",
   }: {
     startAt?: Date | string | null;
     endAt?: Date | string | null;
     maxPoints?: number;
+    audience?: "all" | "active";
   } = {},
 ): AbTestTrendPoint[] {
   const realRows = rows
-    .filter((row) => row.visitorType === "REAL")
+    .filter((row) => audience === "all" || row.visitorType === "REAL")
     .map((row) => ({ ...row, assignedDate: validDate(row.assignedAt) }))
     .filter(
       (row): row is typeof row & { assignedDate: Date } =>
@@ -249,6 +251,7 @@ function sourceLabel(row: SourceQualityAssignment) {
 
 export function buildSourceQualityBreakdown(
   rows: SourceQualityAssignment[],
+  audience: "all" | "active" = "active",
 ): SourceQualityRow[] {
   const groups = new Map<string, SourceQualityAssignment[]>();
 
@@ -261,10 +264,11 @@ export function buildSourceQualityBreakdown(
   return Array.from(groups.entries())
     .map(([key, group]) => {
       const realRows = group.filter((row) => row.visitorType === "REAL");
+      const metricRows = audience === "all" ? group : realRows;
       const average = (getValue: (row: SourceQualityAssignment) => number) =>
-        realRows.length
-          ? realRows.reduce((sum, row) => sum + getValue(row), 0) /
-            realRows.length
+        metricRows.length
+          ? metricRows.reduce((sum, row) => sum + getValue(row), 0) /
+            metricRows.length
           : 0;
       const sessions = group.length;
       const real = realRows.length;
@@ -275,8 +279,9 @@ export function buildSourceQualityBreakdown(
       const pending = group.filter(
         (row) => row.visitorType === "PENDING",
       ).length;
-      const addToCarts = realRows.filter((row) => row.addedToCart).length;
-      const conversions = realRows.filter((row) => row.converted).length;
+      const addToCarts = metricRows.filter((row) => row.addedToCart).length;
+      const conversions = metricRows.filter((row) => row.converted).length;
+      const denominator = metricRows.length;
 
       return {
         key,
@@ -292,9 +297,9 @@ export function buildSourceQualityBreakdown(
         avgTimeOnPage: average((row) => Number(row.timeOnPage || 0)),
         avgScrollDepth: average((row) => Number(row.scrollDepth || 0)),
         addToCarts,
-        addToCartRate: real ? (addToCarts / real) * 100 : 0,
+        addToCartRate: denominator ? (addToCarts / denominator) * 100 : 0,
         conversions,
-        conversionRate: real ? (conversions / real) * 100 : 0,
+        conversionRate: denominator ? (conversions / denominator) * 100 : 0,
       };
     })
     .sort(

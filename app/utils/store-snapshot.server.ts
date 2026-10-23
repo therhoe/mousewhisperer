@@ -5,6 +5,7 @@ import type {
   VisitorType,
 } from "@prisma/client";
 import prisma from "../db.server";
+import { growthAcquisitionMatch, writeGrowthVisit } from "./growth-tracking.server";
 import { createNotification } from "./notifications.server";
 import { clearCacheKey, loaderCacheKeys } from "./loader-cache.server";
 
@@ -30,6 +31,11 @@ type StoreSnapshotVisitInput = {
   shop: string | null;
   sessionId: string;
   pageViewId: string;
+  acquisitionId?: string | null;
+  acquisitionSource?: string | null;
+  acquisitionMedium?: string | null;
+  acquisitionCampaign?: string | null;
+  acquisitionStartedAt?: Date | null;
   productHandle?: string | null;
   resourceType?: string | null;
   pagePath?: string | null;
@@ -322,11 +328,13 @@ export async function trackStoreSnapshotVisit(input: StoreSnapshotVisitInput) {
     if (visitStartedAt.getTime() < snapshot.startedAt.getTime()) {
       continue;
     }
+    if (snapshot.usesAcquisitionSessions && input.acquisitionStartedAt && input.acquisitionStartedAt < snapshot.startedAt)
+      continue;
 
-    const completed = await completeStoreSnapshotIfReady(snapshot);
+    const completed = snapshot.usesAcquisitionSessions ? false : await completeStoreSnapshotIfReady(snapshot);
     if (completed) continue;
 
-    await prisma.storeSnapshotVisit.upsert({
+    const visitInput = {
       where: {
         pageViewId_storeSnapshotId: {
           pageViewId: input.pageViewId,
@@ -336,6 +344,11 @@ export async function trackStoreSnapshotVisit(input: StoreSnapshotVisitInput) {
       create: {
         storeSnapshotId: snapshot.id,
         sessionId: input.sessionId,
+        acquisitionId: input.acquisitionId || null,
+        acquisitionSource: input.acquisitionSource || null,
+        acquisitionMedium: input.acquisitionMedium || null,
+        acquisitionCampaign: input.acquisitionCampaign || null,
+        acquisitionStartedAt: input.acquisitionStartedAt || null,
         pageViewId: input.pageViewId,
         pagePath,
         pageUrl: input.pageUrl || pagePath,
@@ -430,19 +443,30 @@ export async function trackStoreSnapshotVisit(input: StoreSnapshotVisitInput) {
         region: input.region || undefined,
         timezone: input.timezone || undefined,
       },
-    });
+    };
+    if (snapshot.usesAcquisitionSessions) {
+      const written = await writeGrowthVisit("store", snapshot.id, input.visitorType, (db) => db.storeSnapshotVisit.upsert(visitInput), { acquisitionId: input.acquisitionId, sessionId: input.sessionId, pageViewId: input.pageViewId });
+      if (written.completed) {
+        await createNotification({ shop: snapshot.shop, type: "STORE_SNAPSHOT_COMPLETED", title: "Measurement completed", message: `"${snapshot.name || "Store measurement"}" is ready.`, linkUrl: `/app/store-snapshots/${snapshot.id}`, referenceId: snapshot.id });
+      }
+    } else await prisma.storeSnapshotVisit.upsert(visitInput);
 
     await clearStoreSnapshotStatsCache(snapshot.id);
-    await completeStoreSnapshotIfReady({ ...snapshot, status: "ACTIVE" });
+    if (!snapshot.usesAcquisitionSessions)
+      await completeStoreSnapshotIfReady({ ...snapshot, status: "ACTIVE" });
   }
 }
 
 export async function updateStoreSnapshotAddToCart({
+  shop,
   sessionId,
+  acquisitionSessionId,
   productHandle,
   timestamp,
 }: {
+  shop?: string | null;
   sessionId: string;
+  acquisitionSessionId?: unknown;
   productHandle?: string | null;
   timestamp: number | string | Date;
 }) {
@@ -452,7 +476,8 @@ export async function updateStoreSnapshotAddToCart({
   const visit = await prisma.storeSnapshotVisit.findFirst({
     where: {
       sessionId,
-      storeSnapshot: { status: "ACTIVE" },
+      ...growthAcquisitionMatch(acquisitionSessionId, "storeSnapshot"),
+      storeSnapshot: { status: "ACTIVE", ...(shop ? { shop } : {}) },
       ...(decodedHandle
         ? { resourceType: "PRODUCT", resourceHandle: decodedHandle }
         : {}),
@@ -476,10 +501,12 @@ export async function updateStoreSnapshotAddToCart({
 export async function updateStoreSnapshotCheckoutStarted({
   shop,
   sessionId,
+  acquisitionSessionId,
   timestamp,
 }: {
   shop?: string | null;
   sessionId: string;
+  acquisitionSessionId?: unknown;
   timestamp?: number | string | Date | null;
 }) {
   if (!sessionId) return 0;
@@ -492,6 +519,7 @@ export async function updateStoreSnapshotCheckoutStarted({
   const visits = await prisma.storeSnapshotVisit.findMany({
     where: {
       sessionId,
+      ...growthAcquisitionMatch(acquisitionSessionId, "storeSnapshot"),
       checkoutStarted: false,
       startedAt: { gte: thirtyDaysBeforeEvent, lte: eventDate },
       storeSnapshot: {
@@ -532,12 +560,14 @@ export async function updateStoreSnapshotCheckoutStarted({
 export async function updateStoreSnapshotConversion({
   shop,
   sessionId,
+  acquisitionSessionId,
   timestamp,
   totalPrice,
   currency,
 }: {
   shop?: string | null;
   sessionId: string;
+  acquisitionSessionId?: unknown;
   timestamp: number | string | Date;
   totalPrice?: string | number | null;
   currency?: string | null;
@@ -545,6 +575,7 @@ export async function updateStoreSnapshotConversion({
   return attributeStoreSnapshotOrder({
     shop,
     sessionId,
+    acquisitionSessionId,
     timestamp,
     totalPrice,
     currency,
@@ -554,12 +585,14 @@ export async function updateStoreSnapshotConversion({
 export async function attributeStoreSnapshotOrder({
   shop,
   sessionId,
+  acquisitionSessionId,
   timestamp,
   totalPrice,
   currency,
 }: {
   shop?: string | null;
   sessionId: string;
+  acquisitionSessionId?: unknown;
   timestamp: number | string | Date;
   totalPrice?: string | number | null;
   currency?: string | null;
@@ -574,6 +607,7 @@ export async function attributeStoreSnapshotOrder({
   const visits = await prisma.storeSnapshotVisit.findMany({
     where: {
       sessionId,
+      ...growthAcquisitionMatch(acquisitionSessionId, "storeSnapshot"),
       converted: false,
       // The attribution window belongs to the visit, not the capture's age.
       // Completed captures may still receive delayed purchases from eligible
@@ -643,15 +677,23 @@ export async function completeStoreSnapshotIfReady(snapshot: StoreSnapshot) {
     snapshot.completionMode === "HUMAN_VISITORS" &&
     snapshot.targetHumanVisitors
   ) {
-    const count = await countUniqueHumanSessions(snapshot.id);
+    const count = await countUniqueHumanSessions(snapshot.id, snapshot.usesAcquisitionSessions);
     shouldComplete = count >= snapshot.targetHumanVisitors;
   }
 
   if (!shouldComplete) return false;
 
-  await prisma.storeSnapshot.update({
-    where: { id: snapshot.id },
-    data: { status: "COMPLETED", completedAt: new Date() },
+  const completedAt = snapshot.endsAt && snapshot.endsAt < new Date() ? snapshot.endsAt : new Date();
+  await prisma.$transaction(async (db) => {
+    await db.storeSnapshot.updateMany({
+      where: { id: snapshot.id, status: "ACTIVE" },
+      data: { status: "COMPLETED", completedAt },
+    });
+    // Only completion performs this write, not every tracker heartbeat.
+    await db.customerSnapshot.updateMany({
+      where: { shop: snapshot.shop, growthMeasurement: { storeSnapshotId: snapshot.id }, status: { in: ["ACTIVE", "PAUSED"] } },
+      data: { status: "COMPLETED", completedAt },
+    });
   });
   await clearStoreSnapshotStatsCache(snapshot.id);
 
@@ -1190,7 +1232,15 @@ async function getPreviousStoreSnapshotCachedStats(snapshot: StoreSnapshot) {
   return stats?.version === STORE_SNAPSHOT_STATS_VERSION ? stats : undefined;
 }
 
-async function countUniqueHumanSessions(storeSnapshotId: string) {
+async function countUniqueHumanSessions(storeSnapshotId: string, useAcquisitions = false) {
+  if (useAcquisitions) {
+    const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(DISTINCT COALESCE("acquisitionId", "sessionId"))::int AS count
+      FROM "StoreSnapshotVisit"
+      WHERE "storeSnapshotId" = ${storeSnapshotId} AND "visitorType" IN ('REAL', 'ZOMBIE')
+    `;
+    return Number(rows[0]?.count || 0);
+  }
   const rows = await prisma.$queryRaw<Array<{ count: number }>>`
     SELECT COUNT(DISTINCT "sessionId")::int AS count
     FROM "StoreSnapshotVisit"

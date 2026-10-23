@@ -116,13 +116,17 @@ export async function createCustomerSnapshot(
 }
 
 export async function expireCustomerSnapshots(shop: string) {
-  await prisma.customerSnapshot.updateMany({
-    where: {
-      shop,
-      status: { in: ["ACTIVE", "PAUSED"] },
-      endsAt: { lte: new Date() },
-    },
-    data: { status: "COMPLETED", completedAt: new Date() },
+  const now = new Date();
+  await prisma.$transaction(async (db) => {
+    // Legacy management pages must respect the same parent→companion lock order.
+    await db.storeSnapshot.updateMany({
+      where: { shop, status: { in: ["ACTIVE", "PAUSED"] }, endsAt: { lte: now }, growthMeasurement: { customerSnapshotId: { not: null } } },
+      data: { status: "COMPLETED", completedAt: now },
+    });
+    await db.customerSnapshot.updateMany({
+      where: { shop, status: { in: ["ACTIVE", "PAUSED"] }, endsAt: { lte: now } },
+      data: { status: "COMPLETED", completedAt: now },
+    });
   });
 }
 
@@ -133,6 +137,20 @@ export async function transitionCustomerSnapshot(
 ) {
   if (!["pause", "resume", "complete"].includes(action))
     throw new CustomerSnapshotError("Invalid action.");
+  const linked = await prisma.growthMeasurement.findFirst({
+    where: { customerSnapshotId: id, storeSnapshotId: { not: null }, project: { shop } },
+    select: { id: true, projectId: true },
+  });
+  if (linked) {
+    const { transitionGrowthMeasurement } = await import("./growth-projects.server");
+    try {
+      return await transitionGrowthMeasurement(shop, linked.projectId, linked.id, action);
+    } catch (error) {
+      if (error instanceof Error && "status" in error)
+        throw new CustomerSnapshotError(error.message, Number(error.status) || 400);
+      throw error;
+    }
+  }
   await expireCustomerSnapshots(shop);
   if (action === "resume") await getBillingAccess(shop);
   try {
@@ -201,14 +219,14 @@ export async function listCustomerSnapshots(
   return { snapshots, total, page, pageCount, activeId: active?.id };
 }
 
-const activeLookups = new Map<string, Promise<{ id: string } | null>>();
+const activeLookups = new Map<string, Promise<{ id: string; growthMeasurement: { storeSnapshotId: string | null } | null } | null>>();
 function activeCustomerSnapshot(shop: string) {
   const pending = activeLookups.get(shop);
   if (pending) return pending;
   const lookup = prisma.customerSnapshot
     .findFirst({
-      where: { shop, status: "ACTIVE", endsAt: { gt: new Date() } },
-      select: { id: true },
+      where: { shop, status: "ACTIVE", OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+      select: { id: true, growthMeasurement: { select: { storeSnapshotId: true } } },
     })
     .finally(() => activeLookups.delete(shop));
   activeLookups.set(shop, lookup);
@@ -227,6 +245,66 @@ type Batch = {
   events?: unknown;
   truncated?: unknown;
 };
+
+/** Drain already-recorded events for an admitted Project page without reopening collection. */
+async function recordCompletedGrowthJourneyEvents(
+  shop: string,
+  acquisitionId: string,
+  trackingSessionId: string,
+  pageViewId: string | null,
+  pagePath: string | null,
+  events: ReturnType<typeof readJourneyEvents>,
+  adId: string | null,
+  now: Date,
+) {
+  if (!pageViewId || !pagePath) return false;
+  const admitted = await prisma.customerJourneySession.findFirst({
+    where: {
+      acquisitionId, trackingSessionId,
+      pages: { some: { pageViewId, pagePath } },
+      snapshot: {
+        shop,
+        OR: [
+          { status: "COMPLETED", completedAt: { gte: new Date(now.getTime() - JOURNEY_TIMEOUT) } },
+          { status: "ACTIVE", endsAt: { lte: now, gte: new Date(now.getTime() - JOURNEY_TIMEOUT) } },
+        ],
+        growthMeasurement: { storeSnapshot: {
+          usesAcquisitionSessions: true,
+          OR: [{ status: "COMPLETED" }, { status: "ACTIVE", endsAt: { lte: now } }],
+        } },
+      },
+    },
+    select: { id: true, snapshotId: true },
+  });
+  if (!admitted) return false;
+  return prisma.$transaction(async (db) => {
+    await db.$queryRaw`SELECT id FROM "CustomerSnapshot" WHERE id = ${admitted.snapshotId} AND shop = ${shop} FOR UPDATE`;
+    const session = await db.customerJourneySession.findUnique({ where: { id: admitted.id }, include: { snapshot: true } });
+    const completedAt = session?.snapshot.completedAt;
+    const endsAt = session?.snapshot.endsAt;
+    const cutoff = completedAt && (!endsAt || completedAt < endsAt) ? completedAt : endsAt;
+    const checkedAt = new Date();
+    if (!session || !["ACTIVE", "COMPLETED"].includes(session.snapshot.status) || !cutoff || cutoff > checkedAt || cutoff.getTime() < checkedAt.getTime() - JOURNEY_TIMEOUT)
+      return false;
+    if (!session.adId && adId) await db.customerJourneySession.update({ where: { id: session.id }, data: { adId } });
+    const eligible = events.filter((event) =>
+      event.occurredAt >= session.startedAt && event.occurredAt <= cutoff &&
+      (!session.snapshot.endsAt || event.occurredAt <= session.snapshot.endsAt) &&
+      (!event.pagePath || event.pagePath === pagePath),
+    );
+    if (!eligible.length) return true;
+    const present = await db.customerJourneyEvent.findMany({ where: { sessionId: session.id, eventKey: { in: eligible.map((event) => event.eventKey) } }, select: { eventKey: true } });
+    const keys = new Set(present.map((event) => event.eventKey));
+    const novel = [...new Map(eligible.filter((event) => !keys.has(event.eventKey)).map((event) => [event.eventKey, event])).values()];
+    if (!novel.length) return true;
+    const count = await db.customerJourneyEvent.count({ where: { sessionId: session.id } });
+    const allowed = novel.slice(0, Math.max(0, JOURNEY_EVENT_LIMIT - count));
+    if (allowed.length) await db.customerJourneyEvent.createMany({ data: allowed.map((event) => ({ ...event, sessionId: session.id })), skipDuplicates: true });
+    if (allowed.length < novel.length) await db.customerJourneySession.update({ where: { id: session.id }, data: { truncated: true } });
+    // No new pages, classification/time changes, or lastSeenAt extension after completion.
+    return true;
+  });
+}
 
 export async function recordCustomerJourney(
   shop: string,
@@ -253,22 +331,54 @@ export async function recordCustomerJourney(
     adId: journeyText(raw.adId),
   };
   const active = await activeCustomerSnapshot(shop);
-  if (!active) return { accepted: true, captured: false };
+  // Project filters use the immutable acquisition campaign, not a separate ad
+  // platform campaign ID. Standalone customer captures retain their old rules.
+  if (active?.growthMeasurement?.storeSnapshotId) arrival.campaign = acquisition.campaign;
   const events = readJourneyEvents(batch.events, acquisition.startedAt, now);
+  const finishAdmittedPage = () => batch.enrollmentOnly
+    ? Promise.resolve(false)
+    : recordCompletedGrowthJourneyEvents(shop, acquisition.id, trackingSessionId, pageViewId, pagePath, events, arrival.adId, new Date());
+  if (!active) return { accepted: true, captured: await finishAdmittedPage() };
   const result = await prisma.$transaction(async (db) => {
+    const parentId = active.growthMeasurement?.storeSnapshotId;
+    if (parentId) await db.$queryRaw`SELECT id FROM "StoreSnapshot" WHERE id = ${parentId} AND shop = ${shop} FOR UPDATE`;
     await db.$queryRaw`SELECT id FROM "CustomerSnapshot" WHERE id = ${active.id} AND shop = ${shop} FOR UPDATE`;
+    const admittedAt = new Date();
     const capture = await db.customerSnapshot.findFirst({
-      where: { id: active.id, shop, status: "ACTIVE", endsAt: { gt: now } },
+      where: {
+        id: active.id, shop, status: "ACTIVE",
+        AND: [
+          { OR: [{ endsAt: null }, { endsAt: { gt: admittedAt } }] },
+          // A project journey follows its store measurement, including legacy
+          // pause/complete actions, without an extra lookup per heartbeat.
+          { OR: [
+            { growthMeasurement: { is: null } },
+            { growthMeasurement: { storeSnapshotId: null } },
+            { growthMeasurement: { storeSnapshot: { status: "ACTIVE", OR: [{ endsAt: null }, { endsAt: { gt: admittedAt } }] } } },
+          ] },
+        ],
+      },
     });
     if (
       !capture ||
       acquisition.startedAt < capture.startedAt ||
       !(
+        capture.captureAllSources ||
         matchesJourney(capture, arrival) ||
         matchesJourney(capture, { ...arrival, campaign: acquisition.campaign })
       )
     )
       return false;
+    if (parentId && !batch.enrollmentOnly) {
+      const admittedPage = await db.storeSnapshotVisit.findFirst({
+        where: { storeSnapshotId: parentId, acquisitionId: acquisition.id, sessionId: trackingSessionId, pageViewId: pageViewId! },
+        select: { pagePath: true },
+      });
+      // Do not let a concurrent journey request enroll an acquisition excluded
+      // by the parent cap. The existing client retains unacknowledged events.
+      if (!admittedPage) return "retry" as const;
+      if (journeyPath(admittedPage.pagePath) !== pagePath) return false;
+    }
     let session = await db.customerJourneySession.findUnique({
       where: {
         snapshotId_acquisitionId: {
@@ -359,7 +469,7 @@ export async function recordCustomerJourney(
             .filter(
               (event) =>
                 !presentKeys.has(event.eventKey) &&
-                event.occurredAt <= capture.endsAt,
+                (!capture.endsAt || event.occurredAt <= capture.endsAt),
             )
             .map((event) => [event.eventKey, event]),
         ).values(),
@@ -387,6 +497,7 @@ export async function recordCustomerJourney(
       where: { id: session.id },
       data: {
         visitorType: bestType || page.visitorType,
+        ...(!session.adId && arrival.adId ? { adId: arrival.adId } : {}),
         lastSeenAt: now,
         truncated:
           session.truncated || batch.truncated === true || droppedEvents,
@@ -394,7 +505,9 @@ export async function recordCustomerJourney(
     });
     return true;
   });
-  return { accepted: true, captured: result };
+  if (result === "retry") return { accepted: false, captured: false };
+  // The active lookup may have raced the parent capture's final admission.
+  return { accepted: true, captured: result || await finishAdmittedPage() };
 }
 
 // Commerce requires the exact acquisition + browser ID. Never fall back to the
@@ -460,10 +573,10 @@ export async function recordCustomerCommerce(input: {
   for (const session of sessions) {
     const cutoff =
       session.snapshot.completedAt &&
-      session.snapshot.completedAt < session.snapshot.endsAt
+      (!session.snapshot.endsAt || session.snapshot.completedAt < session.snapshot.endsAt)
         ? session.snapshot.completedAt
         : session.snapshot.endsAt;
-    if (occurredAt > cutoff) continue;
+    if (cutoff && occurredAt > cutoff) continue;
     const recorded = await prisma.$transaction(async (db) => {
       await db.$queryRaw`SELECT id FROM "CustomerSnapshot" WHERE id = ${session.snapshotId} AND shop = ${input.shop} FOR UPDATE`;
       await db.$queryRaw`SELECT id FROM "CustomerJourneySession" WHERE id = ${session.id} FOR UPDATE`;
@@ -475,7 +588,7 @@ export async function recordCustomerCommerce(input: {
         !fresh ||
         (fresh.snapshot.completedAt &&
           occurredAt > fresh.snapshot.completedAt) ||
-        occurredAt > fresh.snapshot.endsAt
+        (fresh.snapshot.endsAt && occurredAt > fresh.snapshot.endsAt)
       )
         return false;
       const amount = Number(input.totalPrice);

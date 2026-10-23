@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
@@ -20,7 +21,23 @@ function load(path) {
         esModuleInterop: true,
       },
     }).outputText,
-    { module, exports: module.exports, require, URL },
+    {
+      module,
+      exports: module.exports,
+      require: (specifier) => {
+        if (!specifier.startsWith(".")) return require(specifier);
+        const base = new URL(specifier, new URL(`../${path}`, import.meta.url));
+        const basePath = fileURLToPath(base);
+        const target = [basePath, `${basePath}.ts`, `${basePath}.tsx`].find(
+          existsSync,
+        );
+        if (!target) throw new Error(`Cannot resolve ${specifier} in ${path}`);
+        return load(
+          target.slice(fileURLToPath(new URL("../", import.meta.url)).length),
+        );
+      },
+      URL,
+    },
   );
   return module.exports;
 }

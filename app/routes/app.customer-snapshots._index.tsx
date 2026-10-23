@@ -28,19 +28,14 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
   getBillingDisplayAccess,
-  isPlanLimitError,
 } from "../utils/billing.server";
 import { planUsagePillLabel } from "../components/PremiumGate";
-import { ensureWebPixel } from "../utils/web-pixel.server";
 import {
-  CustomerSnapshotError,
-  createCustomerSnapshot,
   listCustomerSnapshots,
 } from "../utils/customer-journey.server";
 import {
   buildJourneyLink,
   inspectJourneyLink,
-  validateJourneyDestination,
 } from "../utils/customer-journey";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -56,63 +51,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  await authenticate.admin(request);
   const form = await request.formData();
-  const text = (key: string) => String(form.get(key) || "").trim();
-  if (text("action") !== "create")
+  if (form.get("action") !== "create")
     return json({ error: "Invalid action." }, { status: 400 });
-  try {
-    const destination = validateJourneyDestination(text("destinationUrl"));
-    const response = await admin.graphql(
-      `query CustomerJourneyStoreDomain { shop { primaryDomain { host } } }`,
-    );
-    const data = await response.json();
-    const hosts = [session.shop, data.data?.shop?.primaryDomain?.host].filter(
-      Boolean,
-    );
-    if (!hosts.includes(destination.hostname))
-      throw new CustomerSnapshotError(
-        "Use a landing page on this store's domain.",
-      );
-    const scope = text("scope");
-    if (!["source", "campaign", "ad"].includes(scope))
-      throw new CustomerSnapshotError("Choose which visitors to follow.");
-    if (scope === "campaign" && !text("campaign"))
-      throw new CustomerSnapshotError(
-        "Enter the campaign name or ID used in the link.",
-      );
-    if (scope === "ad" && !text("adId"))
-      throw new CustomerSnapshotError("Enter the ad ID used in the link.");
-    const pixel = await ensureWebPixel(admin, session.shop);
-    if (pixel?.ready === false)
-      throw new CustomerSnapshotError(
-        "Checkout tracking could not be configured. Please retry.",
-        503,
-      );
-    const snapshot = await createCustomerSnapshot({
-      shop: session.shop,
-      name: text("name"),
-      source: text("source"),
-      medium: text("medium"),
-      campaign: scope === "source" ? null : text("campaign"),
-      adId: scope === "ad" ? text("adId") : null,
-      destinationUrl: destination.toString(),
-      durationDays: Number(text("durationDays")),
-      targetSessions: text("targetSessions")
-        ? Number(text("targetSessions"))
-        : null,
-    });
-    return redirect(`/app/customer-snapshots/${snapshot.id}`);
-  } catch (error) {
-    if (error instanceof CustomerSnapshotError || isPlanLimitError(error))
-      return json({ error: error.message }, { status: error.status });
-    if (error instanceof TypeError)
-      return json(
-        { error: "Enter a valid HTTPS storefront URL." },
-        { status: 400 },
-      );
-    throw error;
-  }
+  // Keep bookmarked reports readable, but all new collection belongs to Projects.
+  return redirect("/app/projects?create=1");
 };
 
 export default function CustomerSnapshots() {
@@ -188,8 +132,8 @@ export default function CustomerSnapshots() {
             }
           : billing.canCreateNormalSnapshot
             ? {
-                content: "Start customer snapshot",
-                onAction: () => setOpen(true),
+                content: "Create Project",
+                url: "/app/projects?create=1",
               }
             : { content: "Upgrade to start snapshot", url: "/app/upgrade" }
       }

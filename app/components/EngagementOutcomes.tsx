@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../utils/i18n";
 import type {
   EngagementOutcomeItem,
   EngagementOutcomes as OutcomeData,
@@ -13,13 +14,6 @@ const colors: Record<string, string> = {
   Footer: "#64748b",
 };
 const series = ["#3989ff", "#eea12b", "#15996f"];
-const number = (value: number | null) =>
-  value === null ? "Unavailable" : value.toLocaleString();
-function outcome(value: number | null, total: number | null) {
-  return value === null || total === null
-    ? "Unavailable"
-    : `${number(value)} (${total ? Math.round((value / total) * 1000) / 10 : 0}%)`;
-}
 function Metrics({
   item,
   maximum,
@@ -27,6 +21,13 @@ function Metrics({
   item: EngagementOutcomeItem;
   maximum: number;
 }) {
+  const { t, formatNumber } = useI18n();
+  const number = (value: number | null) =>
+    value === null ? t("Unavailable") : formatNumber(value);
+  const outcome = (value: number | null, total: number | null) =>
+    value === null || total === null
+      ? t("Unavailable")
+      : `${number(value)} (${formatNumber(total ? value / total : 0, { style: "percent", maximumFractionDigits: 1 })})`;
   const values = [item.sessions, item.carts, item.purchases];
   return (
     <>
@@ -44,23 +45,23 @@ function Metrics({
       </div>
       <div
         className="eo-number"
-        aria-label={`Clicked sessions: ${number(item.sessions)}`}
+        aria-label={`${t("Clicked sessions")}: ${number(item.sessions)}`}
       >
-        <span className="eo-mobile-label">Clicked sessions</span>
+        <span className="eo-mobile-label">{t("Clicked sessions")}</span>
         {number(item.sessions)}
       </div>
       <div
         className="eo-number"
-        aria-label={`Added to cart: ${outcome(item.carts, item.sessions)}`}
+        aria-label={`${t("Added to cart")}: ${outcome(item.carts, item.sessions)}`}
       >
-        <span className="eo-mobile-label">Added to cart</span>
+        <span className="eo-mobile-label">{t("Added to cart")}</span>
         {outcome(item.carts, item.sessions)}
       </div>
       <div
         className="eo-number"
-        aria-label={`Purchased: ${outcome(item.purchases, item.sessions)}`}
+        aria-label={`${t("Purchased")}: ${outcome(item.purchases, item.sessions)}`}
       >
-        <span className="eo-mobile-label">Purchased</span>
+        <span className="eo-mobile-label">{t("Purchased")}</span>
         {outcome(item.purchases, item.sessions)}
       </div>
     </>
@@ -75,52 +76,63 @@ function Group({
   items: EngagementOutcomeItem[];
   maximum: number;
 }) {
+  const { t, formatNumber } = useI18n();
   const [page, setPage] = useState(0);
   const pageCount = Math.ceil(items.length / 5);
   const current = Math.min(page, pageCount - 1);
   return (
     <section
       className="eo-group"
-      aria-label={`${category} engagement outcomes`}
+      aria-label={t("{category} engagement outcomes", {
+        category: t(category),
+      })}
     >
       <h3>
         <span style={{ background: colors[category] }} />
-        {category}
+        {t(category)}
       </h3>
       <div className="eo-row eo-head" aria-hidden="true">
-        <span>Element · tracked clicks</span>
+        <span>{t("Element · tracked clicks")}</span>
         <span />
-        <span>Clicked sessions</span>
-        <span>Added to cart</span>
-        <span>Purchased</span>
+        <span>{t("Clicked sessions")}</span>
+        <span>{t("Added to cart")}</span>
+        <span>{t("Purchased")}</span>
       </div>
       {items.slice(current * 5, current * 5 + 5).map((item) => (
         <div className="eo-row" key={item.key}>
           <div className="eo-label">
             <strong>{item.label}</strong>
-            <span>{number(item.clicks)} clicks</span>
+            <span>
+              {t("{count} clicks", { count: formatNumber(item.clicks) })}
+            </span>
           </div>
           <Metrics item={item} maximum={maximum} />
         </div>
       ))}
       {pageCount > 1 && (
-        <nav className="eo-pagination" aria-label={`${category} elements`}>
+        <nav
+          className="eo-pagination"
+          aria-label={t("{category} elements", { category: t(category) })}
+        >
           <button
             type="button"
             disabled={current === 0}
             onClick={() => setPage(current - 1)}
           >
-            Previous
+            {t("Previous")}
           </button>
           <span>
-            Page {current + 1} of {pageCount}
+            {t("Page {page} of {count}", {
+              page: formatNumber(current + 1),
+              count: formatNumber(pageCount),
+            })}
           </span>
           <button
             type="button"
             disabled={current + 1 === pageCount}
             onClick={() => setPage(current + 1)}
           >
-            Next
+            {t("Next")}
           </button>
         </nav>
       )}
@@ -134,6 +146,7 @@ function ImageCard({
   item: EngagementOutcomeItem;
   maximum: number;
 }) {
+  const { t, formatNumber } = useI18n();
   const [failed, setFailed] = useState(false);
   const safeImage =
     item.imageUrl && /^https?:\/\//i.test(item.imageUrl) ? item.imageUrl : null;
@@ -149,11 +162,11 @@ function ImageCard({
             onError={() => setFailed(true)}
           />
         ) : (
-          <span>Image preview unavailable</span>
+          <span>{t("Image preview unavailable")}</span>
         )}
       </div>
       <strong>{item.label}</strong>
-      <span>{number(item.clicks)} clicks</span>
+      <span>{t("{count} clicks", { count: formatNumber(item.clicks) })}</span>
       <div className="eo-image-metrics">
         <Metrics item={item} maximum={maximum} />
       </div>
@@ -169,14 +182,17 @@ export function EngagementOutcomesView({
   totals: Record<string, number>;
   audience?: string;
 }) {
+  const { t, formatNumber } = useI18n();
   if (!data)
     return (
       <p role="status">
-        Outcome data is not available for this report yet. Refresh to load it.
+        {t(
+          "Outcome data is not available for this report yet. Refresh to load it.",
+        )}
       </p>
     );
   if (!data.groups.length)
-    return <p>No eligible clicked sessions recorded yet.</p>;
+    return <p>{t("No eligible clicked sessions recorded yet.")}</p>;
   const body = ["Image", "Button", "Link", "Widget"].filter(
     (key) => totals[key] > 0,
   );
@@ -223,21 +239,21 @@ export function EngagementOutcomesView({
         {["Clicked sessions", "Added to cart", "Purchased"].map((label, i) => (
           <span key={label}>
             <i className="eo-dot" style={{ background: series[i] }} />
-            {label}
+            {t(label)}
           </span>
         ))}
       </div>
       <div className="eo-layout">
         <aside
           className="eo-donut"
-          aria-label={`${total.toLocaleString()} body clicks`}
+          aria-label={t("{count} body clicks", { count: formatNumber(total) })}
         >
           <svg
             viewBox="0 0 180 180"
             width="180"
             height="180"
             role="img"
-            aria-label="Original click distribution"
+            aria-label={t("Original click distribution")}
           >
             {body.map((key) => {
               const length = total ? (totals[key] / total) * 440 : 0;
@@ -266,7 +282,7 @@ export function EngagementOutcomesView({
               fontWeight="700"
               fill="currentColor"
             >
-              {total.toLocaleString()}
+              {formatNumber(total)}
             </text>
             <text
               x="90"
@@ -275,7 +291,7 @@ export function EngagementOutcomesView({
               fontSize="12"
               fill="currentColor"
             >
-              body clicks
+              {t("body clicks")}
             </text>
           </svg>
           <ul>
@@ -283,8 +299,12 @@ export function EngagementOutcomesView({
               <li key={key}>
                 <i className="eo-dot" style={{ background: colors[key] }} />
                 <span>
-                  {key} {totals[key].toLocaleString()} (
-                  {Math.round((totals[key] / total) * 100)}%)
+                  {t(key)} {formatNumber(totals[key])} (
+                  {formatNumber(totals[key] / total, {
+                    style: "percent",
+                    maximumFractionDigits: 0,
+                  })}
+                  )
                 </span>
               </li>
             ))}
@@ -306,10 +326,15 @@ export function EngagementOutcomesView({
         </div>
       </div>
       {images && (
-        <section className="eo-group" aria-label="Image engagement outcomes">
+        <section
+          className="eo-group"
+          aria-label={t("{category} engagement outcomes", {
+            category: t("Image"),
+          })}
+        >
           <h3>
             <span style={{ background: colors.Image }} />
-            Image
+            {t("Image")}
           </h3>
           <div className="eo-images">
             {images.items.map((item) => (
@@ -328,15 +353,15 @@ export function EngagementOutcomesView({
           <Group key={group.category} {...group} maximum={data.maxSessions} />
         ))}
       <p className="eo-note">
-        {audience} only. Percentages are among sessions that clicked that
-        element; repeat clicks count once. All bars share one session-count
-        scale. Outcomes can overlap across elements—do not add them together.
+        {t(
+          "{audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. All bars share one session-count scale. Outcomes can overlap across elements—do not add them together.",
+          { audience: t(audience) },
+        )}
       </p>
       <p className="eo-note">
-        Same-session association within this report, not proof of sequence or
-        causation. Uses recorded session IDs, not cross-device people. Missing
-        tracking can hide outcomes; unavailable means the records could not be
-        linked. The donut retains the original click totals.
+        {t(
+          "Same-session association within this report, not proof of sequence or causation. Uses recorded session IDs, not cross-device people. Missing tracking can hide outcomes; unavailable means the records could not be linked. The donut retains the original click totals.",
+        )}
       </p>
     </div>
   );

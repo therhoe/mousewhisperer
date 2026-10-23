@@ -39,6 +39,72 @@ enum ResourceType {
   HOMEPAGE
 }
 
+enum GrowthProjectScope {
+  STORE
+  PAGE
+}
+
+enum GrowthMeasurementCompletionMode {
+  VISITORS
+  DURATION
+}
+
+// Goal-led, ongoing workspace. Legacy Project remains the storefront resource.
+model GrowthProject {
+  id                String                  @id @default(cuid())
+  shop              String
+  title             String
+  goal              String
+  scope             GrowthProjectScope
+  resourceProjectId String?
+  resourceProject   Project?                @relation(fields: [resourceProjectId], references: [id], onDelete: Restrict)
+  defaultSource     String?
+  defaultMedium     String?
+  defaultCampaign   String?
+  journeyTracking   Boolean                 @default(false)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  measurements      GrowthMeasurement[]
+  abTests           AbTest[]
+  activities        GrowthProjectActivity[]
+
+  @@index([shop, updatedAt])
+  @@index([resourceProjectId])
+}
+
+model GrowthProjectActivity {
+  id          String        @id @default(cuid())
+  projectId   String
+  project     GrowthProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  createdAt   DateTime      @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model GrowthMeasurement {
+  id                 String                          @id @default(cuid())
+  projectId          String
+  project            GrowthProject                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name               String
+  completionMode     GrowthMeasurementCompletionMode
+  targetVisitors     Int?
+  durationDays       Int?
+  snapshotId         String?                         @unique
+  snapshot           Snapshot?                       @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  storeSnapshotId    String?                         @unique
+  storeSnapshot      StoreSnapshot?                  @relation(fields: [storeSnapshotId], references: [id], onDelete: Restrict)
+  channelSnapshotId  String?                         @unique
+  channelSnapshot    ChannelSnapshot?                @relation(fields: [channelSnapshotId], references: [id], onDelete: Restrict)
+  customerSnapshotId String?                         @unique
+  customerSnapshot   CustomerSnapshot?               @relation(fields: [customerSnapshotId], references: [id], onDelete: Restrict)
+  createdAt          DateTime                        @default(now())
+  updatedAt          DateTime                        @updatedAt
+
+  @@index([projectId, createdAt])
+}
+
 // A tracking project/audit for a specific storefront resource
 model Project {
   id            String       @id @default(cuid())
@@ -50,7 +116,8 @@ model Project {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  snapshots Snapshot[]
+  snapshots      Snapshot[]
+  growthProjects GrowthProject[]
 
   @@index([shop])
   @@index([productId])
@@ -69,12 +136,16 @@ model Snapshot {
   targetVisitors Int            @default(1000)
   status         SnapshotStatus @default(ACTIVE)
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  completedAt DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  completedAt             DateTime?
+  // Null for visitor-target captures; duration captures never use the target.
+  endsAt                  DateTime?
+  usesAcquisitionSessions Boolean   @default(false)
 
-  visits     Visit[]
-  statsCache SnapshotStatsCache?
+  visits            Visit[]
+  statsCache        SnapshotStatsCache?
+  growthMeasurement GrowthMeasurement?
 
   @@unique([projectId, number])
   @@index([projectId])
@@ -133,7 +204,8 @@ model ChannelSnapshot {
   createdAt      DateTime                      @default(now())
   updatedAt      DateTime                      @updatedAt
 
-  sessions ChannelSnapshotSession[]
+  sessions          ChannelSnapshotSession[]
+  growthMeasurement GrowthMeasurement?
 
   @@index([shop, status])
   @@index([shop, startedAt])
@@ -186,21 +258,23 @@ model ChannelSnapshotVisit {
 }
 
 model CustomerSnapshot {
-  id             String                   @id @default(cuid())
-  shop           String
-  name           String
-  status         SnapshotStatus           @default(ACTIVE)
-  source         String
-  medium         String?
-  campaign       String?
-  adId           String?
-  destinationUrl String
-  targetSessions Int?
-  startedAt      DateTime                 @default(now())
-  endsAt         DateTime
-  completedAt    DateTime?
-  createdAt      DateTime                 @default(now())
-  sessions       CustomerJourneySession[]
+  id                String                   @id @default(cuid())
+  shop              String
+  name              String
+  status            SnapshotStatus           @default(ACTIVE)
+  source            String
+  medium            String?
+  campaign          String?
+  adId              String?
+  destinationUrl    String
+  targetSessions    Int?
+  startedAt         DateTime                 @default(now())
+  endsAt            DateTime?
+  captureAllSources Boolean                  @default(false)
+  completedAt       DateTime?
+  createdAt         DateTime                 @default(now())
+  sessions          CustomerJourneySession[]
+  growthMeasurement GrowthMeasurement?
 
   @@index([shop, status, endsAt])
   @@index([shop, startedAt])
@@ -329,24 +403,26 @@ model ShopBilling {
 
 // Store-wide snapshot that captures behavior across all supported storefront pages.
 model StoreSnapshot {
-  id                  String                      @id @default(cuid())
-  shop                String
-  name                String?
-  status              StoreSnapshotStatus         @default(ACTIVE)
-  completionMode      StoreSnapshotCompletionMode @default(HUMAN_VISITORS)
-  targetHumanVisitors Int?
-  targetTotalVisits   Int?
-  durationDays        Int?
-  startedAt           DateTime                    @default(now())
-  endsAt              DateTime?
-  completedAt         DateTime?
-  createdAt           DateTime                    @default(now())
-  updatedAt           DateTime                    @updatedAt
+  id                      String                      @id @default(cuid())
+  shop                    String
+  name                    String?
+  status                  StoreSnapshotStatus         @default(ACTIVE)
+  completionMode          StoreSnapshotCompletionMode @default(HUMAN_VISITORS)
+  targetHumanVisitors     Int?
+  targetTotalVisits       Int?
+  durationDays            Int?
+  startedAt               DateTime                    @default(now())
+  endsAt                  DateTime?
+  completedAt             DateTime?
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  usesAcquisitionSessions Boolean                     @default(false)
 
-  visits          StoreSnapshotVisit[]
-  statsCache      StoreSnapshotStatsCache?
-  pageAggregates  StoreSnapshotPageAggregate[]
-  recommendations StoreSnapshotRecommendation[]
+  visits            StoreSnapshotVisit[]
+  statsCache        StoreSnapshotStatsCache?
+  pageAggregates    StoreSnapshotPageAggregate[]
+  recommendations   StoreSnapshotRecommendation[]
+  growthMeasurement GrowthMeasurement?
 
   @@index([shop])
   @@index([shop, status])
@@ -359,15 +435,20 @@ model StoreSnapshotVisit {
   storeSnapshotId String
   storeSnapshot   StoreSnapshot @relation(fields: [storeSnapshotId], references: [id], onDelete: Cascade)
 
-  sessionId      String
-  pageViewId     String
-  pagePath       String
-  pageUrl        String?
-  pageTitle      String?
-  resourceType   ResourceType?
-  resourceHandle String?
-  isLandingPage  Boolean       @default(false)
-  pageOrder      Int?
+  sessionId            String
+  acquisitionId        String?
+  acquisitionSource    String?
+  acquisitionMedium    String?
+  acquisitionCampaign  String?
+  acquisitionStartedAt DateTime?
+  pageViewId           String
+  pagePath             String
+  pageUrl              String?
+  pageTitle            String?
+  resourceType         ResourceType?
+  resourceHandle       String?
+  isLandingPage        Boolean       @default(false)
+  pageOrder            Int?
 
   visitorType    VisitorType @default(PENDING)
   source         String?
@@ -424,6 +505,7 @@ model StoreSnapshotVisit {
   @@index([storeSnapshotId])
   @@index([storeSnapshotId, visitorType])
   @@index([storeSnapshotId, sessionId])
+  @@index([storeSnapshotId, acquisitionId, visitorType], map: "StoreVisit_growth_acquisition_idx")
   @@index([storeSnapshotId, pagePath])
   @@index([storeSnapshotId, resourceType])
   @@index([storeSnapshotId, startedAt])
@@ -521,6 +603,9 @@ model AbTest {
   status             AbTestStatus   @default(DRAFT)
   testType           AbTestType     @default(TEMPLATE)
   targetPageType     AbTestPageType
+  targetPagePath     String?
+  growthProjectId    String?
+  growthProject      GrowthProject? @relation(fields: [growthProjectId], references: [id], onDelete: SetNull)
   goal               AbTestGoal     @default(CONVERSION)
   themeId            String?
   themeName          String?
@@ -545,6 +630,7 @@ model AbTest {
   @@index([shop, targetPageType])
   @@index([sourceSnapshotId])
   @@index([createdAt])
+  @@index([growthProjectId])
 }
 
 model AbTestVariant {
@@ -725,8 +811,13 @@ model Visit {
   visitorType VisitorType @default(PENDING)
 
   // Session & page view tracking
-  sessionId  String // Session identifier (persists across page loads)
-  pageViewId String // Unique per page load (each visit = new pageViewId)
+  sessionId            String // Session identifier (persists across page loads)
+  acquisitionId        String?
+  acquisitionSource    String?
+  acquisitionMedium    String?
+  acquisitionCampaign  String?
+  acquisitionStartedAt DateTime?
+  pageViewId           String // Unique per page load (each visit = new pageViewId)
 
   // Traffic source
   source         String? // e.g., "google", "facebook", "direct"
@@ -793,6 +884,8 @@ model Visit {
   deviceType String? // desktop, mobile, tablet
 
   @@unique([pageViewId, snapshotId])
+  @@index([snapshotId, acquisitionId, visitorType])
+  @@index([snapshotId, sessionId])
   @@index([snapshotId])
   @@index([visitorType])
   @@index([sourceCategory])

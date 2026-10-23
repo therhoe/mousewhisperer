@@ -24,19 +24,13 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { ensureWebPixel } from "../utils/web-pixel.server";
-import { createStoreSnapshot } from "../utils/store-snapshot.server";
 import {
   planUsagePillLabel,
   PremiumGateCard,
   TargetLimitText,
 } from "../components/PremiumGate";
 import {
-  assertCanCreateStoreSnapshot,
-  assertSnapshotTargetAllowed,
   getBillingDisplayAccess,
-  isPlanLimitError,
-  planLimitPayload,
 } from "../utils/billing.server";
 import { StorefrontTrackingStatus } from "../components/StorefrontTrackingStatus";
 
@@ -89,61 +83,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
-  const shop = session.shop;
-  const formData = await request.formData();
-  const actionType = formData.get("action");
-
-  if (actionType !== "create-store-snapshot") {
-    return json({ error: "Invalid action" }, { status: 400 });
-  }
-
-  const rawMode = String(formData.get("completionMode") || "HUMAN_VISITORS");
-  const completionMode =
-    rawMode === "TOTAL_VISITS" || rawMode === "TIME_WINDOW"
-      ? rawMode
-      : "HUMAN_VISITORS";
-
-  const targetHumanVisitors = parseInt(
-    String(formData.get("targetHumanVisitors") || "1000"),
-    10,
-  );
-  const targetTotalVisits = parseInt(
-    String(formData.get("targetTotalVisits") || "2500"),
-    10,
-  );
-  const durationDays = parseInt(
-    String(formData.get("durationDays") || "7"),
-    10,
-  );
-
-  try {
-    await assertCanCreateStoreSnapshot(shop);
-    if (completionMode === "HUMAN_VISITORS") {
-      await assertSnapshotTargetAllowed(shop, targetHumanVisitors);
-    }
-    if (completionMode === "TOTAL_VISITS") {
-      await assertSnapshotTargetAllowed(shop, targetTotalVisits);
-    }
-  } catch (error) {
-    if (isPlanLimitError(error)) {
-      return json(planLimitPayload(error), { status: error.status });
-    }
-    throw error;
-  }
-
-  await ensureWebPixel(admin, shop);
-
-  const snapshot = await createStoreSnapshot({
-    shop,
-    name: formData.get("name") as string | null,
-    completionMode,
-    targetHumanVisitors,
-    targetTotalVisits,
-    durationDays,
-  });
-
-  return redirect(`/app/store-snapshots/${snapshot.id}`);
+  await authenticate.admin(request);
+  const form = await request.formData();
+  if (form.get("action") !== "create-store-snapshot")
+    return json({ error: "Invalid action." }, { status: 400 });
+  // Keep bookmarked reports readable, but all new collection belongs to Projects.
+  return redirect("/app/projects?create=1");
 };
 
 export default function StoreSnapshotsIndex() {
@@ -183,7 +128,7 @@ export default function StoreSnapshotsIndex() {
         content: activeSnapshot
           ? "View active snapshot"
           : billingAccess.canCreateStoreSnapshot
-            ? "Start store snapshot"
+            ? "Create Project"
             : "Upgrade to start snapshot",
         onAction: () => {
           if (activeSnapshot) {
@@ -194,7 +139,7 @@ export default function StoreSnapshotsIndex() {
             navigate("/app/upgrade");
             return;
           }
-          setIsModalOpen(true);
+          navigate("/app/projects?create=1");
         },
       }}
     >

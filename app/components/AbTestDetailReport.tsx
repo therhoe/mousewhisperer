@@ -25,6 +25,7 @@ import type {
   EngagementOutcomes,
 } from "../utils/click-engagement";
 import { EngagementOutcomesView } from "./EngagementOutcomes";
+import { useI18n } from "../utils/i18n";
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   PRODUCT: "Product page",
@@ -55,6 +56,7 @@ type ClickCategoryBreakdown = BreakdownItem & {
 };
 
 export type AbTestReportStatsRow = {
+  audience?: "all" | "active";
   variantId: string;
   key: string;
   name: string;
@@ -146,6 +148,14 @@ function formatDuration(milliseconds: number) {
 }
 
 function goalLabel(goal: string) {
+  const labels: Record<string, string> = {
+    CONVERSION: "Conversion rate",
+    REVENUE: "Revenue per visitor",
+    ADD_TO_CART: "Add-to-cart rate",
+    CLICK_THROUGH: "Clickthrough rate",
+    ENGAGEMENT: "Engagement",
+  };
+  if (labels[goal]) return labels[goal];
   return goal
     .replaceAll("_", " ")
     .toLowerCase()
@@ -314,6 +324,7 @@ function AbTestTrendChart({
   stats: AbTestReportStatsRow[];
   goal: string;
 }) {
+  const { t } = useI18n();
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const metric = trendMetric(goal);
   const dates = Array.from(
@@ -341,10 +352,10 @@ function AbTestTrendChart({
       <Card>
         <BlockStack gap="150">
           <Text as="h2" variant="headingMd">
-            {metric.label} over time
+            {t("{metric} over time", { metric: t(metric.label) })}
           </Text>
           <Text as="p" tone="subdued">
-            The A/B lines will appear after real visitors are assigned.
+            {t("The A/B lines will appear after sessions are assigned.")}
           </Text>
         </BlockStack>
       </Card>
@@ -390,10 +401,10 @@ function AbTestTrendChart({
         <InlineStack align="space-between" blockAlign="start" gap="300">
           <BlockStack gap="050">
             <Text as="h2" variant="headingMd">
-              {metric.label} over time
+              {t("{metric} over time", { metric: t(metric.label) })}
             </Text>
             <Text as="p" tone="subdued">
-              Cumulative result for visitors assigned to each variant.
+              {t("Cumulative result for visitors assigned to each variant.")}
             </Text>
           </BlockStack>
           <InlineStack gap="300" wrap>
@@ -446,7 +457,9 @@ function AbTestTrendChart({
               height="270"
               preserveAspectRatio="none"
               role="img"
-              aria-label={`${metric.label} for Original A and Variant B over time`}
+              aria-label={t("{metric} for Original A and Variant B over time", {
+                metric: t(metric.label),
+              })}
               style={{ display: "block", minWidth: 620 }}
               onPointerMove={(event) => {
                 const bounds = event.currentTarget.getBoundingClientRect();
@@ -460,7 +473,9 @@ function AbTestTrendChart({
               onPointerLeave={() => setHoveredIndex(null)}
             >
               <title>
-                {metric.label} for Original A and Variant B over time
+                {t("{metric} for Original A and Variant B over time", {
+                  metric: t(metric.label),
+                })}
               </title>
               {Array.from({ length: 5 }, (_, index) => {
                 const value = (ceiling * index) / 4;
@@ -550,7 +565,7 @@ function AbTestTrendChart({
               padding: "4px 0",
             }}
           >
-            View chart data
+            {t("View chart data")}
           </summary>
           <div style={{ overflowX: "auto", paddingTop: 8 }}>
             <table
@@ -567,7 +582,9 @@ function AbTestTrendChart({
                   color: "var(--p-color-text-secondary)",
                 }}
               >
-                Cumulative {metric.label.toLowerCase()} by variant
+                {t("Cumulative {metric} by variant", {
+                  metric: t(metric.label),
+                })}
               </caption>
               <thead>
                 <tr>
@@ -579,7 +596,7 @@ function AbTestTrendChart({
                       borderBottom: "1px solid var(--p-color-border-secondary)",
                     }}
                   >
-                    Date
+                    {t("Date")}
                   </th>
                   {series.map((row) => (
                     <th
@@ -734,6 +751,7 @@ const CLICK_CATEGORY_COLORS: Record<string, string> = {
 };
 
 function VisitorQualityBar({ row }: { row: AbTestReportStatsRow }) {
+  const { t } = useI18n();
   const total = row.assignedVisitors || row.realVisitors || 0;
   const realPercent = total ? (row.realVisitors / total) * 100 : 0;
   const zombiePercent = total ? (row.zombies / total) * 100 : 0;
@@ -781,17 +799,17 @@ function VisitorQualityBar({ row }: { row: AbTestReportStatsRow }) {
       </div>
       <InlineStack gap="300" wrap>
         <Text as="span" tone="subdued">
-          Real {row.realVisitors.toLocaleString()}
+          {t("Real")} {row.realVisitors.toLocaleString()}
         </Text>
         <Text as="span" tone="subdued">
-          Zombies {row.zombies.toLocaleString()}
+          {t("Zombies")} {row.zombies.toLocaleString()}
         </Text>
         <Text as="span" tone="subdued">
-          Bots {row.bots.toLocaleString()}
+          {t("Bots")} {row.bots.toLocaleString()}
         </Text>
         {row.pending ? (
           <Text as="span" tone="subdued">
-            Pending {row.pending.toLocaleString()}
+            {t("Pending")} {row.pending.toLocaleString()}
           </Text>
         ) : null}
       </InlineStack>
@@ -808,6 +826,8 @@ function TrafficQualityTable({
   showPercentages: boolean;
   onTogglePercentages: () => void;
 }) {
+  const { t } = useI18n();
+  const [showClassification, setShowClassification] = useState(false);
   const countWithRate = (count: number, rate: number) =>
     showPercentages
       ? `${count.toLocaleString()} (${formatPercent(rate, 0)})`
@@ -819,19 +839,31 @@ function TrafficQualityTable({
         <InlineStack align="space-between" blockAlign="center" gap="300">
           <BlockStack gap="050">
             <Text as="h3" variant="headingMd">
-              Traffic quality by source
+              {t("Traffic by source")}
             </Text>
             <Text as="p" tone="subdued">
-              Session quality and conversion for this variant only.
+              {t("Session quality and conversion for this variant only.")}
             </Text>
           </BlockStack>
-          <Button size="slim" onClick={onTogglePercentages}>
-            {showPercentages ? "Hide percentages" : "Show percentages"}
-          </Button>
+          <InlineStack gap="200">
+            <Button
+              size="slim"
+              onClick={() => setShowClassification((value) => !value)}
+            >
+              {t(
+                showClassification
+                  ? "Hide classification"
+                  : "Show classification",
+              )}
+            </Button>
+            <Button size="slim" onClick={onTogglePercentages}>
+              {t(showPercentages ? "Hide percentages" : "Show percentages")}
+            </Button>
+          </InlineStack>
         </InlineStack>
         {!rows.length ? (
           <Text as="p" tone="subdued">
-            No source data captured for this variant yet.
+            {t("No source data captured for this variant yet.")}
           </Text>
         ) : (
           <div
@@ -844,7 +876,11 @@ function TrafficQualityTable({
             <table
               style={{
                 width: "100%",
-                minWidth: showPercentages ? 1120 : 960,
+                minWidth: showClassification
+                  ? showPercentages
+                    ? 1120
+                    : 960
+                  : 680,
                 borderCollapse: "collapse",
               }}
             >
@@ -855,13 +891,11 @@ function TrafficQualityTable({
                   {[
                     "Source",
                     "Sessions",
-                    "Real",
-                    "Zombie",
-                    "Bot",
-                    "Avg time",
-                    "Avg scroll",
+                    ...(showClassification ? ["Real", "Zombie", "Bot"] : []),
                     "Add to cart",
                     "Conversions",
+                    "Avg time",
+                    "Avg scroll",
                   ].map((heading) => (
                     <th
                       key={heading}
@@ -874,7 +908,7 @@ function TrafficQualityTable({
                       }}
                     >
                       <Text as="span" tone="subdued" fontWeight="semibold">
-                        {heading}
+                        {t(heading)}
                       </Text>
                     </th>
                   ))}
@@ -891,26 +925,30 @@ function TrafficQualityTable({
                     <td style={tableNumberCellStyle}>
                       {source.sessions.toLocaleString()}
                     </td>
+                    {showClassification ? (
+                      <>
+                        <td style={tableNumberCellStyle}>
+                          {countWithRate(source.real, source.realPercent)}
+                        </td>
+                        <td style={tableNumberCellStyle}>
+                          {countWithRate(source.zombies, source.zombiePercent)}
+                        </td>
+                        <td style={tableNumberCellStyle}>
+                          {countWithRate(source.bots, source.botPercent)}
+                        </td>
+                      </>
+                    ) : null}
                     <td style={tableNumberCellStyle}>
-                      {countWithRate(source.real, source.realPercent)}
+                      {countWithRate(source.addToCarts, source.addToCartRate)}
                     </td>
                     <td style={tableNumberCellStyle}>
-                      {countWithRate(source.zombies, source.zombiePercent)}
-                    </td>
-                    <td style={tableNumberCellStyle}>
-                      {countWithRate(source.bots, source.botPercent)}
+                      {countWithRate(source.conversions, source.conversionRate)}
                     </td>
                     <td style={tableNumberCellStyle}>
                       {formatDuration(source.avgTimeOnPage)}
                     </td>
                     <td style={tableNumberCellStyle}>
                       {formatPercent(source.avgScrollDepth, 0)}
-                    </td>
-                    <td style={tableNumberCellStyle}>
-                      {countWithRate(source.addToCarts, source.addToCartRate)}
-                    </td>
-                    <td style={tableNumberCellStyle}>
-                      {countWithRate(source.conversions, source.conversionRate)}
                     </td>
                   </tr>
                 ))}
@@ -930,32 +968,33 @@ function VariantImageEngagement({
   items: ImageEngagementItem[];
   maxClicks: number;
 }) {
+  const { t } = useI18n();
   return (
     <section>
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="center" gap="300">
           <BlockStack gap="050">
             <Text as="h3" variant="headingMd">
-              Image engagement
+              {t("Image engagement")}
             </Text>
             <Text as="p" tone="subdued">
-              Storefront images clicked by this variant&apos;s visitors.
+              {t("Storefront images clicked by this variant's visitors.")}
             </Text>
           </BlockStack>
           <Text as="span" tone="subdued">
             {items
               .reduce((sum, item) => sum + item.clickCount, 0)
               .toLocaleString()}{" "}
-            clicks
+            {t("clicks")}
           </Text>
         </InlineStack>
         {!items.length ? (
           <Text as="p" tone="subdued">
-            No image interactions captured for this variant yet.
+            {t("No image interactions captured for this variant yet.")}
           </Text>
         ) : (
           <div
-            aria-label="Image engagement thumbnails"
+            aria-label={t("Image engagement thumbnails")}
             style={{
               display: "flex",
               gap: 16,
@@ -1021,7 +1060,7 @@ function VariantImageEngagement({
                         color: "var(--p-color-text-secondary)",
                       }}
                     >
-                      Image preview unavailable
+                      {t("Image preview unavailable")}
                     </div>
                   )}
                   <span
@@ -1039,7 +1078,7 @@ function VariantImageEngagement({
                 </div>
                 <div style={{ paddingTop: 10 }}>
                   <Text as="p" fontWeight="semibold">
-                    {formatPercent(item.sessionPercent)} of sessions
+                    {formatPercent(item.sessionPercent)} {t("of sessions")}
                   </Text>
                   <Text as="p" tone="subdued">
                     <span
@@ -1055,7 +1094,7 @@ function VariantImageEngagement({
                     </span>
                   </Text>
                   <Text as="p" tone="subdued">
-                    {item.sessionCount.toLocaleString()} sessions
+                    {item.sessionCount.toLocaleString()} {t("sessions")}
                     {item.averageClickTimeSeconds !== null
                       ? ` · avg ${formatDuration(
                           item.averageClickTimeSeconds * 1000,
@@ -1079,21 +1118,24 @@ function VariantZoneBreakdown({
   zones: ClickCategoryBreakdown[];
   maxClicks: number;
 }) {
+  const { t } = useI18n();
   const visibleZones = zones.filter((zone) => zone.key !== "Image");
   return (
     <section>
       <BlockStack gap="200">
         <BlockStack gap="050">
           <Text as="h3" variant="headingMd">
-            Engagement by zone
+            {t("Engagement by zone")}
           </Text>
           <Text as="p" tone="subdued">
-            Every clicked element uses the same scale across click types.
+            {t("Every clicked element uses the same scale across click types.")}
           </Text>
         </BlockStack>
         {!visibleZones.length ? (
           <Text as="p" tone="subdued">
-            No button, link, widget, header, or footer clicks captured yet.
+            {t(
+              "No button, link, widget, header, or footer clicks captured yet.",
+            )}
           </Text>
         ) : (
           <div
@@ -1202,6 +1244,7 @@ function VariantDetailCard({
   row: AbTestReportStatsRow;
   targetPageType: string;
 }) {
+  const { t } = useI18n();
   const [showPercentages, setShowPercentages] = useState(false);
   const [showOutcomes, setShowOutcomes] = useState(false);
   const imageItems = row.imageEngagement || [];
@@ -1216,12 +1259,12 @@ function VariantDetailCard({
   const scopeLabel = PAGE_TYPE_LABELS[targetPageType] || targetPageType;
   const commonMetricTiles = [
     {
-      label: "Real visitors",
-      value: row.realVisitors.toLocaleString(),
+      label: t("Sessions in this view"),
+      value: row.visitors.toLocaleString(),
       caption: `${row.assignedVisitors.toLocaleString()} total assignments`,
     },
     {
-      label: "Page views",
+      label: t("Page views"),
       value: row.humanPageViews.toLocaleString(),
       caption: `${row.totalPageViews?.toLocaleString() || "0"} all traffic`,
     },
@@ -1230,12 +1273,12 @@ function VariantDetailCard({
     if (targetPageType === "COLLECTION") {
       return [
         {
-          label: "Link clicks",
+          label: t("Link clicks"),
           value: (row.linkClickCount || 0).toLocaleString(),
           caption: "Tracked link click events",
         },
         {
-          label: "Product click rate",
+          label: t("Product click rate"),
           value: formatPercent(row.productCtrRate || 0),
           caption: `${(row.productClickSessionCount || 0).toLocaleString()} visitor sessions · ${(row.productClickCount || 0).toLocaleString()} clicks`,
         },
@@ -1245,12 +1288,12 @@ function VariantDetailCard({
     if (targetPageType === "PAGE" || targetPageType === "HOMEPAGE") {
       return [
         {
-          label: "Link clicks",
+          label: t("Link clicks"),
           value: (row.linkClickCount || 0).toLocaleString(),
           caption: "Tracked link click events",
         },
         {
-          label: "Body CTA rate",
+          label: t("Body CTA rate"),
           value: formatPercent(row.bodyCtaCtrRate || 0),
           caption: `${(row.bodyCtaSessionCount || 0).toLocaleString()} visitor sessions · ${(row.bodyCtaClickCount || 0).toLocaleString()} clicks`,
         },
@@ -1260,17 +1303,17 @@ function VariantDetailCard({
     if (targetPageType === "BLOG") {
       return [
         {
-          label: "50% scroll",
+          label: t("50% scroll"),
           value: formatPercent(row.scroll50Rate || 0),
           caption: `${(row.scroll50Count || 0).toLocaleString()} recorded reaches`,
         },
         {
-          label: "100% scroll",
+          label: t("100% scroll"),
           value: formatPercent(row.scroll100Rate || 0),
           caption: `${(row.scroll100Count || 0).toLocaleString()} recorded reaches`,
         },
         {
-          label: "Link / button rate",
+          label: t("Link / button rate"),
           value: formatPercent(row.anyClickCtrRate || 0),
           caption: `${(row.anyLinkOrButtonClickSessionCount || 0).toLocaleString()} visitor sessions · ${(row.anyLinkOrButtonClickCount || 0).toLocaleString()} clicks`,
         },
@@ -1281,34 +1324,34 @@ function VariantDetailCard({
   })();
   const commerceMetricTiles = [
     {
-      label: "Add to cart",
+      label: t("Add to cart"),
       value: formatPercent(row.addToCartRate),
       caption: `${row.addToCarts.toLocaleString()} add-to-carts`,
     },
     {
-      label: "CVR",
+      label: t("CVR"),
       value: formatPercent(row.conversionRate),
       caption: `${row.orders.toLocaleString()} orders`,
     },
     {
-      label: "Revenue",
+      label: t("Revenue"),
       value: formatCurrency(row.revenue),
       caption: `${formatCurrency(row.revenuePerVisitor)} per real visitor`,
     },
   ];
   const behaviorMetricTiles = [
     {
-      label: "Avg. scroll",
+      label: t("Avg. scroll"),
       value: formatPercent(row.avgScrollDepth),
       caption: "Average page reach",
     },
     {
-      label: "Avg. time",
+      label: t("Avg. time"),
       value: formatDuration(row.avgTimeOnPage),
       caption: "Average time on page",
     },
     {
-      label: "Interactions",
+      label: t("Interactions"),
       value: (row.ctaClicks + (row.filterInteractions || 0)).toLocaleString(),
       caption: `${row.ctaClicks.toLocaleString()} tracked clicks`,
     },
@@ -1332,18 +1375,18 @@ function VariantDetailCard({
           <BlockStack gap="100">
             <InlineStack>
               <Badge tone={row.key === "A" ? "info" : "warning"}>
-                {row.key === "A" ? "Control A" : "Variant B"}
+                {row.key === "A" ? t("Control A") : t("Variant B")}
               </Badge>
             </InlineStack>
             <Text as="h3" variant="headingLg">
-              {row.name} snapshot
+              {row.name} {t("snapshot")}
             </Text>
             <Text as="p" tone="subdued">
               {row.templateName}
               {row.templateSuffix ? ` · ?view=${row.templateSuffix}` : ""}
             </Text>
           </BlockStack>
-          <Badge>Read-only snapshot</Badge>
+          <Badge>{t("Read-only snapshot")}</Badge>
         </InlineStack>
       </div>
       <div style={{ padding: 20 }}>
@@ -1356,8 +1399,10 @@ function VariantDetailCard({
             }}
           >
             <Text as="p" tone="subdued">
-              Template-wide {scopeLabel.toLowerCase()} behavior for visitors
-              assigned to this variant during the test
+              {t("Captured")} {scopeLabel.toLowerCase()}{" "}
+              {t(
+                "behavior for visitors assigned to this variant during the test",
+              )}
               {row.scopePageCount
                 ? ` · ${row.scopePageCount.toLocaleString()} captured ${
                     row.scopePageCount === 1 ? "page" : "pages"
@@ -1366,7 +1411,12 @@ function VariantDetailCard({
               .
             </Text>
           </div>
-          <VisitorQualityBar row={row} />
+          <details>
+            <summary style={{ cursor: "pointer" }}>
+              {t("Traffic classification details")}
+            </summary>
+            <VisitorQualityBar row={row} />
+          </details>
           <div style={metricGridStyle(140)}>
             {metricTiles.map((tile) => (
               <MetricTile key={tile.label} {...tile} />
@@ -1383,13 +1433,13 @@ function VariantDetailCard({
 
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h3" variant="headingMd">
-              Engagement outcomes
+              {t("Engagement outcomes")}
             </Text>
             <Button
               pressed={showOutcomes}
               onClick={() => setShowOutcomes((value) => !value)}
             >
-              {showOutcomes ? "Hide outcomes" : "Show outcomes"}
+              {showOutcomes ? t("Hide outcomes") : t("Show outcomes")}
             </Button>
           </InlineStack>
           {showOutcomes ? (
@@ -1398,7 +1448,7 @@ function VariantDetailCard({
               totals={Object.fromEntries(
                 zoneItems.map((zone) => [zone.key, zone.count]),
               )}
-              audience="Real sessions assigned to this variant"
+              audience={t("Sessions in this view")}
             />
           ) : (
             <>
@@ -1420,7 +1470,7 @@ function VariantDetailCard({
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Tested pages
+                  {t("Tested pages")}
                 </Text>
                 <BreakdownList
                   items={row.testedPages || row.pageBreakdown}
@@ -1431,7 +1481,7 @@ function VariantDetailCard({
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Devices
+                  {t("Devices")}
                 </Text>
                 <BreakdownList
                   items={row.deviceBreakdown}
@@ -1442,7 +1492,7 @@ function VariantDetailCard({
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Countries
+                  {t("Countries")}
                 </Text>
                 <BreakdownList
                   items={row.countryBreakdown}
@@ -1453,7 +1503,7 @@ function VariantDetailCard({
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Exit types
+                  {t("Exit types")}
                 </Text>
                 <BreakdownList
                   items={row.exitBreakdown}
@@ -1469,11 +1519,12 @@ function VariantDetailCard({
 }
 
 function VariantComparisonTable({ stats }: { stats: AbTestReportStatsRow[] }) {
+  const { t } = useI18n();
   return (
     <Card padding="0">
       <div style={{ padding: "16px 20px" }}>
         <Text as="h2" variant="headingMd">
-          Variant comparison
+          {t("Variant comparison")}
         </Text>
       </div>
       <div style={{ overflowX: "auto" }}>
@@ -1492,7 +1543,7 @@ function VariantComparisonTable({ stats }: { stats: AbTestReportStatsRow[] }) {
             >
               {[
                 "Variant",
-                "Real visitors",
+                "Sessions in this view",
                 "Add to cart",
                 "Conversion rate",
                 "Orders",
@@ -1536,7 +1587,7 @@ function VariantComparisonTable({ stats }: { stats: AbTestReportStatsRow[] }) {
                   </BlockStack>
                 </td>
                 <td style={tableNumberCellStyle}>
-                  {row.realVisitors.toLocaleString()}
+                  {row.visitors.toLocaleString()}
                 </td>
                 <td style={tableNumberCellStyle}>
                   {row.addToCarts.toLocaleString()} ·{" "}
@@ -1581,17 +1632,21 @@ type AbVariantSnapshotResponse = {
   testId: string;
   variantId: string;
   snapshot: AbTestReportStatsRow;
+  filterQuery: string;
 };
 
 function VariantSnapshotTabs({
   test,
   stats,
   open,
+  filterQuery,
 }: {
   test: AbTestReportTest;
   stats: AbTestReportStatsRow[];
   open: boolean;
+  filterQuery: string;
 }) {
+  const { t } = useI18n();
   const orderedStats = useMemo(
     () => [...stats].sort((left, right) => left.key.localeCompare(right.key)),
     [stats],
@@ -1615,7 +1670,7 @@ function VariantSnapshotTabs({
     setSnapshotByVariantId({});
     setLoadingVariantId(null);
     requestedVariantIds.current.clear();
-  }, [test.id]);
+  }, [test.id, filterQuery]);
 
   useEffect(() => {
     const reopened = open && !wasOpen.current;
@@ -1635,9 +1690,9 @@ function VariantSnapshotTabs({
     snapshotFetcher.load(
       `/app/ab-tests/${test.id}/report?variantId=${encodeURIComponent(
         activeSummary.variantId,
-      )}&refresh=${Date.now()}`,
+      )}&${filterQuery}&refresh=${Date.now()}`,
     );
-  }, [activeSummary, open, snapshotFetcher, test.id]);
+  }, [activeSummary, open, snapshotFetcher, test.id, filterQuery]);
 
   useEffect(() => {
     if (
@@ -1654,7 +1709,7 @@ function VariantSnapshotTabs({
     snapshotFetcher.load(
       `/app/ab-tests/${test.id}/report?variantId=${encodeURIComponent(
         activeSummary.variantId,
-      )}`,
+      )}&${filterQuery}`,
     );
   }, [
     activeSnapshot,
@@ -1663,11 +1718,15 @@ function VariantSnapshotTabs({
     open,
     snapshotFetcher,
     test.id,
+    filterQuery,
   ]);
 
   useEffect(() => {
     if (!open || snapshotFetcher.state !== "idle") return;
-    if (snapshotFetcher.data?.testId === test.id) {
+    if (
+      snapshotFetcher.data?.testId === test.id &&
+      snapshotFetcher.data.filterQuery === filterQuery
+    ) {
       const loadedVariantId = snapshotFetcher.data.variantId;
       setSnapshotByVariantId((current) => ({
         ...current,
@@ -1677,14 +1736,15 @@ function VariantSnapshotTabs({
         current === loadedVariantId ? null : current,
       );
     }
-  }, [open, snapshotFetcher.data, snapshotFetcher.state, test.id]);
+  }, [open, snapshotFetcher.data, snapshotFetcher.state, test.id, filterQuery]);
 
   if (!orderedStats.length) {
     return (
       <Card>
         <Text as="p" tone="subdued">
-          Variant snapshots will appear after Original A and Variant B are
-          configured.
+          {t(
+            "Variant snapshots will appear after Original A and Variant B are configured.",
+          )}
         </Text>
       </Card>
     );
@@ -1692,8 +1752,10 @@ function VariantSnapshotTabs({
 
   const tabs = orderedStats.map((row) => ({
     id: `variant-snapshot-${row.variantId}`,
-    content: row.key === "A" ? "Control A" : "Variant B",
-    accessibilityLabel: `${row.key === "A" ? "Control A" : "Variant B"} page snapshot`,
+    content: row.key === "A" ? t("Control A") : t("Variant B"),
+    accessibilityLabel: t("{variant} page snapshot", {
+      variant: t(row.key === "A" ? "Control A" : "Variant B"),
+    }),
     panelID: `variant-snapshot-panel-${row.variantId}`,
   }));
   const failed = Boolean(
@@ -1714,11 +1776,12 @@ function VariantSnapshotTabs({
         <BlockStack gap="200">
           <BlockStack gap="050">
             <Text as="h2" variant="headingLg">
-              Variant page snapshots
+              {t("Variant page snapshots")}
             </Text>
             <Text as="p" tone="subdued">
-              Explore behavior inside one variant at a time. These reports use
-              A/B-assigned visits, not blended Page Snapshot traffic.
+              {t(
+                "Explore behavior inside one variant at a time. These reports use A/B-assigned visits, not blended Page Snapshot traffic.",
+              )}
             </Text>
           </BlockStack>
           <Tabs
@@ -1743,10 +1806,13 @@ function VariantSnapshotTabs({
           <div aria-live="polite" style={{ padding: "32px 0" }}>
             <BlockStack gap="150" inlineAlign="center">
               <Text as="h3" variant="headingMd">
-                Loading {activeSummary?.key === "A" ? "Control A" : "Variant B"}
+                {t("Loading")}{" "}
+                {activeSummary?.key === "A" ? t("Control A") : t("Variant B")}
               </Text>
               <Text as="p" tone="subdued">
-                Pulling this variant&apos;s traffic, engagement, and click data.
+                {t(
+                  "Pulling this variant's traffic, engagement, and click data.",
+                )}
               </Text>
             </BlockStack>
           </div>
@@ -1754,10 +1820,10 @@ function VariantSnapshotTabs({
           <div style={{ padding: "32px 0" }}>
             <BlockStack gap="200" inlineAlign="center">
               <Text as="h3" variant="headingMd">
-                Snapshot could not load
+                {t("Snapshot could not load")}
               </Text>
               <Text as="p" tone="subdued">
-                The A/B results above are still available.
+                {t("The A/B results above are still available.")}
               </Text>
               <Button
                 onClick={() => {
@@ -1767,11 +1833,11 @@ function VariantSnapshotTabs({
                   snapshotFetcher.load(
                     `/app/ab-tests/${test.id}/report?variantId=${encodeURIComponent(
                       activeSummary.variantId,
-                    )}`,
+                    )}&${filterQuery}`,
                   );
                 }}
               >
-                Retry snapshot
+                {t("Retry snapshot")}
               </Button>
             </BlockStack>
           </div>
@@ -1787,15 +1853,18 @@ export function AbTestDetailReport({
   test,
   stats,
   loading = false,
+  filterQuery = "audience=active&source=&medium=&campaign=",
 }: {
   open: boolean;
   onClose: () => void;
   test: AbTestReportTest;
   stats: AbTestReportStatsRow[];
   loading?: boolean;
+  filterQuery?: string;
 }) {
+  const { t } = useI18n();
   const totalRealVisitors = useMemo(
-    () => stats.reduce((sum, row) => sum + row.realVisitors, 0),
+    () => stats.reduce((sum, row) => sum + row.visitors, 0),
     [stats],
   );
   const summary = useMemo(() => {
@@ -1804,16 +1873,17 @@ export function AbTestDetailReport({
 
     if (!control || !variant) {
       return {
-        title: "Needs both variants",
-        description:
+        title: t("Needs both variants"),
+        description: t(
           "This report needs an Original (A) and Variant (B) row before it can compare performance.",
-        badge: "Incomplete",
+        ),
+        badge: t("Incomplete"),
         badgeTone: "warning" as const,
-        metricLabel: "Primary goal",
+        metricLabel: t("Primary goal"),
         controlLabel: "-",
         variantLabel: "-",
         differenceLabel: "-",
-        sampleLabel: `${totalRealVisitors.toLocaleString()} real visitors`,
+        sampleLabel: `${totalRealVisitors.toLocaleString()} sessions`,
       };
     }
 
@@ -1822,17 +1892,48 @@ export function AbTestDetailReport({
     const difference = variantMetric.value - controlMetric.value;
     const hasEnoughSignal =
       totalRealVisitors >= MIN_VISITORS_FOR_SUMMARY &&
-      control.realVisitors >= MIN_VISITORS_PER_VARIANT_FOR_SUMMARY &&
-      variant.realVisitors >= MIN_VISITORS_PER_VARIANT_FOR_SUMMARY;
-    const sampleLabel = `A ${control.realVisitors.toLocaleString()} · B ${variant.realVisitors.toLocaleString()}`;
+      control.visitors >= MIN_VISITORS_PER_VARIANT_FOR_SUMMARY &&
+      variant.visitors >= MIN_VISITORS_PER_VARIANT_FOR_SUMMARY;
+    const sampleLabel = `A ${control.visitors.toLocaleString()} · B ${variant.visitors.toLocaleString()}`;
+
+    if (
+      new URLSearchParams(filterQuery).get("source") ||
+      new URLSearchParams(filterQuery).get("medium") ||
+      new URLSearchParams(filterQuery).get("campaign") ||
+      new URLSearchParams(filterQuery).get("audience") === "active"
+    ) {
+      return {
+        title: t("Filtered comparison"),
+        description: t(
+          "Filtered comparisons are exploratory. Do not treat a selected segment as proof of overall test lift.",
+        ),
+        badge: t("Exploratory"),
+        badgeTone: "info" as const,
+        metricLabel: t(controlMetric.label),
+        controlLabel: controlMetric.formatted,
+        variantLabel: variantMetric.formatted,
+        differenceLabel: formatGoalDifference(
+          difference,
+          controlMetric.difference,
+        ),
+        sampleLabel,
+      };
+    }
 
     if (!hasEnoughSignal) {
       return {
-        title: test.status === "ENDED" ? "Inconclusive" : "Collecting data",
-        description: `Need at least ${MIN_VISITORS_FOR_SUMMARY.toLocaleString()} real visitors total and ${MIN_VISITORS_PER_VARIANT_FOR_SUMMARY.toLocaleString()} per variant before calling a winner.`,
-        badge: test.status === "ENDED" ? "No winner" : "Too early",
+        title:
+          test.status === "ENDED" ? t("Inconclusive") : t("Collecting data"),
+        description: t(
+          "Need at least {total} sessions total and {perVariant} per variant for an early comparison. This is not a statistical significance test.",
+          {
+            total: MIN_VISITORS_FOR_SUMMARY,
+            perVariant: MIN_VISITORS_PER_VARIANT_FOR_SUMMARY,
+          },
+        ),
+        badge: t(test.status === "ENDED" ? "No winner" : "Too early"),
         badgeTone: "warning" as const,
-        metricLabel: controlMetric.label,
+        metricLabel: t(controlMetric.label),
         controlLabel: controlMetric.formatted,
         variantLabel: variantMetric.formatted,
         differenceLabel: formatGoalDifference(
@@ -1845,12 +1946,13 @@ export function AbTestDetailReport({
 
     if (Math.abs(difference) < 0.1) {
       return {
-        title: "No clear lift",
-        description:
+        title: t("No clear lift"),
+        description: t(
           "A and B are performing nearly the same on the primary goal.",
-        badge: "Tied",
+        ),
+        badge: t("Tied"),
         badgeTone: undefined,
-        metricLabel: controlMetric.label,
+        metricLabel: t(controlMetric.label),
         controlLabel: controlMetric.formatted,
         variantLabel: variantMetric.formatted,
         differenceLabel: formatGoalDifference(
@@ -1865,11 +1967,14 @@ export function AbTestDetailReport({
     const winner = variantLeading ? variant : control;
 
     return {
-      title: `${winner.key} is leading`,
-      description: `${winner.name} is ahead on ${controlMetric.label.toLowerCase()}. Keep monitoring until the sample size is large enough for a final decision.`,
-      badge: variantLeading ? "B ahead" : "A ahead",
+      title: t("{variant} is leading", { variant: winner.key }),
+      description: t(
+        "{variant} is ahead on {metric}. Keep monitoring until the sample size is large enough for a final decision.",
+        { variant: winner.name, metric: t(controlMetric.label) },
+      ),
+      badge: t(variantLeading ? "B ahead" : "A ahead"),
       badgeTone: variantLeading ? ("success" as const) : ("critical" as const),
-      metricLabel: controlMetric.label,
+      metricLabel: t(controlMetric.label),
       controlLabel: controlMetric.formatted,
       variantLabel: variantMetric.formatted,
       differenceLabel: formatGoalDifference(
@@ -1878,7 +1983,7 @@ export function AbTestDetailReport({
       ),
       sampleLabel,
     };
-  }, [stats, test.goal, test.status, totalRealVisitors]);
+  }, [stats, test.goal, test.status, totalRealVisitors, filterQuery, t]);
 
   return (
     <AppBridgeModal
@@ -1887,7 +1992,7 @@ export function AbTestDetailReport({
       variant="max"
       onHide={onClose}
     >
-      <TitleBar title="A/B test detail report" />
+      <TitleBar title={t("A/B test detail report")} />
       <div
         style={{
           minHeight: "calc(100vh - 72px)",
@@ -1912,27 +2017,29 @@ export function AbTestDetailReport({
                   </Badge>
                   <Badge>{test.goal.replaceAll("_", " ").toLowerCase()}</Badge>
                   <Text as="span" tone="subdued">
-                    {test.trafficSplit}/{100 - test.trafficSplit} traffic split
+                    {test.trafficSplit}/{100 - test.trafficSplit}{" "}
+                    {t("traffic split")}
                   </Text>
                   {test.themeName ? (
                     <Text as="span" tone="subdued">
-                      {test.themeName} theme
+                      {test.themeName} {t("theme")}
                     </Text>
                   ) : null}
                 </InlineStack>
               </BlockStack>
-              <Button onClick={onClose}>Close</Button>
+              <Button onClick={onClose}>{t("Close")}</Button>
             </InlineStack>
 
             {loading ? (
               <Card>
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingMd">
-                    Loading full A/B report
+                    {t("Loading full A/B report")}
                   </Text>
                   <Text as="p" tone="subdued">
-                    Pulling visitor quality, engagement, conversion, and page
-                    breakdown data for this test.
+                    {t(
+                      "Pulling visitor quality, engagement, conversion, and page breakdown data for this test.",
+                    )}
                   </Text>
                 </BlockStack>
               </Card>
@@ -1955,34 +2062,34 @@ export function AbTestDetailReport({
                           </Badge>
                         </InlineStack>
                         <Text as="p" tone="subdued">
-                          A/B test result
+                          {t("A/B test result")}
                         </Text>
                       </BlockStack>
                       <BlockStack gap="100" align="end">
-                        <Badge tone="info">{goalLabel(test.goal)}</Badge>
+                        <Badge tone="info">{t(goalLabel(test.goal))}</Badge>
                         <Text as="span" tone="subdued">
-                          Primary goal: {summary.metricLabel}
+                          {t("Primary goal:")} {summary.metricLabel}
                         </Text>
                       </BlockStack>
                     </InlineStack>
                     <div style={metricGridStyle(190)}>
                       <SummaryStat
-                        label="Original (A)"
+                        label={t("Original (A)")}
                         value={summary.controlLabel}
                         caption="Primary metric"
                       />
                       <SummaryStat
-                        label="Variant (B)"
+                        label={t("Variant (B)")}
                         value={summary.variantLabel}
                         caption="Primary metric"
                       />
                       <SummaryStat
-                        label="B vs A"
+                        label={t("B vs A")}
                         value={summary.differenceLabel}
                         caption="Primary goal difference"
                       />
                       <SummaryStat
-                        label="Sample"
+                        label={t("Sample")}
                         value={totalRealVisitors.toLocaleString()}
                         caption={summary.sampleLabel}
                       />
@@ -1997,7 +2104,13 @@ export function AbTestDetailReport({
 
                 <VariantComparisonTable stats={stats} />
 
-                <VariantSnapshotTabs test={test} stats={stats} open={open} />
+                <VariantSnapshotTabs
+                  key={`${test.id}:${filterQuery}`}
+                  test={test}
+                  stats={stats}
+                  open={open}
+                  filterQuery={filterQuery}
+                />
               </>
             )}
           </BlockStack>

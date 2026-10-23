@@ -1,10 +1,13 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { loader as appLoader } from "./app";
 import { useMemo, useState } from "react";
 import { json, redirect } from "@remix-run/node";
 import {
   Link,
   useLoaderData,
   useNavigation,
+  useSearchParams,
+  useRouteLoaderData,
   useSubmit,
 } from "@remix-run/react";
 import {
@@ -16,7 +19,9 @@ import {
   Layout,
   Page,
   ProgressBar,
+  Select,
   Text,
+  TextField,
 } from "@shopify/polaris";
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -28,6 +33,12 @@ import {
 import { getAbTestStats } from "../utils/ab-tests.server";
 import { clearAbTestActivityCache } from "../utils/ab-test-activity.server";
 import { cachedValue } from "../utils/loader-cache.server";
+import {
+  parseAbReportFilters,
+  abReportFilterQuery,
+} from "../utils/ab-project-targeting";
+import { useI18n } from "../utils/i18n";
+import { embeddedFilterParams } from "../utils/embedded-filter-params";
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
   PRODUCT: "Product",
@@ -149,6 +160,7 @@ function BreakdownList({
 }
 
 function VisitorQualityBar({ row }: { row: AbTestStatsRow }) {
+  const { t } = useI18n();
   const total = row.assignedVisitors || 0;
   const realPercent = total ? (row.realVisitors / total) * 100 : 0;
   const zombiePercent = total ? (row.zombies / total) * 100 : 0;
@@ -196,13 +208,13 @@ function VisitorQualityBar({ row }: { row: AbTestStatsRow }) {
       </div>
       <InlineStack gap="300" wrap>
         <Text as="span" tone="subdued">
-          Real {row.realVisitors.toLocaleString()}
+          {t("Real")} {row.realVisitors.toLocaleString()}
         </Text>
         <Text as="span" tone="subdued">
-          Zombies {row.zombies.toLocaleString()}
+          {t("Zombies")} {row.zombies.toLocaleString()}
         </Text>
         <Text as="span" tone="subdued">
-          Bots {row.bots.toLocaleString()}
+          {t("Bots")} {row.bots.toLocaleString()}
         </Text>
       </InlineStack>
     </BlockStack>
@@ -210,6 +222,7 @@ function VisitorQualityBar({ row }: { row: AbTestStatsRow }) {
 }
 
 function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
+  const { t } = useI18n();
   return (
     <Card padding="0">
       <div
@@ -229,11 +242,11 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
             <Text as="p" tone="subdued">
               {row.templateSuffix
                 ? `?view=${row.templateSuffix}`
-                : "Default template"}
+                : t("Default template")}
             </Text>
           </BlockStack>
           <Text as="span" tone="subdued">
-            {row.assignedVisitors.toLocaleString()} assigned
+            {row.assignedVisitors.toLocaleString()} {t("assigned")}
           </Text>
         </InlineStack>
       </div>
@@ -248,22 +261,22 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
             }}
           >
             <MetricTile
-              label="ATC"
+              label={t("ATC")}
               value={formatPercent(row.addToCartRate)}
               caption={`${row.addToCarts.toLocaleString()} add-to-carts`}
             />
             <MetricTile
-              label="CVR"
+              label={t("CVR")}
               value={formatPercent(row.conversionRate)}
               caption={`${row.orders.toLocaleString()} orders`}
             />
             <MetricTile
-              label="Revenue"
+              label={t("Revenue")}
               value={formatCurrency(row.revenue)}
               caption={`${formatCurrency(row.revenuePerVisitor)} per real visitor`}
             />
             <MetricTile
-              label="Engagement"
+              label={t("Engagement")}
               value={formatPercent(row.avgScrollDepth)}
               caption={`${formatDuration(row.avgTimeOnPage)} avg. time`}
             />
@@ -278,7 +291,7 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Top traffic sources
+                  {t("Top traffic sources")}
                 </Text>
                 <BreakdownList
                   items={row.sourceBreakdown}
@@ -289,7 +302,7 @@ function VariantDetailCard({ row }: { row: AbTestStatsRow }) {
             <section>
               <BlockStack gap="200">
                 <Text as="h4" variant="headingSm">
-                  Top pages
+                  {t("Top pages")}
                 </Text>
                 <BreakdownList
                   items={row.pageBreakdown}
@@ -310,6 +323,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const test = await prisma.abTest.findFirst({
     where: { id: params.id, shop },
     include: {
+      growthProject: true,
       variants: {
         orderBy: { sortOrder: "asc" },
         include: { _count: { select: { assignments: true } } },
@@ -321,11 +335,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Not found", { status: 404 });
   }
 
-  const stats = await cachedValue(
-    `ab-test-report:${shop}:${test.id}`,
-    10_000,
-    () => getAbTestStats(test.id, test.goal),
+  const filters = parseAbReportFilters(
+    new URL(request.url).searchParams,
+    test.growthProject,
   );
+  const filterQuery = abReportFilterQuery(filters);
+  const [stats, sources] = await Promise.all([
+    cachedValue(
+      `ab-test-report:${shop}:${test.id}:${filterQuery}`,
+      10_000,
+      () => getAbTestStats(test.id, test.goal, filters),
+    ),
+    prisma.abTestAssignment.findMany({
+      where: { shop, testId: test.id },
+      distinct: ["source"],
+      select: { source: true },
+      take: 100,
+    }),
+  ]);
 
   return json({
     test: {
@@ -341,6 +368,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       })),
     },
     stats,
+    filters,
+    filterQuery,
+    sources: sources
+      .map((row) => row.source)
+      .filter((source): source is string => Boolean(source)),
   });
 };
 
@@ -362,6 +394,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         targetPageType: test.targetPageType,
         status: "LIVE",
         id: { not: test.id },
+        ...(test.targetPagePath
+          ? {
+              OR: [
+                { targetPagePath: null },
+                { targetPagePath: test.targetPagePath },
+              ],
+            }
+          : {}),
       },
       data: { status: "PAUSED", pausedAt: new Date() },
     });
@@ -394,14 +434,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (actionType === "delete-test") {
     await prisma.abTest.delete({ where: { id: test.id } });
     clearAbTestActivityCache(shop);
-    return redirect("/app/ab-tests");
+    return redirect(
+      test.growthProjectId
+        ? `/app/projects/${test.growthProjectId}?tab=tests`
+        : "/app/ab-tests",
+    );
   }
 
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
 export default function AbTestDetail() {
-  const { test, stats } = useLoaderData<typeof loader>();
+  const { t } = useI18n();
+  const { test, stats, filters, filterQuery, sources } =
+    useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  const appData = useRouteLoaderData<typeof appLoader>("routes/app");
+  const [source, setSource] = useState(filters.source);
+  const [medium, setMedium] = useState(filters.medium);
+  const [campaign, setCampaign] = useState(filters.campaign);
   // Remix's JSON type maps server-inferred empty arrays to null[] even though
   // the runtime payload remains the report row shape.
   const reportStats = stats as unknown as AbTestReportStatsRow[];
@@ -421,7 +472,7 @@ export default function AbTestDetail() {
       (sum, row) => sum + row.assignedVisitors,
       0,
     );
-    const realVisitors = stats.reduce((sum, row) => sum + row.realVisitors, 0);
+    const realVisitors = stats.reduce((sum, row) => sum + row.visitors, 0);
     const zombies = stats.reduce((sum, row) => sum + row.zombies, 0);
     const bots = stats.reduce((sum, row) => sum + row.bots, 0);
     const addToCarts = stats.reduce((sum, row) => sum + row.addToCarts, 0);
@@ -429,16 +480,12 @@ export default function AbTestDetail() {
     const revenue = stats.reduce((sum, row) => sum + row.revenue, 0);
     const ctaClicks = stats.reduce((sum, row) => sum + row.ctaClicks, 0);
     const avgTimeOnPage = realVisitors
-      ? stats.reduce(
-          (sum, row) => sum + row.avgTimeOnPage * row.realVisitors,
-          0,
-        ) / realVisitors
+      ? stats.reduce((sum, row) => sum + row.avgTimeOnPage * row.visitors, 0) /
+        realVisitors
       : 0;
     const avgScrollDepth = realVisitors
-      ? stats.reduce(
-          (sum, row) => sum + row.avgScrollDepth * row.realVisitors,
-          0,
-        ) / realVisitors
+      ? stats.reduce((sum, row) => sum + row.avgScrollDepth * row.visitors, 0) /
+        realVisitors
       : 0;
 
     return {
@@ -463,18 +510,26 @@ export default function AbTestDetail() {
   return (
     <Page
       title={test.name}
-      subtitle={`${PAGE_TYPE_LABELS[test.targetPageType] || test.targetPageType} template test`}
-      backAction={{ content: "A/B tests", url: "/app/ab-tests" }}
+      subtitle={
+        test.targetPagePath ||
+        `${PAGE_TYPE_LABELS[test.targetPageType] || test.targetPageType} template test`
+      }
+      backAction={{
+        content: test.growthProject?.title || t("A/B tests"),
+        url: test.growthProjectId
+          ? `/app/projects/${test.growthProjectId}?tab=tests`
+          : "/app/ab-tests",
+      }}
       primaryAction={
         test.status === "DRAFT"
           ? {
-              content: "Launch",
+              content: t("Launch"),
               onAction: () => submitAction("launch-test"),
               loading: isLoading,
             }
           : test.status === "LIVE"
             ? {
-                content: "Pause",
+                content: t("Pause"),
                 onAction: () => submitAction("pause-test"),
                 loading: isLoading,
               }
@@ -484,24 +539,105 @@ export default function AbTestDetail() {
         ...(test.status === "LIVE" || test.status === "PAUSED"
           ? [
               {
-                content: "End test",
+                content: t("End test"),
                 onAction: () => submitAction("end-test"),
                 loading: isLoading,
               },
             ]
           : []),
         {
-          content: "Delete",
+          content: t("Delete"),
           destructive: true,
           onAction: () => submitAction("delete-test"),
           loading: isLoading,
         },
       ]}
     >
-      <TitleBar title="A/B test details" />
+      <TitleBar title={t("A/B test details")} />
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="300" align="space-between" blockAlign="end">
+                  <Select
+                    label={t("Audience")}
+                    value={filters.audience}
+                    options={[
+                      { label: t("All"), value: "all" },
+                      { label: t("Active"), value: "active" },
+                    ]}
+                    onChange={(audience) =>
+                      submit(
+                        embeddedFilterParams(
+                          searchParams,
+                          {
+                            audience,
+                            source: filters.source,
+                            medium: filters.medium,
+                            campaign: filters.campaign,
+                          },
+                          appData?.embeddedContext,
+                        ),
+                        { method: "get" },
+                      )
+                    }
+                  />
+                  <Select
+                    label={t("Source")}
+                    value={source}
+                    onChange={setSource}
+                    options={[
+                      { label: t("All sources"), value: "" },
+                      ...Array.from(new Set([...sources, filters.source]))
+                        .filter(Boolean)
+                        .map((value) => ({ label: value, value })),
+                    ]}
+                  />
+                  <TextField
+                    label={t("Medium")}
+                    value={medium}
+                    onChange={setMedium}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label={t("Campaign")}
+                    value={campaign}
+                    onChange={setCampaign}
+                    autoComplete="off"
+                  />
+                  <Button
+                    onClick={() =>
+                      submit(
+                        embeddedFilterParams(
+                          searchParams,
+                          {
+                            audience: filters.audience,
+                            source,
+                            medium,
+                            campaign,
+                          },
+                          appData?.embeddedContext,
+                        ),
+                        { method: "get" },
+                      )
+                    }
+                  >
+                    {t("Apply filters")}
+                  </Button>
+                </InlineStack>
+                <Text as="p" tone="subdued">
+                  {t(
+                    "All includes every recorded session. Active excludes suspected bots and low-engagement sessions. Filters change reports, not test enrollment.",
+                  )}
+                </Text>
+                <Text as="p" tone="subdued">
+                  {t(
+                    "Filtered comparisons are exploratory. Do not treat a selected segment as proof of overall test lift.",
+                  )}
+                </Text>
+              </BlockStack>
+            </Card>
             <Card>
               <InlineStack align="space-between" blockAlign="start" gap="400">
                 <BlockStack gap="150">
@@ -516,17 +652,19 @@ export default function AbTestDetail() {
                   <Text as="p" tone="subdued">
                     {test.themeName
                       ? `${test.themeName} theme`
-                      : "Theme not linked yet"}{" "}
-                    · {test.trafficSplit}/{100 - test.trafficSplit} traffic
-                    split
+                      : t("Theme not linked yet")}{" "}
+                    · {test.trafficSplit}/{100 - test.trafficSplit}{" "}
+                    {t("traffic split")}
                   </Text>
                 </BlockStack>
                 <BlockStack gap="200" inlineAlign="end">
                   <Text as="span" tone="subdued">
-                    {totalHumans.toLocaleString()} real visitors assigned
+                    {t("{count} sessions in this view", {
+                      count: totalHumans.toLocaleString(),
+                    })}
                   </Text>
                   <Button onClick={() => setDetailsOpen(true)}>
-                    View more detail
+                    {t("View more detail")}
                   </Button>
                 </BlockStack>
               </InlineStack>
@@ -535,7 +673,7 @@ export default function AbTestDetail() {
             <Card padding="0">
               <div style={{ padding: "16px 20px" }}>
                 <Text as="h2" variant="headingMd">
-                  Variant results
+                  {t("Variant results")}
                 </Text>
               </div>
               <div style={{ overflowX: "auto" }}>
@@ -555,7 +693,7 @@ export default function AbTestDetail() {
                       {[
                         "Variant",
                         "Template",
-                        "Real visitors",
+                        t("Sessions in this view"),
                         "CVR",
                         "Revenue",
                       ].map((heading) => (
@@ -659,17 +797,19 @@ export default function AbTestDetail() {
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">
-                How this test runs
+                {t("How this test runs")}
               </Text>
               <Text as="p" tone="subdued">
-                Live visitors are assigned once per session. Variant B uses the
-                selected template suffix through Shopify's view parameter.
+                {t(
+                  "Live visitors are assigned once per session. Variant B uses the selected template suffix through Shopify's view parameter.",
+                )}
               </Text>
               <Text as="p" tone="subdued">
-                The storefront runtime is local in the theme extension until you
-                deploy the extension update.
+                {t(
+                  "The storefront runtime is local in the theme extension until you deploy the extension update.",
+                )}
               </Text>
-              <Link to="/app/ab-tests">Back to all tests</Link>
+              <Link to="/app/ab-tests">{t("Back to all tests")}</Link>
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -679,6 +819,7 @@ export default function AbTestDetail() {
         onClose={() => setDetailsOpen(false)}
         test={test}
         stats={reportStats}
+        filterQuery={filterQuery}
       />
       <AppBridgeModal
         id="ab-test-detail-report"
@@ -686,7 +827,7 @@ export default function AbTestDetail() {
         variant="max"
         onHide={() => setDetailsOpen(false)}
       >
-        <TitleBar title="A/B test detail report" />
+        <TitleBar title={t("A/B test detail report")} />
         <div
           style={{
             minHeight: "calc(100vh - 72px)",
@@ -713,18 +854,20 @@ export default function AbTestDetail() {
                       {test.goal.replaceAll("_", " ").toLowerCase()}
                     </Badge>
                     <Text as="span" tone="subdued">
-                      {test.trafficSplit}/{100 - test.trafficSplit} traffic
-                      split
+                      {test.trafficSplit}/{100 - test.trafficSplit}{" "}
+                      {t("traffic split")}
                     </Text>
                   </InlineStack>
                 </BlockStack>
-                <Button onClick={() => setDetailsOpen(false)}>Close</Button>
+                <Button onClick={() => setDetailsOpen(false)}>
+                  {t("Close")}
+                </Button>
               </InlineStack>
 
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
-                    Visitor breakdown
+                    {t("Visitor breakdown")}
                   </Text>
                   <div
                     style={{
@@ -735,22 +878,22 @@ export default function AbTestDetail() {
                     }}
                   >
                     <MetricTile
-                      label="Assigned visitors"
+                      label={t("Assigned visitors")}
                       value={totals.assignedVisitors.toLocaleString()}
                       caption="All A/B assignments"
                     />
                     <MetricTile
-                      label="Real visitors"
+                      label={t("Sessions in this view")}
                       value={totals.realVisitors.toLocaleString()}
                       caption="Human sessions counted"
                     />
                     <MetricTile
-                      label="Zombies"
+                      label={t("Zombies")}
                       value={totals.zombies.toLocaleString()}
                       caption="Unengaged traffic"
                     />
                     <MetricTile
-                      label="Bots"
+                      label={t("Bots")}
                       value={totals.bots.toLocaleString()}
                       caption="Automated traffic"
                     />
@@ -761,7 +904,7 @@ export default function AbTestDetail() {
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
-                    Engagement and conversion metrics
+                    {t("Engagement and conversion metrics")}
                   </Text>
                   <div
                     style={{
@@ -772,37 +915,37 @@ export default function AbTestDetail() {
                     }}
                   >
                     <MetricTile
-                      label="ATC rate"
+                      label={t("ATC rate")}
                       value={formatPercent(totals.addToCartRate)}
                       caption={`${totals.addToCarts.toLocaleString()} add-to-carts`}
                     />
                     <MetricTile
-                      label="CVR"
+                      label={t("CVR")}
                       value={formatPercent(totals.conversionRate)}
                       caption={`${totals.orders.toLocaleString()} orders`}
                     />
                     <MetricTile
-                      label="Revenue"
+                      label={t("Revenue")}
                       value={formatCurrency(totals.revenue)}
                       caption="Attributed order value"
                     />
                     <MetricTile
-                      label="RPV"
+                      label={t("RPV")}
                       value={formatCurrency(totals.revenuePerVisitor)}
                       caption="Revenue per real visitor"
                     />
                     <MetricTile
-                      label="Scroll depth"
+                      label={t("Scroll depth")}
                       value={formatPercent(totals.avgScrollDepth)}
                       caption="Average page reach"
                     />
                     <MetricTile
-                      label="Duration"
+                      label={t("Duration")}
                       value={formatDuration(totals.avgTimeOnPage)}
                       caption="Average time on page"
                     />
                     <MetricTile
-                      label="CTA clicks"
+                      label={t("CTA clicks")}
                       value={totals.ctaClicks.toLocaleString()}
                       caption={`${formatPercent(totals.ctaClickRate)} per real visitor`}
                     />
@@ -813,7 +956,7 @@ export default function AbTestDetail() {
               <Card padding="0">
                 <div style={{ padding: "16px 20px" }}>
                   <Text as="h2" variant="headingMd">
-                    Variant comparison
+                    {t("Variant comparison")}
                   </Text>
                 </div>
                 <div style={{ overflowX: "auto" }}>
@@ -904,7 +1047,7 @@ export default function AbTestDetail() {
                                 "1px solid var(--p-color-border-secondary)",
                             }}
                           >
-                            {row.realVisitors.toLocaleString()}
+                            {row.visitors.toLocaleString()}
                           </td>
                           <td
                             style={{

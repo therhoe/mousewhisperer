@@ -8,6 +8,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     console.log(`Received ${topic} webhook for ${shop}`);
 
+    await db.snapshot.updateMany({
+      where: { project: { shop }, status: "ACTIVE" },
+      data: { status: "PAUSED" },
+    });
+    await db.storeSnapshot.updateMany({
+      where: { shop, status: "ACTIVE" },
+      data: { status: "PAUSED" },
+    });
+    await db.abTest.updateMany({
+      where: { shop, status: "LIVE" },
+      data: { status: "PAUSED", pausedAt: new Date() },
+    });
+
     await db.channelSnapshot.updateMany({
       where: { shop, status: "ACTIVE" },
       data: { status: "PAUSED" },

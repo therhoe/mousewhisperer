@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { growthAcquisitionMatch } from "../utils/growth-tracking.server";
 import { recordCustomerCommerce } from "../utils/customer-journey.server";
 import { attributeAbTestConversion } from "../utils/ab-tests.server";
 import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
@@ -78,6 +79,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       storeSnapshotConversionsTracked = await attributeStoreSnapshotOrder({
         shop,
         sessionId,
+        acquisitionSessionId,
         timestamp: orderCreatedAt,
         totalPrice: orderTotal,
         currency: orderCurrency,
@@ -180,6 +182,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           where: {
             snapshotId: snapshot.id,
             sessionId,
+            ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
             addedToCart: true,
             converted: false,
           },
@@ -194,6 +197,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           where: {
             snapshotId: snapshot.id,
             sessionId,
+            ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
             converted: false,
           },
           orderBy: { startedAt: "desc" },
@@ -202,7 +206,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       // Tier 3: No session ID available — match by ATC only (best effort)
-      if (!visit && !sessionId) {
+      if (!visit && !sessionId && !snapshot.usesAcquisitionSessions) {
         visit = await prisma.visit.findFirst({
           where: {
             snapshotId: snapshot.id,

@@ -9,6 +9,12 @@ import type {
 import { createHmac, timingSafeEqual } from "node:crypto";
 import prisma from "../db.server";
 import {
+  abTargetPathForResource,
+  abTargetPathMatchesType,
+  normalizeAbTargetPath,
+  type AbReportFilters,
+} from "./ab-project-targeting";
+import {
   buildClickEngagement,
   buildEngagementOutcomes,
 } from "./click-engagement";
@@ -1134,8 +1140,41 @@ function formatAssignedLabel(pageType: AbTestPageType, count: number | null) {
   return `Assigned to ${count.toLocaleString()} ${nounByType[pageType]}`;
 }
 
+export async function requireAbGrowthProject(
+  shop: string,
+  projectId: string,
+  pageType?: string,
+) {
+  const project = projectId
+    ? await prisma.growthProject.findFirst({
+        where: { id: projectId, shop },
+        include: { resourceProject: true },
+      })
+    : null;
+  if (!project)
+    throw new Error("Choose a project before creating an A/B test.");
+  if (
+    project.scope === "PAGE" &&
+    (!project.resourceProject || project.resourceProject.shop !== shop)
+  ) {
+    throw new Error(
+      "This page project has no valid page. Choose a different project.",
+    );
+  }
+  if (
+    pageType &&
+    project.scope === "PAGE" &&
+    project.resourceProject?.resourceType !== pageType
+  ) {
+    throw new Error("The test page type must match the project's page.");
+  }
+  return project;
+}
+
 export async function createTemplateAbTest({
   shop,
+  growthProjectId,
+  targetPagePath,
   name,
   targetPageType,
   goal,
@@ -1155,6 +1194,8 @@ export async function createTemplateAbTest({
   generationPlan,
 }: {
   shop: string;
+  growthProjectId: string;
+  targetPagePath: string;
   name: string;
   targetPageType: AbTestPageType;
   goal: AbTestGoal;
@@ -1173,10 +1214,29 @@ export async function createTemplateAbTest({
   sourceSnapshotKind?: string | null;
   generationPlan?: unknown;
 }) {
+  const project = await requireAbGrowthProject(
+    shop,
+    growthProjectId,
+    targetPageType,
+  );
+  const path = normalizeAbTargetPath(targetPagePath);
+  const projectPath = project.resourceProject
+    ? abTargetPathForResource(project.resourceProject)
+    : null;
+  if (
+    !abTargetPathMatchesType(path, targetPageType) ||
+    (project.scope === "PAGE" && path !== projectPath)
+  ) {
+    throw new Error(
+      "Choose the exact storefront page for this project and test.",
+    );
+  }
   const split = Math.min(95, Math.max(5, Math.round(trafficSplit || 50)));
   return prisma.abTest.create({
     data: {
       shop,
+      growthProjectId: project.id,
+      targetPagePath: path,
       name: name.trim() || "Untitled template test",
       targetPageType,
       goal,
@@ -1268,6 +1328,13 @@ export async function assignTemplateAbVariant({
       status: "LIVE",
       testType: "TEMPLATE",
       targetPageType: pageType,
+      OR: [
+        { targetPagePath: null },
+        {
+          targetPagePath:
+            normalizeAbTargetPath(pagePath || pageUrl) || "__unmatched_page__",
+        },
+      ],
     },
     orderBy: [{ launchedAt: "desc" }, { createdAt: "desc" }],
     include: { variants: { orderBy: { sortOrder: "asc" } } },
@@ -1275,6 +1342,13 @@ export async function assignTemplateAbVariant({
 
   if (!test || test.variants.length < 2) {
     return { assigned: false as const, reason: "no_live_test" };
+  }
+
+  if (
+    test.targetPagePath &&
+    normalizeAbTargetPath(pagePath || pageUrl) !== test.targetPagePath
+  ) {
+    return { assigned: false as const, reason: "page_mismatch" };
   }
 
   const controlVariant =
@@ -1485,7 +1559,15 @@ export async function recordAbTestEngagement({
     where: { testId_sessionId: { testId, sessionId } },
   });
   if (!existing) return false;
+  if (existing.shop !== shop) return false;
   if (variantId && existing.variantId !== variantId) return false;
+  const hasRecordedSource = Boolean(
+    existing.source ||
+    existing.sourceCategory ||
+    existing.medium ||
+    existing.campaign ||
+    existing.referrer,
+  );
 
   await prisma.abTestAssignment.update({
     where: { id: existing.id },
@@ -1497,11 +1579,15 @@ export async function recordAbTestEngagement({
       resourceType: normalizeResourceTypeForAb(resourceType),
       resourceHandle: resourceHandle || existing.resourceHandle,
       visitorType,
-      source: source || existing.source,
-      medium: medium || existing.medium,
-      campaign: campaign || existing.campaign,
-      referrer: referrer || existing.referrer,
-      sourceCategory: sourceCategory || existing.sourceCategory,
+      // Keep one arrival's attribution together; an internal page must not
+      // rewrite the acquisition cohort selected in the Project's reports.
+      source: hasRecordedSource ? existing.source : source || null,
+      medium: hasRecordedSource ? existing.medium : medium || null,
+      campaign: hasRecordedSource ? existing.campaign : campaign || null,
+      referrer: hasRecordedSource ? existing.referrer : referrer || null,
+      sourceCategory: hasRecordedSource
+        ? existing.sourceCategory
+        : sourceCategory || null,
       timeOnPage: Math.max(existing.timeOnPage || 0, timeOnPage || 0),
       scrollDepth: Math.max(existing.scrollDepth || 0, scrollDepth || 0),
       ...(addedToCart
@@ -1845,7 +1931,44 @@ export async function attributeAbTestConversion({
   return result.count + visitUpdates;
 }
 
-export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
+function abAssignmentFilterWhere(
+  filters?: AbReportFilters,
+): Prisma.AbTestAssignmentWhereInput {
+  if (!filters) return {};
+  return {
+    ...(filters.audience === "active" ? { visitorType: "REAL" as const } : {}),
+    ...(filters.source
+      ? {
+          OR: [
+            {
+              source: { equals: filters.source, mode: "insensitive" as const },
+            },
+            {
+              sourceCategory: {
+                equals: filters.source,
+                mode: "insensitive" as const,
+              },
+            },
+          ],
+        }
+      : {}),
+    ...(filters.medium
+      ? { medium: { equals: filters.medium, mode: "insensitive" as const } }
+      : {}),
+    ...(filters.campaign
+      ? { campaign: { equals: filters.campaign, mode: "insensitive" as const } }
+      : {}),
+  };
+}
+
+export async function getAbTestStats(
+  testId: string,
+  goal?: AbTestGoal,
+  filters?: AbReportFilters,
+) {
+  const cohortWhere = abAssignmentFilterWhere(filters);
+  const isInAudience = (row: { visitorType: string }) =>
+    filters?.audience === "all" || row.visitorType === "REAL";
   const variants = await prisma.abTestVariant.findMany({
     where: { testId },
     orderBy: { sortOrder: "asc" },
@@ -1856,6 +1979,7 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
       templateName: true,
       templateSuffix: true,
       assignments: {
+        where: cohortWhere,
         select: {
           sessionId: true,
           pagePath: true,
@@ -1886,7 +2010,17 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
     goal === "CLICK_THROUGH" || goal === "ENGAGEMENT";
   const engagementTrendVisits = useVisitEngagementTrend
     ? await prisma.abTestVisit.findMany({
-        where: { testId, visitorType: "REAL" },
+        where: {
+          testId,
+          sessionId: {
+            in: variants.flatMap((variant) =>
+              variant.assignments
+                .filter(isInAudience)
+                .map((row) => row.sessionId),
+            ),
+          },
+          ...(filters ? {} : { visitorType: "REAL" as const }),
+        },
         select: {
           variantId: true,
           sessionId: true,
@@ -2098,9 +2232,7 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
   }
 
   const trendAssignments = variants.flatMap((variant) =>
-    variant.assignments.filter(
-      (assignment) => assignment.visitorType === "REAL",
-    ),
+    variant.assignments.filter(isInAudience),
   );
   const trendStartAt = trendAssignments.reduce<Date | null>(
     (earliest, assignment) =>
@@ -2188,9 +2320,7 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
 
   return variants.map((variant) => {
     const assignments = variant.assignments;
-    const assignmentHumans = assignments.filter(
-      (assignment) => assignment.visitorType === "REAL",
-    );
+    const assignmentHumans = assignments.filter(isInAudience);
     const metricRows = assignmentHumans;
     const pageBreakdownRows = assignmentHumans;
     const sourceBreakdownRows = assignmentHumans;
@@ -2227,7 +2357,9 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
       templateSuffix: variant.templateSuffix,
       assignedVisitors: assignments.length,
       visitors,
-      realVisitors: visitors,
+      realVisitors: assignments.filter((row) => row.visitorType === "REAL")
+        .length,
+      audience: filters?.audience || "active",
       totalPageViews: qualityRows.length,
       humanPageViews: visitors,
       zombies: qualityRows.filter((row) => row.visitorType === "ZOMBIE").length,
@@ -2268,6 +2400,7 @@ export async function getAbTestStats(testId: string, goal?: AbTestGoal) {
         buildCumulativeAbTestTrend(assignments, {
           startAt: trendStartAt,
           endAt: trendEndAt,
+          audience: filters?.audience || "active",
         }),
         variant.id,
       ),
@@ -2305,11 +2438,15 @@ export async function getAbVariantSnapshotStats({
   testId,
   variantId,
   targetPageType,
+  targetPagePath,
+  filters,
 }: {
   shop: string;
   testId: string;
   variantId: string;
   targetPageType: AbTestPageType;
+  targetPagePath?: string | null;
+  filters?: AbReportFilters;
 }) {
   const variant = await prisma.abTestVariant.findFirst({
     where: {
@@ -2328,56 +2465,61 @@ export async function getAbVariantSnapshotStats({
 
   if (!variant) return null;
 
-  const [assignments, visits] = await Promise.all([
-    prisma.abTestAssignment.findMany({
-      where: { shop, testId, variantId },
-      select: {
-        sessionId: true,
-        visitorType: true,
-        sourceCategory: true,
-        source: true,
-        medium: true,
-        addedToCart: true,
-        checkoutStarted: true,
-        converted: true,
-        orderValue: true,
-      },
-    }),
-    prisma.abTestVisit.findMany({
-      where: {
-        shop,
-        testId,
-        variantId,
-        ...targetVariantVisitWhere(targetPageType),
-      },
-      select: {
-        sessionId: true,
-        pagePath: true,
-        pageTitle: true,
-        resourceType: true,
-        resourceHandle: true,
-        visitorType: true,
-        sourceCategory: true,
-        source: true,
-        medium: true,
-        timeOnPage: true,
-        scrollDepth: true,
-        deviceType: true,
-        exitType: true,
-        exitUrl: true,
-        searchQuery: true,
-        filterInteractions: true,
-        ctaClicks: true,
-        country: true,
-        countryCode: true,
-      },
-    }),
-  ]);
+  const assignments = await prisma.abTestAssignment.findMany({
+    where: { shop, testId, variantId, ...abAssignmentFilterWhere(filters) },
+    select: {
+      sessionId: true,
+      visitorType: true,
+      sourceCategory: true,
+      source: true,
+      medium: true,
+      addedToCart: true,
+      checkoutStarted: true,
+      converted: true,
+      orderValue: true,
+    },
+  });
+  const visits = await prisma.abTestVisit.findMany({
+    where: {
+      shop,
+      testId,
+      variantId,
+      ...targetVariantVisitWhere(targetPageType),
+      ...(targetPagePath ? { pagePath: targetPagePath } : {}),
+      ...(filters
+        ? { sessionId: { in: assignments.map((row) => row.sessionId) } }
+        : {}),
+    },
+    select: {
+      sessionId: true,
+      pagePath: true,
+      pageTitle: true,
+      resourceType: true,
+      resourceHandle: true,
+      visitorType: true,
+      sourceCategory: true,
+      source: true,
+      medium: true,
+      timeOnPage: true,
+      scrollDepth: true,
+      deviceType: true,
+      exitType: true,
+      exitUrl: true,
+      searchQuery: true,
+      filterInteractions: true,
+      ctaClicks: true,
+      country: true,
+      countryCode: true,
+    },
+  });
 
   const assignmentHumans = assignments.filter(
-    (assignment) => assignment.visitorType === "REAL",
+    (assignment) =>
+      filters?.audience === "all" || assignment.visitorType === "REAL",
   );
-  const visitHumans = visits.filter((visit) => visit.visitorType === "REAL");
+  const visitHumans = filters
+    ? visits
+    : visits.filter((visit) => visit.visitorType === "REAL");
   const commerceRows = assignmentHumans;
   const behaviorRows = visitHumans;
   const clickRows = behaviorRows.map((row) => ({
@@ -2498,7 +2640,10 @@ export async function getAbVariantSnapshotStats({
     (row) =>
       row.pageTitle || row.pagePath || row.resourceHandle || "Unknown page",
   );
-  const sourceQualityBreakdown = buildSourceQualityBreakdown(assignments);
+  const sourceQualityBreakdown = buildSourceQualityBreakdown(
+    assignments,
+    filters?.audience || "active",
+  );
   const sourceKeyFor = (row: {
     sourceCategory?: string | null;
     source?: string | null;
@@ -2640,7 +2785,9 @@ export async function getAbVariantSnapshotStats({
     templateSuffix: variant.templateSuffix,
     assignedVisitors: assignments.length,
     visitors,
-    realVisitors: visitors,
+    realVisitors: assignments.filter((row) => row.visitorType === "REAL")
+      .length,
+    audience: filters?.audience || "active",
     totalPageViews: visits.length,
     humanPageViews: visitHumans.length,
     zombies: assignments.filter((row) => row.visitorType === "ZOMBIE").length,

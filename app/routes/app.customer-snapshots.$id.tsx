@@ -180,7 +180,7 @@ export default function CustomerSnapshotDetail() {
                   Journey overview
                 </Text>
                 <Text as="span" tone="subdued">
-                  {date(snapshot.startedAt)} – {date(snapshot.endsAt)} · UTC
+                  {date(snapshot.startedAt)} – {snapshot.endsAt ? date(snapshot.endsAt) : "Until the measurement completes"} · UTC
                 </Text>
               </InlineStack>
               <div
@@ -228,7 +228,7 @@ export default function CustomerSnapshotDetail() {
               </Text>
             </BlockStack>
           </Card>
-          <Card>
+          {!snapshot.captureAllSources && <Card>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
@@ -298,7 +298,7 @@ export default function CustomerSnapshotDetail() {
                 </>
               )}
             </BlockStack>
-          </Card>
+          </Card>}
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between">
@@ -315,8 +315,9 @@ export default function CustomerSnapshotDetail() {
                     Waiting for matching arrivals
                   </Text>
                   <Text as="p" tone="subdued">
-                    Use the campaign link above. Each captured visitor will
-                    appear here with a timeline of their actions.
+                    {snapshot.captureAllSources
+                      ? "New consented visits from all sources will appear here with a timeline of their actions."
+                      : "Use the campaign link above. Each captured visitor will appear here with a timeline of their actions."}
                   </Text>
                 </BlockStack>
               ) : (

@@ -325,13 +325,15 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
       authenticate: {
         admin: async () => {
           authenticated++;
-          return {};
+          return { session: { shop: "qa.myshopify.com" } };
         },
       },
     },
     "../components/BackgroundBillingSync": {},
     "../utils/features": { COMMUNITY_FEATURES_ENABLED: false },
     "../utils/page-snapshot-navigation": {},
+    "../utils/i18n": {},
+    "../utils/i18n.server": { resolveRequestLocale: async () => "en" },
     "@shopify/polaris/build/esm/styles.css?url": "qa.css",
   });
   assert.equal(
@@ -340,7 +342,11 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
     "qa-key",
   );
   assert.equal(authenticated, 1);
-  assert.equal(route.shouldRevalidate({}), false);
+  const currentUrl = new URL("https://qa.test/app?shop=qa.myshopify.com");
+  const nextUrl = new URL("https://qa.test/app/projects?shop=qa.myshopify.com");
+  assert.equal(route.shouldRevalidate({ currentUrl, nextUrl }), false);
+  assert.equal(route.shouldRevalidate({ currentUrl, nextUrl, formAction: "/api/locale" }), true);
+  assert.equal(route.shouldRevalidate({ currentUrl, nextUrl: new URL("https://qa.test/app?shop=qa.myshopify.com&locale=de") }), true);
   assert.doesNotMatch(
     source("app/routes/app.tsx"),
     /PrefetchPageLinks|prefetch="render"|reconcileShopBillingFromShopify/,
@@ -348,7 +354,29 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
   assert.match(source("app/routes/app.tsx"), /prefetch="intent"/);
 });
 
-test("dashboard shell returns without requesting Shopify analytics or CRO activity", async () => {
+test("Projects dashboard returns recent projects without requesting Shopify analytics or source discovery", { timeout: 1000 }, async () => {
+  let analyticsRequests = 0;
+  const lookups = [];
+  const route = loadModule("app/routes/app._index.tsx", {
+    "../shopify.server": { authenticate: { admin: async () => ({ session: { shop: "qa.myshopify.com" }, admin: { graphql: () => { analyticsRequests++; return new Promise(() => {}); } } }) } },
+    "../utils/growth-projects.server": { listGrowthProjects: async (shop) => { lookups.push(shop); return { projects: Array.from({ length: 8 }, (_, index) => ({ id: `project-${index}` })) }; } },
+    "../components/GrowthProjectList": {}, "../components/GrowthProjectForm": {}, "../components/GrowthOverviewCard": {},
+    "../utils/i18n": {}, "../styles/projects.css?url": "test.css",
+  });
+  const response = await route.loader({ request: new Request("https://qa.test/app?shop=other.myshopify.com") });
+  const data = await response.json();
+  assert.equal(data.shop, "qa.myshopify.com");
+  assert.deepEqual(lookups, ["qa.myshopify.com"]);
+  assert.equal(data.projects.length, 5);
+  assert.equal(analyticsRequests, 0);
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.equal("conversionDashboard" in data, false);
+  assert.doesNotMatch(source("app/routes/app._index.tsx"), /getGrowthMetrics|getConversionProgress|getProjectSources|discover.*Sources/);
+  assert.match(source("app/components/GrowthOverviewCard.tsx"), /useBackgroundJson/);
+  assert.match(source("app/components/GrowthProjectForm.tsx"), /if \(open && !projectId\)/);
+});
+
+test("preserved legacy dashboard shell returns without requesting Shopify analytics or CRO activity", async () => {
   let requests = 0;
   const db = {
     shopSettings: { findUnique: async () => null },
@@ -359,7 +387,7 @@ test("dashboard shell returns without requesting Shopify analytics or CRO activi
       },
     },
   };
-  const route = loadModule("app/routes/app._index.tsx", {
+  const route = loadModule("app/components/LegacySnapshotDashboard.tsx", {
     "../shopify.server": {
       authenticate: {
         admin: async () => ({
@@ -381,6 +409,7 @@ test("dashboard shell returns without requesting Shopify analytics or CRO activi
     "../utils/store-snapshot.server": {},
     "../components/PremiumGate": {},
     "../components/DashboardConversionPanel": {},
+    "../components/SnapshotSetupGuide": {},
     "../utils/billing.server": {
       getBillingDisplayAccess: async () => ({ plan: "FREE" }),
     },
@@ -407,6 +436,83 @@ test("dashboard shell returns without requesting Shopify analytics or CRO activi
     source("app/components/DashboardConversionPanel.tsx"),
     /Retry conversion report/,
   );
+});
+
+test("setup exit and restore persist only for the authenticated store and invalidate its dashboard cache", async () => {
+  const dashboardSource = source("app/components/LegacySnapshotDashboard.tsx");
+  assert.match(dashboardSource, /key=\{`setup:\$\{shop\}`\}/);
+  assert.match(dashboardSource, /key=\{`conversion:\$\{shop\}`\}/);
+  let dismissed = false;
+  let failWrite = false;
+  const writes = [];
+  const route = loadModule("app/components/LegacySnapshotDashboard.tsx", {
+    "../shopify.server": {
+      authenticate: {
+        admin: async () => ({
+          session: { shop: "qa.myshopify.com" },
+          admin: {},
+        }),
+      },
+    },
+    "../db.server": {
+      shopSettings: {
+        findUnique: async () => ({ setupGuideDismissed: dismissed }),
+        upsert: async (input) => {
+          if (failWrite) throw new Error("Database unavailable");
+          writes.push(input);
+          dismissed = input.update.setupGuideDismissed;
+        },
+      },
+      storeSnapshot: { findMany: async () => [] },
+    },
+    "../utils/notifications.server": {},
+    "../utils/features": { COMMUNITY_FEATURES_ENABLED: false },
+    "../utils/web-pixel.server": {},
+    "../utils/loader-cache.server": loadCache(),
+    "../utils/store-snapshot.server": {},
+    "../components/PremiumGate": {},
+    "../components/DashboardConversionPanel": {},
+    "../components/SnapshotSetupGuide": {},
+    "../utils/billing.server": {
+      getBillingDisplayAccess: async () => ({ plan: "FREE" }),
+    },
+  });
+  const preference = async () =>
+    (
+      await (
+        await route.loader({ request: new Request("https://qa.test/app") })
+      ).json()
+    ).setupGuideDismissed;
+  const update = (action) =>
+    route.action({
+      request: new Request("https://qa.test/app?index", {
+        method: "POST",
+        body: new URLSearchParams({ action, shop: "other.myshopify.com" }),
+      }),
+    });
+  assert.equal(await preference(), false);
+  for (const [action, expected] of [
+    ["dismissSetup", true],
+    ["restoreSetup", false],
+  ]) {
+    const result = await update(action);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).setupGuideDismissed, expected);
+    assert.equal(
+      await preference(),
+      expected,
+      "A warm cache must not retain the old preference",
+    );
+    const saved = writes.at(-1);
+    assert.equal(saved.where.shop, "qa.myshopify.com");
+    assert.equal(saved.create.shop, "qa.myshopify.com");
+    assert.equal(saved.create.setupGuideDismissed, expected);
+  }
+  failWrite = true;
+  const failed = await update("dismissSetup");
+  assert.equal(failed.status, 503);
+  assert.match((await failed.json()).error, /Could not save/);
+  assert.equal(await preference(), false);
 });
 
 test("conversion-report failures stay within the graph instead of throwing the page", async () => {

@@ -28,16 +28,11 @@ import {
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { ensureWebPixel } from "../utils/web-pixel.server";
 import {
-  ChannelSnapshotError,
-  createChannelSnapshot,
   listChannelSnapshots,
 } from "../utils/channel-snapshot.server";
 import {
   getBillingDisplayAccess,
-  isPlanLimitError,
-  planLimitPayload,
 } from "../utils/billing.server";
 import { planUsagePillLabel, TargetLimitText } from "../components/PremiumGate";
 import { ChannelPerformanceCard } from "../components/ChannelPerformanceCard";
@@ -45,8 +40,6 @@ import {
   getChannelOverview,
   type ChannelOverview,
 } from "../utils/channel-overview.server";
-
-import { clearCacheKey, loaderCacheKeys } from "../utils/loader-cache.server";
 
 type OverviewResponse = { overview?: ChannelOverview; error?: string };
 
@@ -88,59 +81,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  if (formData.get("action") !== "create-channel-snapshot") {
+  await authenticate.admin(request);
+  const form = await request.formData();
+  if (form.get("action") !== "create-channel-snapshot")
     return json({ error: "Invalid action." }, { status: 400 });
-  }
-
-  const completionMode = String(formData.get("completionMode") || "");
-  if (
-    completionMode !== "HUMAN_SESSIONS" &&
-    completionMode !== "TOTAL_SESSIONS" &&
-    completionMode !== "TIME_WINDOW"
-  ) {
-    return json(
-      { error: "Choose how this snapshot should finish." },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const pixelSetup = await ensureWebPixel(admin, session.shop);
-    if (pixelSetup?.ready === false) {
-      return json(
-        {
-          error:
-            "Checkout tracking could not be configured. No snapshot was started. Please retry in a moment.",
-        },
-        { status: 503 },
-      );
-    }
-    const snapshot = await createChannelSnapshot({
-      shop: session.shop,
-      name: String(formData.get("name") || "").trim() || "Channel snapshot",
-      completionMode,
-      targetSessions:
-        completionMode === "TIME_WINDOW"
-          ? undefined
-          : Number(formData.get("targetSessions")),
-      durationDays:
-        completionMode === "TIME_WINDOW"
-          ? Number(formData.get("durationDays"))
-          : undefined,
-    });
-    clearCacheKey(loaderCacheKeys.billingDisplay(session.shop));
-    return redirect(`/app/channel-snapshots/${snapshot.id}`);
-  } catch (error) {
-    if (isPlanLimitError(error)) {
-      return json(planLimitPayload(error), { status: error.status });
-    }
-    if (error instanceof ChannelSnapshotError) {
-      return json({ error: error.message }, { status: error.status });
-    }
-    throw error;
-  }
+  // Keep bookmarked reports readable, but all new collection belongs to Projects.
+  return redirect("/app/projects?create=1");
 };
 
 export default function ChannelSnapshotsIndex() {
@@ -215,14 +161,14 @@ export default function ChannelSnapshotsIndex() {
         content: activeSnapshotId
           ? "View active snapshot"
           : billingAccess.canCreateNormalSnapshot
-            ? "Start channel snapshot"
+            ? "Create Project"
             : "Upgrade to start snapshot",
         onAction: () => {
           if (activeSnapshotId)
             navigate(`/app/channel-snapshots/${activeSnapshotId}`);
           else if (!billingAccess.canCreateNormalSnapshot)
             navigate("/app/upgrade");
-          else setIsModalOpen(true);
+          else navigate("/app/projects?create=1");
         },
       }}
       secondaryActions={[

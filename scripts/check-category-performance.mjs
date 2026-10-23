@@ -231,7 +231,7 @@ function harness(source = routeSource) {
     },
     "../utils/page-snapshot-navigation": navigationHelpers,
   };
-  const route = compile(`${source}\nexport { clearCategoryCaches };`, mocks, {
+  const route = compile(source, mocks, {
     Date: Clock,
     console: {
       info: () => {},
@@ -354,7 +354,7 @@ test("activity fetches only the graph and caches by authenticated shop and categ
     assert.equal(count(h, kind), 0, kind);
 });
 
-test("concurrent graph fetches share one load and category mutations invalidate the graph cache", async () => {
+test("concurrent graph fetches share one load and explicit cache invalidation refreshes the graph", async () => {
   const h = harness();
   let release;
   h.state.graphWait = new Promise((resolve) => {
@@ -367,7 +367,8 @@ test("concurrent graph fetches share one load and category mutations invalidate 
   await Promise.all(pending);
   const billingKey = h.cache.loaderCacheKeys.billingDisplay(h.state.shop);
   await h.cache.cachedValue(billingKey, 30_000, async () => "mid-write usage");
-  h.route.clearCategoryCaches(h.state.shop, "products");
+  h.cache.clearCachePrefix(h.cache.loaderCacheKeys.categoryPrefix(h.state.shop));
+  h.cache.clearCacheKey(billingKey);
   await h.load("?_activity=1");
   assert.equal(count(h, "graph"), 2);
   assert.equal(
@@ -450,8 +451,9 @@ test("authentication, input validation, legacy bookmarks, and fresh mutation gua
     }),
     params: { category: "products" },
   });
-  assert.equal(response.status, 402);
-  assert.equal(count(h, "freshGuard"), 1);
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("Location"), "/app/projects?create=1");
+  assert.equal(count(h, "freshGuard"), 0, "Legacy creation redirects without starting an unlinked capture");
   assert.equal(
     count(h, "displayBilling"),
     0,

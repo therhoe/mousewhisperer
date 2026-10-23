@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { readChannelAcquisition } from "../utils/channel-report";
+import { growthAcquisitionMatch, writeGrowthVisit } from "../utils/growth-tracking.server";
 import {
   recordCustomerJourney,
   recordCustomerCommerce,
@@ -316,6 +318,26 @@ async function handleEngagementTrack(
     : null;
 
   let activeSnapshot = project?.snapshots[0] || null;
+  const acquisition = trackingShop ? readChannelAcquisition(data.acquisition, new Date()) : null;
+  const acquisitionFields = acquisition ? {
+    acquisitionId: acquisition.id,
+    acquisitionSource: acquisition.source,
+    acquisitionMedium: acquisition.medium,
+    acquisitionCampaign: acquisition.campaign,
+    acquisitionStartedAt: acquisition.startedAt,
+  } : {};
+
+  // Duration captures have no visitor completion threshold. Their deadline is
+  // checked on the already-loaded row rather than sweeping projects per event.
+  if (activeSnapshot?.endsAt && activeSnapshot.endsAt.getTime() <= Date.now()) {
+    await prisma.snapshot.updateMany({
+      where: { id: activeSnapshot.id, status: "ACTIVE" },
+      data: { status: "COMPLETED", completedAt: activeSnapshot.endsAt },
+    });
+    activeSnapshot = null;
+  }
+  if (activeSnapshot?.usesAcquisitionSessions && acquisition && acquisition.startedAt < activeSnapshot.createdAt)
+    activeSnapshot = null;
 
   if (
     !activeSnapshot &&
@@ -351,6 +373,8 @@ async function handleEngagementTrack(
   if (
     project &&
     activeSnapshot &&
+    !activeSnapshot.endsAt &&
+    !activeSnapshot.usesAcquisitionSessions &&
     activeSnapshot._count.visits >= activeSnapshot.targetVisitors
   ) {
     await prisma.snapshot.update({
@@ -384,7 +408,7 @@ async function handleEngagementTrack(
 
   if (activeSnapshot) {
     // Upsert visit record linked to snapshot (not project directly)
-    await prisma.visit.upsert({
+    const visitInput = {
       where: {
         pageViewId_snapshotId: {
           pageViewId: resolvedPageViewId,
@@ -394,6 +418,7 @@ async function handleEngagementTrack(
       create: {
         snapshotId: activeSnapshot.id,
         sessionId,
+        ...acquisitionFields,
         pageViewId: resolvedPageViewId,
         visitorType,
         source,
@@ -480,7 +505,14 @@ async function handleEngagementTrack(
         ...(geoData.region && { region: geoData.region }),
         ...(geoData.timezone && { timezone: geoData.timezone }),
       },
-    });
+    };
+    if (activeSnapshot.usesAcquisitionSessions) {
+      const written = await writeGrowthVisit("page", activeSnapshot.id, visitorType, (db) => db.visit.upsert(visitInput), { acquisitionId: acquisitionFields.acquisitionId, sessionId });
+      if (written.completed && project) {
+        await createNotification({ shop: project.shop, type: "SNAPSHOT_COMPLETED", title: "Measurement completed", message: `"${project.productTitle}" measurement is ready.`, linkUrl: `/app/project/${project.id}`, referenceId: activeSnapshot.id });
+        activeSnapshot = null;
+      }
+    } else await prisma.visit.upsert(visitInput);
   }
 
   if (activeStoreSnapshot && effectiveShop) {
@@ -488,6 +520,7 @@ async function handleEngagementTrack(
       shop: effectiveShop,
       sessionId,
       pageViewId: resolvedPageViewId,
+      ...acquisitionFields,
       visitorType,
       productHandle: decodedProductHandle,
       resourceType: normalizedResourceType,
@@ -587,11 +620,11 @@ async function handleEngagementTrack(
           ? pageOrder
           : Number(pageOrder || 0) || null,
       visitorType,
-      source,
-      medium,
-      campaign,
-      referrer,
-      sourceCategory,
+      source: acquisition ? acquisition.source : source,
+      medium: acquisition ? acquisition.medium : medium,
+      campaign: acquisition ? acquisition.campaign : campaign,
+      referrer: acquisition ? acquisition.referrer : referrer,
+      sourceCategory: acquisition ? acquisition.channel : sourceCategory,
       timeOnPage: cappedTimeOnPage,
       scrollDepth: scrollDepth || 0,
       mouseMovements: mouseMovements || 0,
@@ -631,7 +664,7 @@ async function handleEngagementTrack(
   }
 
   // Check again if we've hit the target after a real-user classification.
-  if (project && activeSnapshot && visitorType === "REAL") {
+  if (project && activeSnapshot && !activeSnapshot.endsAt && !activeSnapshot.usesAcquisitionSessions && visitorType === "REAL") {
     const realCount = await prisma.visit.count({
       where: { snapshotId: activeSnapshot.id, visitorType: "REAL" },
     });
@@ -801,7 +834,8 @@ async function handlePixelEvent(
     const visit = await prisma.visit.findFirst({
       where: {
         sessionId,
-        ...(productMatch ? { snapshot: { project: productMatch } } : {}),
+        ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
+        snapshot: { project: { ...productMatch, ...(channelShop ? { shop: channelShop } : {}) } },
       },
       orderBy: { startedAt: "desc" },
     });
@@ -824,6 +858,8 @@ async function handlePixelEvent(
 
     const storeTracked = await updateStoreSnapshotAddToCart({
       sessionId,
+      shop: channelShop,
+      acquisitionSessionId: data.acquisitionSessionId,
       productHandle,
       timestamp,
     });
@@ -893,8 +929,9 @@ async function handlePixelEvent(
       let visit = await prisma.visit.findFirst({
         where: {
           sessionId,
+          ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
           snapshot: {
-            project: projectMatch,
+            project: { ...projectMatch, ...(channelShop ? { shop: channelShop } : {}) },
           },
           addedToCart: true,
           converted: false,
@@ -909,8 +946,9 @@ async function handlePixelEvent(
         visit = await prisma.visit.findFirst({
           where: {
             sessionId,
+            ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
             snapshot: {
-              project: projectMatch,
+              project: { ...projectMatch, ...(channelShop ? { shop: channelShop } : {}) },
             },
             converted: false,
           },
@@ -961,6 +999,8 @@ async function handlePixelEvent(
     );
     const storeConversionsTracked = await updateStoreSnapshotConversion({
       sessionId,
+      shop: channelShop,
+      acquisitionSessionId: data.acquisitionSessionId,
       timestamp,
       totalPrice: data.totalPrice,
       currency: data.currency,
@@ -991,6 +1031,7 @@ async function handlePixelEvent(
     const visit = await prisma.visit.findFirst({
       where: {
         sessionId,
+        ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
         checkoutStarted: false,
         ...(shop ? { snapshot: { project: { shop } } } : {}),
       },
@@ -1014,6 +1055,7 @@ async function handlePixelEvent(
       {
         shop,
         sessionId,
+        acquisitionSessionId: data.acquisitionSessionId,
         timestamp,
       },
     );

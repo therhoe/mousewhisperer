@@ -36,17 +36,13 @@ import {
 } from "../utils/store-snapshot.server";
 import {
   clearCacheKey,
-  clearCachePrefix,
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
 import { StorefrontTrackingStatus } from "../components/StorefrontTrackingStatus";
 import {
-  assertCanCreateNormalSnapshots,
-  assertSnapshotTargetAllowed,
   getBillingDisplayAccess,
-  isPlanLimitError,
-  planLimitPayload,
 } from "../utils/billing.server";
+import { GrowthProjectError, transitionGrowthMeasurement } from "../utils/growth-projects.server";
 
 const DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS = 1000;
 const MIN_FOCUSED_SNAPSHOT_TARGET_VISITORS = 25;
@@ -108,10 +104,6 @@ type FocusedSnapshotListItem = {
   metricValues: Record<string, number>;
 };
 
-type ShopifyAdminClient = {
-  graphql: (query: string, options?: any) => Promise<Response>;
-};
-
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -128,6 +120,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (!snapshot) {
     throw new Response("Store snapshot not found", { status: 404 });
   }
+
 
   const [stats, focusedSnapshots, billingAccess] = await Promise.all([
     getStoreSnapshotStats(snapshot.id),
@@ -155,11 +148,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const snapshotId = params.id;
   const formData = await request.formData();
   const actionType = formData.get("action");
+
+  if (actionType === "create-page-snapshots" || actionType === "create-recommended-snapshot")
+    return redirect("/app/projects?create=1");
 
   if (!snapshotId) {
     return json({ error: "Store snapshot ID required" }, { status: 400 });
@@ -171,6 +167,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (!snapshot) {
     return json({ error: "Store snapshot not found" }, { status: 404 });
+  }
+
+  if (["pause", "resume", "complete"].includes(String(actionType))) {
+    const linked = await prisma.growthMeasurement.findFirst({ where: { storeSnapshotId: snapshot.id, project: { shop } }, select: { id: true, projectId: true } });
+    if (linked) {
+      try {
+        await transitionGrowthMeasurement(shop, linked.projectId, linked.id, String(actionType));
+        return json({ success: true } satisfies ActionResponse);
+      } catch (error) {
+        if (error instanceof GrowthProjectError) return json({ error: error.message }, { status: error.status });
+        throw error;
+      }
+    }
   }
 
   if (actionType === "pause") {
@@ -199,179 +208,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (actionType === "delete") {
+    if (await prisma.growthMeasurement.findFirst({ where: { storeSnapshotId: snapshot.id, project: { shop } }, select: { id: true } }))
+      return json({ error: "This measurement belongs to a Project. Its history is preserved and cannot be deleted from the legacy report." }, { status: 409 });
     await prisma.storeSnapshot.delete({ where: { id: snapshot.id } });
     clearCacheKey(loaderCacheKeys.billingDisplay(shop));
     return redirect("/app");
   }
 
-  if (actionType === "create-page-snapshots") {
-    const selectedPageKeys = Array.from(
-      new Set(formData.getAll("pageKey").map(String).filter(Boolean)),
-    );
-    if (selectedPageKeys.length === 0) {
-      return json(
-        { error: "Select at least one page" } satisfies ActionResponse,
-        { status: 400 },
-      );
-    }
-    if (selectedPageKeys.length > MAX_BULK_SNAPSHOT_SELECTION) {
-      return json(
-        {
-          error: `Select up to ${MAX_BULK_SNAPSHOT_SELECTION} pages at a time`,
-        } satisfies ActionResponse,
-        { status: 400 },
-      );
-    }
-
-    const stats = await getStoreSnapshotStats(snapshot.id, { force: true });
-    const targetVisitors = normalizeFocusedSnapshotTargetVisitors(
-      formData.get("targetVisitors"),
-    );
-    const pageByKey = new Map(
-      (stats?.pageAggregates || []).map((page) => [page.pageKey, page]),
-    );
-    const selectedPages = selectedPageKeys
-      .map((pageKey) => pageByKey.get(pageKey))
-      .filter((page): page is StoreSnapshotPageSummary => Boolean(page));
-
-    if (selectedPages.length === 0) {
-      return json(
-        {
-          error: "Selected pages are no longer available",
-        } satisfies ActionResponse,
-        { status: 404 },
-      );
-    }
-
-    const creationsNeeded = (
-      await Promise.all(
-        selectedPages.map((page) => {
-          const resource = resolveFocusedSnapshotResource({
-            pagePath: page.pagePath,
-            pageType: page.pageType,
-            resourceHandle: page.resourceHandle,
-          });
-          if (!resource) return Promise.resolve(false);
-          return findProjectWithActiveSnapshot(
-            shop,
-            resource.resourceType,
-            resource.resourceHandle,
-          ).then((existing) => !existing);
-        }),
-      )
-    ).filter(Boolean).length;
-
-    try {
-      await assertSnapshotTargetAllowed(shop, targetVisitors);
-      if (creationsNeeded > 0) {
-        await assertCanCreateNormalSnapshots(shop, creationsNeeded);
-      }
-    } catch (error) {
-      if (isPlanLimitError(error)) {
-        return json(planLimitPayload(error), { status: error.status });
-      }
-      throw error;
-    }
-
-    let createdCount = 0;
-    let reusedCount = 0;
-    let skippedCount = selectedPageKeys.length - selectedPages.length;
-
-    for (const page of selectedPages) {
-      const result = await createFocusedSnapshotFromStorePage(
-        admin,
-        shop,
-        snapshot.id,
-        page,
-        targetVisitors,
-      );
-      if (result.status === "created") createdCount++;
-      if (result.status === "reused") reusedCount++;
-      if (result.status === "skipped") skippedCount++;
-    }
-
-    if (createdCount > 0 || reusedCount > 0) {
-      clearDashboardAndCategoryCaches(shop);
-    }
-
-    return json({
-      success: true,
-      createdCount,
-      reusedCount,
-      skippedCount,
-      message: snapshotCreationMessage(createdCount, reusedCount, skippedCount),
-    } satisfies ActionResponse);
-  }
-
-  if (actionType === "create-recommended-snapshot") {
-    const recommendationId = String(formData.get("recommendationId") || "");
-    const recommendation = await prisma.storeSnapshotRecommendation.findFirst({
-      where: { id: recommendationId, storeSnapshotId: snapshot.id },
-    });
-
-    if (!recommendation) {
-      return json({ error: "Recommendation not found" }, { status: 404 });
-    }
-
-    const resource = resolveFocusedSnapshotResource({
-      pagePath: recommendation.pagePath,
-      pageType: recommendation.recommendedType || recommendation.pageType,
-      resourceHandle: recommendation.resourceHandle,
-    });
-
-    if (!resource) {
-      return json(
-        { error: "This page cannot be converted into a focused snapshot yet" },
-        { status: 400 },
-      );
-    }
-
-    const existing = await findProjectWithActiveSnapshot(
-      shop,
-      resource.resourceType,
-      resource.resourceHandle,
-    );
-
-    if (existing) {
-      await repairFocusedProductId(admin, existing, resource);
-      await prisma.storeSnapshotRecommendation.update({
-        where: { id: recommendation.id },
-        data: { status: "CREATED", createdProjectId: existing.id },
-      });
-      return redirect(`/app/project/${existing.id}`);
-    }
-
-    try {
-      await assertSnapshotTargetAllowed(
-        shop,
-        DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS,
-      );
-      await assertCanCreateNormalSnapshots(shop, 1);
-    } catch (error) {
-      if (isPlanLimitError(error)) {
-        return json(planLimitPayload(error), { status: error.status });
-      }
-      throw error;
-    }
-
-    const project = await createFocusedSnapshot({
-      admin,
-      shop,
-      resourceType: resource.resourceType,
-      resourceHandle: resource.resourceHandle,
-      title: recommendation.pageTitle || recommendation.pagePath,
-      targetVisitors: DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS,
-    });
-
-    clearDashboardAndCategoryCaches(shop);
-    await prisma.storeSnapshotRecommendation.update({
-      where: { id: recommendation.id },
-      data: { status: "CREATED", createdProjectId: project.id },
-    });
-
-    return redirect(`/app/project/${project.id}`);
-  }
-
+  // Creation has moved to the goal-led Projects flow above.
   return json({ error: "Invalid action" }, { status: 400 });
 };
 
@@ -1827,20 +1671,6 @@ function formatDelta(value: number, suffix?: string) {
   return abs.toLocaleString();
 }
 
-function normalizeFocusedSnapshotTargetVisitors(
-  value: FormDataEntryValue | null,
-) {
-  const parsed = parseInt(
-    String(value || DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS),
-    10,
-  );
-  if (!Number.isFinite(parsed)) return DEFAULT_FOCUSED_SNAPSHOT_TARGET_VISITORS;
-  return Math.min(
-    Math.max(parsed, MIN_FOCUSED_SNAPSHOT_TARGET_VISITORS),
-    MAX_FOCUSED_SNAPSHOT_TARGET_VISITORS,
-  );
-}
-
 function StatusBadge({ status }: { status: string }) {
   if (status === "ACTIVE") return <Badge tone="success">Active</Badge>;
   if (status === "COMPLETED") return <Badge tone="info">Done</Badge>;
@@ -2094,292 +1924,4 @@ function inferResourceHandleFromPagePath(
   const matcher = resourceType ? matchers[resourceType] : null;
   const match = matcher ? normalized.match(matcher) : null;
   return match ? decodeURIComponent(match[1]) : null;
-}
-
-async function recordFocusedSnapshotLink({
-  storeSnapshotId,
-  page,
-  projectId,
-  resource,
-}: {
-  storeSnapshotId: string;
-  page: StoreSnapshotPageSummary;
-  projectId: string;
-  resource: FocusedSnapshotResource;
-}) {
-  const pageAggregate = await prisma.storeSnapshotPageAggregate
-    .findUnique({
-      where: {
-        storeSnapshotId_pageKey: {
-          storeSnapshotId,
-          pageKey: page.pageKey,
-        },
-      },
-      select: { id: true },
-    })
-    .catch(() => null);
-  const existing = await prisma.storeSnapshotRecommendation.findFirst({
-    where: { storeSnapshotId, pageKey: page.pageKey },
-    select: { id: true },
-  });
-  const data = {
-    pageAggregateId: pageAggregate?.id ?? null,
-    pageKey: page.pageKey,
-    pagePath: page.pagePath,
-    pageTitle: page.pageTitle,
-    pageType: resource.resourceType,
-    resourceHandle: resource.resourceHandle,
-    recommendedType: resource.resourceType,
-    priority: page.weaknessScore,
-    confidence: page.confidence,
-    weaknessScore: page.weaknessScore,
-    opportunityScore: page.opportunityScore,
-    title: `Focused snapshot for ${page.pageTitle || page.pagePath}`,
-    reason: "Created from the store snapshot engagement table.",
-    actionLabel: "Open focused snapshot",
-    status: "CREATED" as const,
-    createdProjectId: projectId,
-  };
-
-  if (existing) {
-    await prisma.storeSnapshotRecommendation.update({
-      where: { id: existing.id },
-      data,
-    });
-    return;
-  }
-
-  await prisma.storeSnapshotRecommendation.create({
-    data: {
-      storeSnapshotId,
-      ...data,
-    },
-  });
-}
-
-async function findProjectWithActiveSnapshot(
-  shop: string,
-  resourceType: ResourceType,
-  resourceHandle: string,
-) {
-  return prisma.project.findFirst({
-    where: {
-      shop,
-      resourceType,
-      productHandle: resourceHandle,
-      snapshots: { some: { status: "ACTIVE" } },
-    },
-    select: { id: true, productId: true },
-  });
-}
-
-async function createFocusedSnapshot({
-  admin,
-  shop,
-  resourceType,
-  resourceHandle,
-  title,
-  targetVisitors,
-}: {
-  admin: ShopifyAdminClient;
-  shop: string;
-  resourceType: ResourceType;
-  resourceHandle: string;
-  title: string;
-  targetVisitors: number;
-}) {
-  const productId = await resolveShopifyResourceId(
-    admin,
-    resourceType,
-    resourceHandle,
-  );
-  const productTitle = title?.trim() || resourceHandle;
-
-  const project = await prisma.project.findFirst({
-    where: { shop, resourceType, productHandle: resourceHandle },
-    include: { _count: { select: { snapshots: true } } },
-  });
-
-  if (project) {
-    if (project.productId !== productId) {
-      await prisma.project.update({
-        where: { id: project.id },
-        data: { productId },
-      });
-    }
-    await prisma.snapshot.create({
-      data: {
-        projectId: project.id,
-        number: project._count.snapshots + 1,
-        name: "From store snapshot",
-        targetVisitors,
-        status: "ACTIVE",
-      },
-    });
-    return project;
-  }
-
-  return prisma.project.create({
-    data: {
-      shop,
-      resourceType,
-      productId,
-      productTitle,
-      productHandle: resourceHandle,
-      snapshots: {
-        create: {
-          number: 1,
-          name: "From store snapshot",
-          targetVisitors,
-          status: "ACTIVE",
-        },
-      },
-    },
-  });
-}
-
-async function createFocusedSnapshotFromStorePage(
-  admin: ShopifyAdminClient,
-  shop: string,
-  storeSnapshotId: string,
-  page: StoreSnapshotPageSummary,
-  targetVisitors: number,
-) {
-  const resource = getFocusedSnapshotResource(page);
-  if (!resource) return { status: "skipped" as const };
-
-  const existing = await findProjectWithActiveSnapshot(
-    shop,
-    resource.resourceType,
-    resource.resourceHandle,
-  );
-  if (existing) {
-    await repairFocusedProductId(admin, existing, resource);
-    await recordFocusedSnapshotLink({
-      storeSnapshotId,
-      page,
-      projectId: existing.id,
-      resource,
-    });
-    return { status: "reused" as const, project: existing };
-  }
-
-  const project = await createFocusedSnapshot({
-    admin,
-    shop,
-    resourceType: resource.resourceType,
-    resourceHandle: resource.resourceHandle,
-    title: page.pageTitle || page.pagePath,
-    targetVisitors,
-  });
-  await recordFocusedSnapshotLink({
-    storeSnapshotId,
-    page,
-    projectId: project.id,
-    resource,
-  });
-  return { status: "created" as const, project };
-}
-
-function snapshotCreationMessage(
-  createdCount: number,
-  reusedCount: number,
-  skippedCount: number,
-) {
-  const parts = [];
-  if (createdCount > 0)
-    parts.push(
-      `${createdCount} ${pluralize("snapshot", createdCount)} created`,
-    );
-  if (reusedCount > 0)
-    parts.push(
-      `${reusedCount} already had active ${pluralize("snapshot", reusedCount)}`,
-    );
-  if (skippedCount > 0)
-    parts.push(`${skippedCount} ${pluralize("page", skippedCount)} skipped`);
-  return parts.length > 0 ? parts.join(". ") : "No new snapshots were created.";
-}
-
-function pluralize(label: string, count: number) {
-  return count === 1 ? label : `${label}s`;
-}
-
-function syntheticResourceId(resourceType: ResourceType, handle: string) {
-  if (resourceType === "HOMEPAGE") return "gid://shopify/Homepage/__homepage__";
-  const type =
-    resourceType === "PRODUCT"
-      ? "Product"
-      : resourceType === "COLLECTION"
-        ? "Collection"
-        : resourceType === "BLOG"
-          ? "Blog"
-          : "Page";
-  return `gid://shopify/${type}/${handle}`;
-}
-
-async function resolveShopifyResourceId(
-  admin: ShopifyAdminClient,
-  resourceType: ResourceType,
-  resourceHandle: string,
-) {
-  if (resourceType !== "PRODUCT") {
-    return syntheticResourceId(resourceType, resourceHandle);
-  }
-
-  try {
-    const response = await admin.graphql(
-      `#graphql
-        query ProductIdFromHandle($handle: String!) {
-          productByHandle(handle: $handle) {
-            id
-          }
-        }
-      `,
-      { variables: { handle: resourceHandle } },
-    );
-    const payload = (await response.json()) as {
-      data?: { productByHandle?: { id?: string | null } | null };
-    };
-    const productId = payload.data?.productByHandle?.id;
-    if (productId) return productId;
-  } catch (error) {
-    console.warn(
-      `[MW Store Snapshot] Could not resolve Shopify product ID for ${resourceHandle}`,
-      error,
-    );
-  }
-
-  return syntheticResourceId(resourceType, resourceHandle);
-}
-
-async function repairFocusedProductId(
-  admin: ShopifyAdminClient,
-  project: { id: string; productId: string },
-  resource: FocusedSnapshotResource,
-) {
-  if (
-    resource.resourceType !== "PRODUCT" ||
-    /^gid:\/\/shopify\/Product\/\d+$/.test(project.productId)
-  ) {
-    return;
-  }
-
-  const productId = await resolveShopifyResourceId(
-    admin,
-    resource.resourceType,
-    resource.resourceHandle,
-  );
-  if (productId === project.productId) return;
-
-  await prisma.project.update({
-    where: { id: project.id },
-    data: { productId },
-  });
-}
-
-function clearDashboardAndCategoryCaches(shop: string) {
-  clearCacheKey(loaderCacheKeys.dashboard(shop));
-  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
-  clearCachePrefix(loaderCacheKeys.categoryPrefix(shop));
-  clearCachePrefix(loaderCacheKeys.categoryFastPrefix(shop));
 }

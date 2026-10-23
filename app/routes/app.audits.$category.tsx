@@ -27,18 +27,12 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { ensureWebPixel } from "../utils/web-pixel.server";
 import {
   cachedValue,
-  clearCacheKey,
   loaderCacheKeys,
 } from "../utils/loader-cache.server";
 import {
-  assertCanCreateNormalSnapshots,
-  assertSnapshotTargetAllowed,
   getBillingDisplayAccess,
-  isPlanLimitError,
-  planLimitPayload,
   type BillingAccess,
 } from "../utils/billing.server";
 import { planUsagePillLabel } from "../components/PremiumGate";
@@ -394,14 +388,6 @@ function getCategoryMetricDefs(
 function categoryActivityCacheKey(shop: string, category: string) {
   // Keep this under the category prefix so detail-page mutations invalidate it.
   return `${loaderCacheKeys.category(shop, category)}:activity`;
-}
-
-function clearCategoryCaches(shop: string, category: string) {
-  clearCacheKey(loaderCacheKeys.category(shop, category));
-  clearCacheKey(loaderCacheKeys.categoryFast(shop, category));
-  clearCacheKey(categoryActivityCacheKey(shop, category));
-  clearCacheKey(loaderCacheKeys.dashboard(shop));
-  clearCacheKey(loaderCacheKeys.billingDisplay(shop));
 }
 
 function getMetricValuesFromSnapshotStats(
@@ -902,102 +888,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
-  const shop = session.shop;
+  await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("action");
 
-  if (actionType === "create") {
-    const category = params.category || "products";
-    const config = Object.prototype.hasOwnProperty.call(
-      CATEGORY_CONFIG,
-      category,
-    )
-      ? CATEGORY_CONFIG[category]
-      : undefined;
-    if (!config) return json({ error: "Invalid category" }, { status: 400 });
+  if (actionType === "create") return redirect("/app/projects?create=1");
 
-    const productId =
-      category === "homepage"
-        ? HOMEPAGE_RESOURCE.id
-        : (formData.get("productId") as string);
-    const productTitle =
-      category === "homepage"
-        ? HOMEPAGE_RESOURCE.title
-        : (formData.get("productTitle") as string);
-    const productHandle =
-      category === "homepage"
-        ? HOMEPAGE_RESOURCE.handle
-        : (formData.get("productHandle") as string);
-    const snapshotName = formData.get("snapshotName") as string | null;
-    const targetVisitors =
-      parseInt(formData.get("targetVisitors") as string) || 1000;
-    const resourceType = config.resourceType;
-
-    try {
-      await assertCanCreateNormalSnapshots(shop, 1);
-      await assertSnapshotTargetAllowed(shop, targetVisitors);
-    } catch (error) {
-      if (isPlanLimitError(error)) {
-        return json(planLimitPayload(error), { status: error.status });
-      }
-      throw error;
-    }
-
-    await ensureWebPixel(admin, shop);
-
-    const existing = await prisma.project.findFirst({
-      where: {
-        shop,
-        productHandle,
-        resourceType,
-        snapshots: { some: { status: "ACTIVE" } },
-      },
-    });
-    if (existing)
-      return json(
-        { error: `An active audit already exists for this ${config.singular}` },
-        { status: 400 },
-      );
-
-    let project = await prisma.project.findFirst({
-      where: { shop, productHandle, resourceType },
-      include: { _count: { select: { snapshots: true } } },
-    });
-
-    if (project) {
-      await prisma.snapshot.create({
-        data: {
-          projectId: project.id,
-          number: project._count.snapshots + 1,
-          name: snapshotName || null,
-          targetVisitors,
-          status: "ACTIVE",
-        },
-      });
-    } else {
-      await prisma.project.create({
-        data: {
-          shop,
-          resourceType,
-          productId,
-          productTitle,
-          productHandle,
-          snapshots: {
-            create: {
-              number: 1,
-              name: snapshotName || null,
-              targetVisitors,
-              status: "ACTIVE",
-            },
-          },
-        },
-      });
-    }
-    clearCategoryCaches(shop, category);
-    return json({ success: true });
-  }
-
+  // Creation has moved to the goal-led Projects flow above.
   return json({ error: "Invalid action" }, { status: 400 });
 };
 

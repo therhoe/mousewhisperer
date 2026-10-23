@@ -298,7 +298,10 @@ test("variant snapshot endpoint is tenant-safe, variant-safe, and target-page sc
     service,
     /where:\s*\{\s*id:\s*variantId,\s*testId,\s*test:\s*\{\s*shop\s*\}/,
   );
-  assert.match(service, /where:\s*\{\s*shop,\s*testId,\s*variantId\s*\}/);
+  assert.match(
+    service,
+    /where:\s*\{\s*shop,\s*testId,\s*variantId,\s*\.\.\.abAssignmentFilterWhere\(filters\)\s*\}/,
+  );
   assert.match(
     service,
     /shop,\s*testId,\s*variantId,\s*\.\.\.targetVariantVisitWhere\(targetPageType\)/,
@@ -338,7 +341,7 @@ test("source behavior is calculated from target-page visits after the compact as
 
   assert.match(
     snapshotService,
-    /const sourceQualityBreakdown = buildSourceQualityBreakdown\(assignments\);/,
+    /const sourceQualityBreakdown = buildSourceQualityBreakdown\(\s*assignments,\s*filters\?\.audience \|\| "active",?\s*\);/,
     "Assignment rows may retain traffic-class and conversion outcome counts",
   );
   assert.match(snapshotService, /for \(const row of visitHumans\) \{/);
@@ -373,11 +376,11 @@ test("Control A and Variant B tabs lazy-load one isolated snapshot at a time", (
   assert.match(component, /function VariantSnapshotTabs\(/);
   assert.match(
     component,
-    /content:\s*row\.key === "A" \? "Control A" : "Variant B"/,
+    /content:\s*row\.key === "A" \? t\("Control A"\) : t\("Variant B"\)/,
   );
   assert.match(
     component,
-    /accessibilityLabel:.*Control A.*Variant B.*page snapshot/s,
+    /accessibilityLabel:.*page snapshot.*Control A.*Variant B/s,
   );
   assert.match(component, /<Tabs\s+tabs=\{tabs\}\s+selected=/s);
   assert.match(component, /role="tabpanel"/);
@@ -397,7 +400,7 @@ test("Control A and Variant B tabs lazy-load one isolated snapshot at a time", (
   assert.match(component, /not blended Page Snapshot traffic/);
   assert.match(
     component,
-    /<VariantSnapshotTabs test=\{test\} stats=\{stats\} open=\{open\}/,
+    /<VariantSnapshotTabs[\s\S]*?test=\{test\}\s+stats=\{stats\}\s+open=\{open\}\s+filterQuery=\{filterQuery\}/,
   );
   assert.doesNotMatch(
     detailRoute,

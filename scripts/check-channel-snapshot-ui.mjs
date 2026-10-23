@@ -577,85 +577,26 @@ function post(url, values) {
     body: new URLSearchParams(values),
   });
 }
-const invalidCreate = await index.action({
-  request: post("https://app.test/app/channel-snapshots", {
-    action: "create-channel-snapshot",
-    completionMode: "INVALID",
-  }),
-});
-assert.equal(invalidCreate.status, 400);
-assert.equal(calls.filter((call) => call[0] === "pixel").length, 0);
-const createRequest = () =>
-  post("https://app.test/app/channel-snapshots", {
-    action: "create-channel-snapshot",
-    completionMode: "TOTAL_SESSIONS",
-    targetSessions: "500",
-    name: " Quality ",
+// Legacy reports remain readable, but all new captures start through Projects.
+// Validation, readiness, quotas and atomic capture creation are exercised by
+// check-growth-projects.mjs and the real PostgreSQL Project regression suite.
+for (const values of [
+  { completionMode: "INVALID" },
+  { completionMode: "TOTAL_SESSIONS", targetSessions: "500", name: " Quality " },
+  { completionMode: "TIME_WINDOW", durationDays: "7", targetSessions: "999" },
+]) {
+  const creation = await index.action({
+    request: post("https://app.test/app/channel-snapshots", {
+      action: "create-channel-snapshot",
+      ...values,
+    }),
   });
-const creationsBeforeReadinessFailure = calls.filter(
-  (call) => call[0] === "create",
-).length;
-pixelSetup = {
-  ready: false,
-  reason: "setup_failed",
-  message: "Mock setup failure",
-};
-const setupFailure = await index.action({ request: createRequest() });
-assert.equal(setupFailure.status, 503);
-assert.match(
-  (await setupFailure.json()).error,
-  /Checkout tracking could not be configured\. No snapshot was started\..*retry/,
-);
-assert.equal(
-  calls.filter((call) => call[0] === "create").length,
-  creationsBeforeReadinessFailure,
-  "Pixel readiness failure must not start or consume a snapshot",
-);
-assert.equal(
-  calls.some((call) => call[0] === "clear-cache"),
-  false,
-);
-pixelSetup = { ready: true, pixelId: "pixel-regression", changed: false };
-const creation = await index.action({ request: createRequest() });
-assert.equal(creation.status, 302);
-assert.equal(
-  creation.headers.get("Location"),
-  `/app/channel-snapshots/${snapshot.id}`,
-);
-const createCall = calls.find((call) => call[0] === "create")[1];
-assert.equal(createCall.shop, "regression.myshopify.com");
-assert.equal(createCall.targetSessions, 500);
-assert.equal(createCall.name, "Quality");
-assert.equal(createCall.durationDays, undefined);
-assert.deepEqual(calls.at(-1), [
-  "clear-cache",
-  "billing-display:regression.myshopify.com",
-]);
-assert.equal(
-  calls.at(-2)[0],
-  "create",
-  "Invalidate display usage only after successful creation",
-);
-await index.action({
-  request: post("https://app.test/app/channel-snapshots", {
-    action: "create-channel-snapshot",
-    completionMode: "TIME_WINDOW",
-    durationDays: "7",
-    targetSessions: "999",
-  }),
-});
-const timeCreate = calls.filter((call) => call[0] === "create").at(-1)[1];
-assert.equal(timeCreate.durationDays, 7);
-assert.equal(
-  timeCreate.targetSessions,
-  undefined,
-  "Time windows do not submit an irrelevant session target",
-);
-creationError = new PlanLimitError("No snapshot credits remaining.");
-const failedCreation = await index.action({ request: createRequest() });
-assert.equal(failedCreation.status, 403);
-assert.equal((await failedCreation.json()).error, creationError.message);
-creationError = undefined;
+  assert.equal(creation.status, 302);
+  assert.equal(creation.headers.get("Location"), "/app/projects?create=1");
+}
+assert.equal(calls.filter((call) => call[0] === "pixel").length, 0);
+assert.equal(calls.filter((call) => call[0] === "create").length, 0);
+assert.equal(calls.some((call) => call[0] === "clear-cache"), false);
 
 const transitionRequest = (action) =>
   post(`https://app.test/app/channel-snapshots/${snapshot.id}`, { action });
