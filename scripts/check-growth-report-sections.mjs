@@ -152,6 +152,21 @@ try {
       // Account links carry personal tokens; private paths share one /private-page row without a type.
       view("e2", "acq_e", "BOT", "/pages/orders", "PAGE", { startedAt: later(0.5) }),
       view("e3", "acq_e", "BOT", "/account/reset/123/abc", null, { startedAt: later(1) }),
+      // AJAX add-to-cart also records exitType "checkout"; a shopper who added to cart and
+      // then left without reaching checkout exits from the product page.
+      view("f1", "acq_f", "REAL", "/collections/shoes", "COLLECTION", {
+        exitType: "internal_link",
+        exitUrl: "https://shop.example/products/blue",
+        deviceType: "tablet",
+        timeOnPage: 10000,
+      }),
+      view("f2", "acq_f", "REAL", "/products/blue", "PRODUCT", {
+        startedAt: later(1),
+        addedToCart: true,
+        exitType: "checkout",
+        deviceType: "tablet",
+        timeOnPage: 10000,
+      }),
     ],
   });
 
@@ -159,8 +174,8 @@ try {
   assert.equal(storeReport.layout, "store");
   assert.equal(storeReport.pageType, null);
   assert.deepEqual(plain(storeReport.funnel), {
-    sessions: 5,
-    addedToCart: 1,
+    sessions: 6,
+    addedToCart: 2,
     checkoutStarted: 1,
     purchased: 1,
   });
@@ -168,10 +183,10 @@ try {
   assert.equal(summary.available, true);
   assert.equal(
     summary.clickThroughRate,
-    40,
+    50,
     "Image-in-card, locale-prefixed and malformed-JSON page views count; menu clicks and collection-to-page do not",
   );
-  assert.equal(summary.searchRate, 60);
+  assert.equal(summary.searchRate, 50);
   assert.deepEqual(plain(summary.topSearches), [{ term: "red shoes", sessions: 2 }]);
   assert.equal(summary.timeMedianSeconds, 20);
   assert.equal(summary.pagesPerSession, 2);
@@ -180,13 +195,20 @@ try {
     [
       ["desktop", 2, 50],
       ["mobile", 2, 0],
-      ["tablet", 1, 0],
+      ["tablet", 2, 0],
     ],
   );
   const shoes = storeReport.pages.find((row) => row.path === "/collections/shoes");
   assert.deepEqual(
     [shoes.type, shoes.sessions, shoes.forwards, shoes.exits],
-    ["COLLECTION", 3, 1, 2],
+    ["COLLECTION", 4, 2, 2],
+    "Collection exits stay with sessions b and c",
+  );
+  const blue = storeReport.pages.find((row) => row.path === "/products/blue");
+  assert.deepEqual(
+    [blue.sessions, blue.carts, blue.exits],
+    [1, 1, 1],
+    "Add to cart without checkout exits from the page it happened on",
   );
   assert.deepEqual(
     storeReport.pages.filter((row) => row.path.endsWith("/products/red-shoe")).map((row) => row.path),
@@ -203,7 +225,7 @@ try {
   assert.deepEqual([hidden.type, hidden.sessions, hidden.exits], [null, 1, 1]);
   assert.ok(!storeReport.pages.some((row) => /\/(account|orders)/.test(row.path)));
   assert.equal(storeReport.exitPaths.exitPages[0].path, "/collections/shoes");
-  assert.equal(Math.round(storeReport.exitPaths.exitPages[0].exitRate), 67);
+  assert.equal(storeReport.exitPaths.exitPages[0].exitRate, 50);
   assert.ok(
     !storeReport.exitPaths.exitPages.some((row) => row.path === "/products/red-shoe"),
     "Buyers are not counted as exits",
@@ -217,9 +239,9 @@ try {
     ...all,
     audience: "active",
   });
-  assert.equal(active.funnel.sessions, 3);
-  assert.equal(Math.round(active.engagementSummary.clickThroughRate), 67);
-  assert.equal(active.pages.find((row) => row.path === "/collections/shoes").sessions, 2);
+  assert.equal(active.funnel.sessions, 4);
+  assert.equal(active.engagementSummary.clickThroughRate, 75);
+  assert.equal(active.pages.find((row) => row.path === "/collections/shoes").sessions, 3);
 
   const none = await report(storeProject.id, storeMeasurement.id, {
     ...all,

@@ -201,9 +201,10 @@ async function loadReport(
         SUM(views) AS views, SUM(time) AS time, AVG(scroll) AS scroll, bool_or(forward) AS forward,
         bool_or(COALESCE(btrim(search), '') <> '') AS searched,
         COALESCE((array_agg(device ORDER BY "viewedAt") FILTER (WHERE device IS NOT NULL))[1], 'unknown') AS device,
-        -- Shoppers who reached checkout or bought did not exit, and a checkout link is never an exit page.
+        -- Shoppers who reached checkout or bought did not exit. An add-to-cart that never
+        -- reached checkout (also typed "checkout" by the tracker) still exits from that page.
         CASE WHEN bool_or(checkout) OR bool_or(converted) THEN NULL
-          ELSE (array_agg(page ORDER BY "viewedAt" DESC) FILTER (WHERE page IS NOT NULL AND "exitType" IS DISTINCT FROM 'checkout'))[1]
+          ELSE (array_agg(page ORDER BY "viewedAt" DESC) FILTER (WHERE page IS NOT NULL))[1]
         END AS "exitPage"
       FROM marked GROUP BY id
     ), filtered AS (SELECT * FROM sessions WHERE ${cohort}),
