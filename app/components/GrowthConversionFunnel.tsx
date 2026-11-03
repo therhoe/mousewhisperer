@@ -43,15 +43,19 @@ export function GrowthConversionFunnel({
                     name,
                   })
                 : undefined;
-            else
-              caption = before
-                ? t("{change} pts", {
-                    change: formatNumber(
-                      current - share(before[key], before.sessions),
-                      { signDisplay: "exceptZero", maximumFractionDigits: 2 },
-                    ),
-                  })
-                : t("{share} of sessions", { share: percent(current) });
+            else {
+              const shareText = percent(current);
+              caption =
+                before && before.sessions > 0
+                  ? t("{share} of sessions · {change} pts", {
+                      share: shareText,
+                      change: formatNumber(
+                        current - share(before[key], before.sessions),
+                        { signDisplay: "exceptZero", maximumFractionDigits: 2 },
+                      ),
+                    })
+                  : t("{share} of sessions", { share: shareText });
+            }
             return (
               <MetricTile
                 key={key}

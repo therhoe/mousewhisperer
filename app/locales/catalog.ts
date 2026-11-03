@@ -1793,4 +1793,9 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "{minutes} 分 {seconds} 秒",
   ],
   "{seconds}s": ["{seconds} Sek.", "{seconds} 秒", "{seconds} 秒"],
+  "{share} of sessions · {change} pts": [
+    "{share} der Sitzungen · {change} Pkt.",
+    "占会话的 {share} · {change} 个百分点",
+    "佔工作階段的 {share} · {change} 個百分點",
+  ],
 };

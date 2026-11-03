@@ -155,8 +155,33 @@ test("funnel compares each step with the comparison measurement in points", () =
     comparisonName: "Baseline",
   });
   assert.match(html, /Sessions=200 \[100 in Baseline\]/);
-  assert.match(html, /Added to cart=40 \[\+10 pts\]/);
+  assert.match(html, /Added to cart=40 \[20% of sessions · \+10 pts\]/);
+  assert.match(html, /Purchased=12 \[6% of sessions · \+3 pts\]/);
   assert.match(html, /Compared with Baseline using the same filters/);
+});
+
+test("funnel shows the share without a delta when the comparison has no sessions", () => {
+  const { GrowthConversionFunnel } = load(
+    "app/components/GrowthConversionFunnel.tsx",
+    common,
+  );
+  const html = render(GrowthConversionFunnel, {
+    funnel: {
+      sessions: 200,
+      addedToCart: 40,
+      checkoutStarted: 10,
+      purchased: 12,
+    },
+    before: {
+      sessions: 0,
+      addedToCart: 0,
+      checkoutStarted: 0,
+      purchased: 0,
+    },
+    comparisonName: "Baseline",
+  });
+  assert.match(html, /Added to cart=40 \[20% of sessions\]/);
+  assert.doesNotMatch(html, /pts/);
 });
 
 test("funnel with no sessions shows zero shares, not NaN", () => {
