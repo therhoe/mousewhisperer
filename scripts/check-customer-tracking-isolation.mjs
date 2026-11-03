@@ -53,6 +53,7 @@ function fixture(failCustomer = false) {
       calls.push({ writer: "legacy" });
       return new Response('{"ok":true}');
     },
+    verifyTrackingRequest: async () => ({ allowed: true, signed: false }),
     handleEngagementTrack: () =>
       assert.fail("Must not route commerce to page engagement"),
   });

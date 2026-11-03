@@ -71,6 +71,7 @@ const trackApi = load("../app/routes/api.track.tsx", {
   "../utils/datacenter-ips.server": { isDatacenterIP: () => ({ isDatacenter: false }) },
   "../utils/notifications.server": {}, "../utils/ab-tests.server": {},
   "../utils/store-snapshot.server": store, "../utils/channel-snapshot.server": {},
+  "../utils/tracking-auth.server": { verifyTrackingRequest: async () => ({ allowed: true, signed: true }) },
 });
 const shop = "growth-db-regression.myshopify.com";
 const other = "growth-db-other.myshopify.com";

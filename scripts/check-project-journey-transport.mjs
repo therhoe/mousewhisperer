@@ -30,6 +30,10 @@ function trackingAction(recordCustomerJourney) {
     "../utils/ab-tests.server": {},
     "../utils/store-snapshot.server": {},
     "../utils/channel-snapshot.server": {},
+    // Signature checks have their own tests (check-track-signature.mjs).
+    "../utils/tracking-auth.server": {
+      verifyTrackingRequest: async () => ({ allowed: true, signed: true }),
+    },
   };
   runInNewContext(
     ts.transpileModule(source("app/routes/api.track.tsx"), {

@@ -8,6 +8,7 @@ import {
   recordCustomerCommerce,
 } from "../utils/customer-journey.server";
 import { getClientIP, getGeoData } from "../utils/geo.server";
+import { verifyTrackingRequest } from "../utils/tracking-auth.server";
 import {
   isDatacenterIP,
   calculateBotScore,
@@ -113,6 +114,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Parse body — read as text first to handle both application/json and text/plain
     const rawBody = await request.text();
     const data = JSON.parse(rawBody);
+
+    const access = await verifyTrackingRequest(request, data.eventType);
+    if (!access.allowed) {
+      return json(
+        { error: "Invalid tracking signature" },
+        { status: 401, headers },
+      );
+    }
 
     // Handle different event types from web pixel
     if (data.eventType) {
@@ -273,12 +282,13 @@ async function handleEngagementTrack(
   const MAX_TIME_ON_PAGE = 1800000;
   const cappedTimeOnPage = Math.min(timeOnPage || 0, MAX_TIME_ON_PAGE);
 
-  // Find project with an active snapshot for this handle and resource type
+  // Find project with an active snapshot for this handle and resource type.
+  // Without a shop there is no tenant, so never match by handle alone.
   const project =
-    decodedProductHandle && normalizedResourceType
+    trackingShop && decodedProductHandle && normalizedResourceType
       ? await prisma.project.findFirst({
           where: {
-            ...(trackingShop ? { shop: trackingShop } : {}),
+            shop: trackingShop,
             productHandle: decodedProductHandle,
             resourceType: normalizedResourceType,
             snapshots: {
