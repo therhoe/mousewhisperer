@@ -92,7 +92,7 @@ This is a reporting change only. The storefront tracker, web pixel, database sch
 A page view counts as a **forward click** when all of these hold:
 
 1. Its `exitType` is `internal_link`.
-2. Its `exitUrl` path is a store page other than cart or checkout. For a collection page view, the path must start with `/products/`.
+2. Its `exitUrl` path is a store page other than cart or checkout. For a collection page view, the path must be a product page: `/products/<handle>` or `/collections/<handle>/products/<handle>`, optionally after a locale prefix such as `/fr` or `/en-us`.
 3. The last entry in its `ctaClicks` array is not in the `header` or `footer` zone. (The tracker records navigation menus as `header`.)
 
 A session counts as clicked through if any of its qualifying page views had a forward click.
@@ -169,7 +169,7 @@ Columns: Page · Type · Sessions · Key rate · Exit rate · Conversion rate ·
 
 - **Pure functions** (no database): missed-sessions ranking, including thresholds, fewer than 3 pages of a type, ties, and zero or negative gaps.
 - **Click-through rule** (real SQL, because it runs in the report query): image-in-card clicks, locale-prefixed product paths, header/footer exclusion and malformed `ctaClicks`.
-- **Real SQL** (`scripts/check-growth-reports.mjs`, disposable loopback database only): funnel counts, medians, search grouping and the 2-session threshold, device conversion rates, exit grouping, private-path masking, All/Active and source filters applied to every new section, Channel/Customer measurements returning "not recorded".
+- **Real SQL** (`scripts/check-growth-reports.mjs` and `scripts/check-growth-report-sections.mjs`, disposable loopback database only): funnel counts, medians, search grouping and the 2-session threshold, device conversion rates, exit grouping, private-path masking, All/Active and source filters applied to every new section, Channel/Customer measurements returning "not recorded".
 - **UI** (`scripts/check-projects-ui.mjs` and the preview fixture): Store and Page layouts, page-type tile switch, merged bar rendering with purchases greater than carts, 390px mobile width without horizontal overflow.
 - **i18n**: `node scripts/check-i18n.mjs` passes for all four locales.
 - Existing A/B detail and classic report checks still pass with the shared engagement view.

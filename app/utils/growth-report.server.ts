@@ -11,8 +11,9 @@ import type {
   GrowthReport,
   GrowthReportFilters,
 } from "./growth-report";
-// Shopify Markets paths can carry a locale prefix such as /fr or /en-us.
-const PRODUCT_PATH = "^(/[a-z]{2}(-[a-z]{2})?)?/products/";
+// Shopify Markets paths can carry a locale prefix such as /fr or /en-us, and themes
+// that use `product.url | within: collection` link to /collections/<handle>/products/<handle>.
+const PRODUCT_PATH = "^(/[a-z]{2}(-[a-z]{2})?)?(/collections/[^/]+)?/products/";
 const PRIVATE_PATH = "/(account|accounts|checkouts|orders)(/|$)";
 type ClickRow = {
   sessionId: string;

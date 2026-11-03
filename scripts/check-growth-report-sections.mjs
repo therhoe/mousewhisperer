@@ -259,25 +259,31 @@ try {
       }),
       visit("p3", "acq_p3", { exitType: "back_button" }),
       visit("p4", "acq_p4"),
+      // Themes that link product cards with `product.url | within: collection` use this form.
+      visit("p5", "acq_p5", {
+        exitType: "internal_link",
+        exitUrl: "https://shop.example/collections/shoes/products/b",
+        ctaClicks: click("main"),
+      }),
     ],
   });
   const pageReport = await report(pageProject.id, pageMeasurement.id);
   assert.equal(pageReport.layout, "page");
   assert.equal(pageReport.pageType, "COLLECTION");
-  assert.equal(pageReport.engagementSummary.clickThroughRate, 25);
+  assert.equal(pageReport.engagementSummary.clickThroughRate, 40);
   assert.deepEqual(
     plain(pageReport.exitPaths.outcomes)
       .filter((row) => row.pageViews)
       .map((row) => [row.type, row.pageViews]),
     [
-      ["internal_link", 2],
+      ["internal_link", 3],
       ["back_button", 1],
       ["unknown", 1],
     ],
   );
   assert.deepEqual(
     plain(pageReport.exitPaths.nextPages).map((row) => row.path).sort(),
-    ["/private-page", "/products/a"],
+    ["/collections/shoes/products/b", "/private-page", "/products/a"],
     "Query strings are removed and account paths are masked",
   );
   assert.deepEqual(plain(pageReport.pages), []);
