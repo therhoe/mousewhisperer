@@ -45,6 +45,7 @@ const service = compile("growth-report.server", {
   "./growth-projects": compile("growth-projects"),
   "./click-engagement": compile("click-engagement"),
   "./growth-report": reportPure,
+  "./loader-cache.server": compile("loader-cache.server"),
 });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const all = { audience: "all", source: "", medium: "", campaign: "" };
@@ -145,6 +146,12 @@ try {
         exitType: "window_closed",
         deviceType: "desktop",
       }),
+      // Locale-prefixed and collection-scoped URLs of a product the session already viewed share its row.
+      view("a3", "acq_a", "REAL", "/fr/products/red-shoe", "PRODUCT", { startedAt: later(0.5) }),
+      view("a4", "acq_a", "REAL", "/collections/shoes/products/red-shoe", "PRODUCT", { startedAt: later(0.75) }),
+      // Account links carry personal tokens; private paths share one /private-page row without a type.
+      view("e2", "acq_e", "BOT", "/pages/orders", "PAGE", { startedAt: later(0.5) }),
+      view("e3", "acq_e", "BOT", "/account/reset/123/abc", null, { startedAt: later(1) }),
     ],
   });
 
@@ -167,7 +174,7 @@ try {
   assert.equal(summary.searchRate, 60);
   assert.deepEqual(plain(summary.topSearches), [{ term: "red shoes", sessions: 2 }]);
   assert.equal(summary.timeMedianSeconds, 20);
-  assert.equal(summary.pagesPerSession, 1.2);
+  assert.equal(summary.pagesPerSession, 2);
   assert.deepEqual(
     plain(summary.devices).map((row) => [row.device, row.sessions, row.conversionRate]),
     [
@@ -181,13 +188,30 @@ try {
     [shoes.type, shoes.sessions, shoes.forwards, shoes.exits],
     ["COLLECTION", 3, 1, 2],
   );
+  assert.deepEqual(
+    storeReport.pages.filter((row) => row.path.endsWith("/products/red-shoe")).map((row) => row.path),
+    ["/products/red-shoe"],
+    "Locale and collection prefixes are removed before grouping",
+  );
   const product = storeReport.pages.find((row) => row.path === "/products/red-shoe");
   assert.deepEqual(
     [product.sessions, product.carts, product.conversions, product.exits],
-    [1, 1, 1, 1],
+    [1, 1, 1, 0],
+    "A session that bought never exits from the product page",
   );
+  const hidden = storeReport.pages.find((row) => row.path === "/private-page");
+  assert.deepEqual([hidden.type, hidden.sessions, hidden.exits], [null, 1, 1]);
+  assert.ok(!storeReport.pages.some((row) => /\/(account|orders)/.test(row.path)));
   assert.equal(storeReport.exitPaths.exitPages[0].path, "/collections/shoes");
   assert.equal(Math.round(storeReport.exitPaths.exitPages[0].exitRate), 67);
+  assert.ok(
+    !storeReport.exitPaths.exitPages.some((row) => row.path === "/products/red-shoe"),
+    "Buyers are not counted as exits",
+  );
+  // Store reports never show Engagement by zone or next pages, so they are not built.
+  assert.equal(storeReport.engagement, null);
+  assert.equal(storeReport.engagementUnavailable, false);
+  assert.deepEqual(plain(storeReport.exitPaths.nextPages), []);
 
   const active = await report(storeProject.id, storeMeasurement.id, {
     ...all,
@@ -287,6 +311,8 @@ try {
     "Query strings are removed and account paths are masked",
   );
   assert.deepEqual(plain(pageReport.pages), []);
+  assert.deepEqual(plain(pageReport.exitPaths.exitPages), []);
+  assert.ok(pageReport.engagement?.groups.length, "Page reports keep Engagement by zone");
 
   // Imported Channel measurement: no page-level data was ever recorded.
   const channel = await db.channelSnapshot.create({ data: { shop, name: "Imported" } });
@@ -323,7 +349,7 @@ try {
   });
   assert.deepEqual(plain(imported.pages), []);
   console.log(
-    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows, cohorts, empty filters and imported measurements",
+    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows (buyers, private paths, URL variants), layout-only sections, cohorts, empty filters and imported measurements",
   );
 } finally {
   await db.growthProject.deleteMany({ where: { shop } });

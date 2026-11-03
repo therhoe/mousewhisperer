@@ -46,6 +46,8 @@ const service = (client) =>
     "./growth-projects": pure,
     "./click-engagement": clicks,
     "./growth-report": filters,
+    // A fresh cache per service, so each call below queries the database.
+    "./loader-cache.server": compile("loader-cache.server"),
   });
 const all = { audience: "all", source: "", medium: "", campaign: "" };
 assert.equal(
@@ -141,8 +143,7 @@ try {
   assert.equal(report.pageViews, 5);
   assert.equal(report.conversions, 1);
   assert.equal(report.conversionRate, 25);
-  assert.equal(report.engagement.groups[0].items[0].sessions, 4);
-  assert.equal(report.engagement.groups[0].items[0].purchases, 1);
+  assert.equal(report.engagement, null, "Store reports do not build Engagement by zone");
   const active = await service(db).getGrowthMeasurementReport(
     shop,
     project.id,
@@ -207,13 +208,50 @@ try {
       "UTC chart dates do not shift with DB connection timezone",
     );
   });
+  // A repeat open within 60 seconds reuses the report, but the shop-scoped
+  // measurement lookup still runs first on every call.
+  let lookups = 0;
+  let queries = 0;
+  let denied = false;
+  const spy = {
+    growthMeasurement: {
+      findFirst: async (args) => {
+        lookups += 1;
+        return denied ? null : db.growthMeasurement.findFirst(args);
+      },
+    },
+    $queryRaw: (...args) => {
+      queries += 1;
+      return db.$queryRaw(...args);
+    },
+  };
+  const cached = service(spy);
+  const first = await cached.getGrowthMeasurementReport(shop, project.id, measurement.id, all);
+  assert.equal(
+    await cached.getGrowthMeasurementReport(shop, project.id, measurement.id, all),
+    first,
+  );
+  assert.deepEqual([lookups, queries], [2, 1]);
+  await cached.getGrowthMeasurementReport(shop, project.id, measurement.id, { ...all, audience: "active" });
+  assert.equal(queries, 2, "Each filter set has its own cache entry");
+  denied = true;
+  await assert.rejects(
+    () => cached.getGrowthMeasurementReport(shop, project.id, measurement.id, all),
+    /not found/,
+    "A cached report is never returned without the shop check",
+  );
+  // Engagement by zone is a Page-layout section; it uses the same cohort as commerce.
+  await db.growthProject.update({ where: { id: project.id }, data: { scope: "PAGE" } });
+  const page = await service(db).getGrowthMeasurementReport(shop, project.id, measurement.id, all);
+  assert.equal(page.engagement.groups[0].items[0].sessions, 4);
+  assert.equal(page.engagement.groups[0].items[0].purchases, 1);
   assert.equal(
     await db.storeSnapshotVisit.count({ where: { storeSnapshotId: store.id } }),
     5,
     "Filters never mutate captures",
   );
   console.log(
-    "PASS: real PostgreSQL report cohorts, acquisition deduplication, commerce/engagement alignment, source/medium/campaign filters, tenant boundaries and UTC dates",
+    "PASS: real PostgreSQL report cohorts, acquisition deduplication, commerce/engagement alignment, source/medium/campaign filters, tenant boundaries, UTC dates and the 60-second report cache",
   );
 } finally {
   if (project)

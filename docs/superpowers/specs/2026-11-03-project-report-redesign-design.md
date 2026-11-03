@@ -75,13 +75,13 @@ This is a reporting change only. The storefront tracker, web pixel, database sch
 - Click-through rate: share of sessions with at least one forward click anywhere in the store (rule below).
 - Searches: share of sessions that searched, plus top 5 search terms.
 - Device type: share of sessions by device, each with its conversion rate.
-- Top exit pages: the 5 pages where the most sessions ended, each with its exit rate.
+- Top exit pages: the 5 pages where the most sessions ended, each with its exit rate. Sessions that reached checkout or purchased are not counted as exits.
 
 **2. Conversion funnel** — Sessions → Added to cart → Reached checkout → Purchased. Each step shows a count and its share of sessions. Steps are not forced to shrink: a purchase can happen without a tracked cart step (for example Buy it now), so each share is measured against sessions, never against the previous step.
 
 **3. Traffic by source** — unchanged.
 
-**4. Sessions by page** — see "Missed sessions ranking".
+**4. Sessions by page** — see "Missed sessions ranking". Page views are grouped by path after removing a leading locale prefix (such as `/fr` or `/en-us`) and then a `/collections/<handle>` prefix that comes directly before `/products/`, so one product's URL variants share a row.
 
 **5. Journeys** — the existing `GrowthProjectJourneys` list, only when journey tracking is on.
 
@@ -114,7 +114,7 @@ Per page (grouped by `pagePath`):
 
 - **Sessions:** distinct sessions that viewed the page.
 - **Key rate:** add-to-cart rate for Product pages; click-through rate for Collection, Blog, Page and Homepage. Pages with no resource type (search, cart, other paths) are listed but never ranked.
-- **Exit rate:** sessions whose last page view was this page ÷ sessions that viewed it.
+- **Exit rate:** sessions whose last page view was this page ÷ sessions that viewed it. Sessions that reached checkout or purchased are not counted as exits.
 - **Conversion rate:** sessions that viewed this page and purchased ÷ sessions that viewed it (same-session association, not proof of cause).
 
 Ranking:

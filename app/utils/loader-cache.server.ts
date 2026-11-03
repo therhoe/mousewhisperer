@@ -1,3 +1,5 @@
+import type { GrowthReportFilters } from "./growth-report";
+
 type CacheEntry<T> = {
   expiresAt: number;
   value: T;
@@ -16,6 +18,18 @@ export const loaderCacheKeys = {
   categoryPrefix: (shop: string) => `category:${shop}:`,
   categoryFastPrefix: (shop: string) => `category-fast:${shop}:`,
   project: (shop: string, projectId: string) => `project:${shop}:${projectId}`,
+  growthReport: (
+    shop: string,
+    projectId: string,
+    measurementId: string,
+    filters: GrowthReportFilters,
+  ) =>
+    `growth-report:${shop}:${projectId}:${measurementId}:${JSON.stringify([
+      filters.audience,
+      filters.source,
+      filters.medium,
+      filters.campaign,
+    ])}`,
   billingDisplay: (shop: string) => `billing-display:${shop}`,
   billingSync: (shop: string) => `billing-sync:${shop}`,
 };
