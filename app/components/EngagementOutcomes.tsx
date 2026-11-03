@@ -13,14 +13,9 @@ const colors: Record<string, string> = {
   Header: "#6366f1",
   Footer: "#64748b",
 };
-const series = ["#3989ff", "#eea12b", "#15996f"];
-function Metrics({
-  item,
-  maximum,
-}: {
-  item: EngagementOutcomeItem;
-  maximum: number;
-}) {
+// One hue, three shades: clicked (lightest) → added to cart → purchased (darkest).
+const shades = { clicked: "#bcd4ff", cart: "#5b8ff9", purchased: "#1d4fb8" };
+function Numbers({ item }: { item: EngagementOutcomeItem }) {
   const { t, formatNumber } = useI18n();
   const number = (value: number | null) =>
     value === null ? t("Unavailable") : formatNumber(value);
@@ -28,21 +23,8 @@ function Metrics({
     value === null || total === null
       ? t("Unavailable")
       : `${number(value)} (${formatNumber(total ? value / total : 0, { style: "percent", maximumFractionDigits: 1 })})`;
-  const values = [item.sessions, item.carts, item.purchases];
   return (
     <>
-      <div className="eo-bars" aria-hidden="true">
-        {values.map((value, i) => (
-          <div key={i} className="eo-track">
-            <div
-              style={{
-                width: `${value === null ? 0 : (value / maximum) * 100}%`,
-                background: series[i],
-              }}
-            />
-          </div>
-        ))}
-      </div>
       <div
         className="eo-number"
         aria-label={`${t("Clicked sessions")}: ${number(item.sessions)}`}
@@ -67,14 +49,40 @@ function Metrics({
     </>
   );
 }
+// Each layer starts at the left edge rather than stacking, because a purchase can
+// be recorded without a tracked cart step (purchases may exceed carts).
+function MergedBar({
+  item,
+  maximum,
+}: {
+  item: EngagementOutcomeItem;
+  maximum: number;
+}) {
+  const width = (value: number | null) =>
+    `${value === null ? 0 : (value / maximum) * 100}%`;
+  return (
+    <div className="eo-bar" aria-hidden="true">
+      <span
+        data-layer="clicked"
+        style={{ width: width(item.sessions), background: shades.clicked }}
+      />
+      <span
+        data-layer="cart"
+        style={{ width: width(item.carts), background: shades.cart }}
+      />
+      <span
+        data-layer="purchased"
+        style={{ width: width(item.purchases), background: shades.purchased }}
+      />
+    </div>
+  );
+}
 function Group({
   category,
   items,
-  maximum,
 }: {
   category: string;
   items: EngagementOutcomeItem[];
-  maximum: number;
 }) {
   const { t, formatNumber } = useI18n();
   const [page, setPage] = useState(0);
@@ -93,7 +101,6 @@ function Group({
       </h3>
       <div className="eo-row eo-head" aria-hidden="true">
         <span>{t("Element · tracked clicks")}</span>
-        <span />
         <span>{t("Clicked sessions")}</span>
         <span>{t("Added to cart")}</span>
         <span>{t("Purchased")}</span>
@@ -106,7 +113,7 @@ function Group({
               {t("{count} clicks", { count: formatNumber(item.clicks) })}
             </span>
           </div>
-          <Metrics item={item} maximum={maximum} />
+          <Numbers item={item} />
         </div>
       ))}
       {pageCount > 1 && (
@@ -167,8 +174,9 @@ function ImageCard({
       </div>
       <strong>{item.label}</strong>
       <span>{t("{count} clicks", { count: formatNumber(item.clicks) })}</span>
+      <MergedBar item={item} maximum={maximum} />
       <div className="eo-image-metrics">
-        <Metrics item={item} maximum={maximum} />
+        <Numbers item={item} />
       </div>
     </div>
   );
@@ -199,6 +207,10 @@ export function EngagementOutcomesView({
   const total = body.reduce((sum, key) => sum + totals[key], 0);
   let offset = 0;
   const images = data.groups.find((group) => group.category === "Image");
+  const imageMax = Math.max(
+    1,
+    ...(images?.items.map((item) => item.sessions ?? 0) || []),
+  );
   return (
     <div className="eo">
       <style>{`
@@ -212,16 +224,15 @@ export function EngagementOutcomesView({
       .eo-key span { display:flex; align-items:center; gap:6px; }
       .eo-group { min-width:0; margin-bottom:24px; }
       .eo-group h3 { font-size:16px; display:flex; align-items:center; gap:8px; margin:8px 0; }
-      .eo-row { display:grid; grid-template-columns:minmax(120px,1.2fr) minmax(80px,1fr) repeat(3,minmax(84px,.55fr)); gap:12px; align-items:center; padding:12px 0; border-bottom:1px solid var(--p-color-border-secondary,#eee); }
+      .eo-row { display:grid; grid-template-columns:minmax(140px,1.6fr) repeat(3,minmax(84px,.55fr)); gap:12px; align-items:center; padding:12px 0; border-bottom:1px solid var(--p-color-border-secondary,#eee); }
       .eo-head { font-size:11px; color:var(--p-color-text-secondary,#666); }
-      .eo-head>span:nth-child(n+3) { text-align:center; }
+      .eo-head>span:nth-child(n+2) { text-align:center; }
       .eo-label { min-width:0; display:flex; flex-direction:column; gap:4px; overflow-wrap:anywhere; }
       .eo-label span,.eo-image-card>span { font-size:12px; color:var(--p-color-text-secondary,#666); }
       .eo-number { text-align:center; font-size:12px; font-variant-numeric:tabular-nums; }
       .eo-mobile-label { display:none; }
-      .eo-bars { display:flex; flex-direction:column; gap:6px; }
-      .eo-track { height:10px; border-radius:4px; background:var(--p-color-bg-surface-secondary,#eee); overflow:hidden; }
-      .eo-track>div { height:100%; border-radius:4px; }
+      .eo-bar { position:relative; height:12px; border-radius:4px; background:var(--p-color-bg-surface-secondary,#eee); overflow:hidden; }
+      .eo-bar>span { position:absolute; left:0; top:0; bottom:0; border-radius:4px; }
       .eo-pagination { display:flex; justify-content:flex-end; align-items:center; gap:12px; margin-top:10px; font-size:12px; }
       .eo-pagination button { padding:5px 10px; border:1px solid #ccc; border-radius:6px; background:var(--p-color-bg-surface,#fff); color:inherit; cursor:pointer; }
       .eo-pagination button:disabled { opacity:.45; cursor:default; }
@@ -233,16 +244,40 @@ export function EngagementOutcomesView({
       .eo-image-metrics .eo-mobile-label { display:block; }
       .eo-note { color:var(--p-color-text-secondary,#666); font-size:12px; line-height:1.5; margin-top:14px; }
       @media(max-width:1100px) { .eo-layout {grid-template-columns:1fr;} .eo-donut {display:none;} }
-      @media(max-width:700px) { .eo-row {grid-template-columns:repeat(3,minmax(0,1fr));} .eo-label,.eo-bars {grid-column:1/-1;} .eo-head{display:none;} .eo-mobile-label{display:block;font-size:10px;color:#666;margin-bottom:4px;} .eo-number{text-align:left;} }
+      @media(max-width:700px) { .eo-row {grid-template-columns:repeat(3,minmax(0,1fr));} .eo-label {grid-column:1/-1;} .eo-head{display:none;} .eo-mobile-label{display:block;font-size:10px;color:#666;margin-bottom:4px;} .eo-number{text-align:left;} }
     `}</style>
-      <div className="eo-key">
-        {["Clicked sessions", "Added to cart", "Purchased"].map((label, i) => (
-          <span key={label}>
-            <i className="eo-dot" style={{ background: series[i] }} />
-            {t(label)}
-          </span>
-        ))}
-      </div>
+      {images && (
+        <section
+          className="eo-group"
+          aria-label={t("{category} engagement outcomes", {
+            category: t("Image"),
+          })}
+        >
+          <h3>
+            <span style={{ background: colors.Image }} />
+            {t("Image")}
+          </h3>
+          <div className="eo-key">
+            {(
+              [
+                ["Clicked sessions", shades.clicked],
+                ["Added to cart", shades.cart],
+                ["Purchased", shades.purchased],
+              ] as const
+            ).map(([label, color]) => (
+              <span key={label}>
+                <i className="eo-dot" style={{ background: color }} />
+                {t(label)}
+              </span>
+            ))}
+          </div>
+          <div className="eo-images">
+            {images.items.map((item) => (
+              <ImageCard key={item.key} item={item} maximum={imageMax} />
+            ))}
+          </div>
+        </section>
+      )}
       <div className="eo-layout">
         <aside
           className="eo-donut"
@@ -317,44 +352,18 @@ export function EngagementOutcomesView({
                 !["Image", "Header", "Footer"].includes(group.category),
             )
             .map((group) => (
-              <Group
-                key={group.category}
-                {...group}
-                maximum={data.maxSessions}
-              />
+              <Group key={group.category} {...group} />
             ))}
         </div>
       </div>
-      {images && (
-        <section
-          className="eo-group"
-          aria-label={t("{category} engagement outcomes", {
-            category: t("Image"),
-          })}
-        >
-          <h3>
-            <span style={{ background: colors.Image }} />
-            {t("Image")}
-          </h3>
-          <div className="eo-images">
-            {images.items.map((item) => (
-              <ImageCard
-                key={item.key}
-                item={item}
-                maximum={data.maxSessions}
-              />
-            ))}
-          </div>
-        </section>
-      )}
       {data.groups
         .filter((group) => ["Header", "Footer"].includes(group.category))
         .map((group) => (
-          <Group key={group.category} {...group} maximum={data.maxSessions} />
+          <Group key={group.category} {...group} />
         ))}
       <p className="eo-note">
         {t(
-          "{audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. All bars share one session-count scale. Outcomes can overlap across elements—do not add them together.",
+          "{audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. On image cards, bar length shows clicked sessions on one shared scale, and the darker shades show sessions that added to cart and purchased. Outcomes can overlap across elements—do not add them together.",
           { audience: t(audience) },
         )}
       </p>

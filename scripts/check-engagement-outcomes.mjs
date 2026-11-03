@@ -183,7 +183,7 @@ test("one shared maximum covers categories, images, header and footer", () => {
   assert.equal(data.maxSessions, 10);
   assert.deepEqual(JSON.parse(JSON.stringify(data)).maxSessions, 10);
 });
-test("rendered outcome percentages use clicked sessions, not raw clicks or carts", () => {
+test("rendered outcome percentages use clicked sessions, and rows have no bars", () => {
   const data = buildEngagementOutcomes(
     Array.from({ length: 24 }, (_, i) =>
       row(String(i), "Play video", {
@@ -202,7 +202,39 @@ test("rendered outcome percentages use clicked sessions, not raw clicks or carts
   assert.match(html, /8 \(33\.3%\)/);
   assert.match(html, /3 \(12\.5%\)/);
   assert.match(html, /not proof of sequence or causation/);
-  assert.match(html, /width:33\.33333333333333%/);
+  assert.doesNotMatch(html, /class="eo-bar"/, "Button rows show numbers only");
+  assert.doesNotMatch(html, /class="eo-track"/);
+});
+test("image cards come first with one merged bar that stays correct when purchases exceed carts", () => {
+  const image = (id, extra) =>
+    row(id, null, {
+      ctaClicks: JSON.stringify([
+        { label: "Hero", tag: "img", href: "https://cdn.shopify.com/hero.jpg" },
+      ]),
+      ...extra,
+    });
+  const data = buildEngagementOutcomes([
+    image("a", { addedToCart: true, converted: true }),
+    image("b", { addedToCart: true, converted: true }),
+    image("c", { converted: true }),
+    image("d"),
+    row("e", "Size guide"),
+  ]);
+  const html = renderToStaticMarkup(
+    React.createElement(EngagementOutcomesView, {
+      data,
+      totals: { Image: 4, Button: 1 },
+    }),
+  );
+  assert.ok(
+    html.indexOf('aria-label="Image engagement outcomes"') <
+      html.indexOf('aria-label="Button engagement outcomes"'),
+    "Images render above the button, link and widget groups",
+  );
+  assert.match(html, /data-layer="clicked" style="width:100%/);
+  assert.match(html, /data-layer="cart" style="width:50%/);
+  assert.match(html, /data-layer="purchased" style="width:75%/);
+  assert.equal((html.match(/class="eo-bar"/g) || []).length, 1, "Only the image card has a bar");
 });
 test("groups paginate five elements and retain accessible controls", () => {
   const data = buildEngagementOutcomes(

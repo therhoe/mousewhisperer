@@ -1389,11 +1389,11 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "所有已记录会话",
     "所有已記錄工作階段",
   ],
-  "{audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. All bars share one session-count scale. Outcomes can overlap across elements—do not add them together.":
+  "{audience} only. Percentages are among sessions that clicked that element; repeat clicks count once. On image cards, bar length shows clicked sessions on one shared scale, and the darker shades show sessions that added to cart and purchased. Outcomes can overlap across elements—do not add them together.":
     [
-      "Nur {audience}. Prozentsätze beziehen sich auf Sitzungen mit Klick auf dieses Element; wiederholte Klicks zählen einmal. Alle Balken verwenden dieselbe Sitzungsskala. Ergebnisse können sich zwischen Elementen überschneiden und dürfen nicht addiert werden.",
-      "仅包含{audience}。百分比以点击该元素的会话为基数，重复点击仅计一次。所有条形图使用同一会话数刻度。不同元素的结果可能重叠，请勿相加。",
-      "僅包含{audience}。百分比以點擊該元素的工作階段為基數，重複點擊僅計一次。所有長條圖使用同一工作階段數刻度。不同元素的結果可能重疊，請勿相加。",
+      "Nur {audience}. Prozentsätze beziehen sich auf Sitzungen mit Klick auf dieses Element; wiederholte Klicks zählen einmal. Bei Bildkarten zeigt die Balkenlänge die klickenden Sitzungen auf einer gemeinsamen Skala; die dunkleren Töne zeigen Sitzungen mit Warenkorb und Kauf. Ergebnisse können sich zwischen Elementen überschneiden und dürfen nicht addiert werden.",
+      "仅包含{audience}。百分比以点击该元素的会话为基数，重复点击仅计一次。在图片卡片上，条形长度表示点击会话数（使用同一刻度），较深的颜色表示加购和购买的会话。不同元素的结果可能重叠，请勿相加。",
+      "僅包含{audience}。百分比以點擊該元素的工作階段為基數，重複點擊僅計一次。在圖片卡片上，長條長度代表點擊工作階段數（使用同一刻度），較深的顏色代表加入購物車與購買的工作階段。不同元素的結果可能重疊，請勿相加。",
     ],
   "Same-session association within this report, not proof of sequence or causation. Uses recorded session IDs, not cross-device people. Missing tracking can hide outcomes; unavailable means the records could not be linked. The donut retains the original click totals.":
     [
