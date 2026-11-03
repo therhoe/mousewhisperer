@@ -30,9 +30,11 @@ function parseCIDR(cidr: string): { start: number; end: number } | null {
   const mask = parseInt(maskStr, 10);
   if (isNaN(mask) || mask < 0 || mask > 32) return null;
 
-  const hostBits = 32 - mask;
-  const start = ipNum & (~0 << hostBits);
-  const end = start + (1 << hostBits) - 1;
+  // Plain arithmetic: JavaScript bit operators are signed 32-bit, which made
+  // every range at 128.0.0.0 or above start at a negative number.
+  const size = 2 ** (32 - mask);
+  const start = Math.floor(ipNum / size) * size;
+  const end = start + size - 1;
 
   return { start, end };
 }
