@@ -1869,4 +1869,8 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "前往购物车或结账",
     "前往購物車或結帳",
   ],
+  "Conversion metrics": ["Conversion-Kennzahlen", "转化指标", "轉換指標"],
+  "Not recorded": ["Nicht erfasst", "未记录", "未記錄"],
+  "Clicked through to a product": ["Zu einem Produkt geklickt", "点击进入商品", "點擊進入商品"],
+  "Clicked through to another page": ["Zu einer anderen Seite geklickt", "点击进入其他页面", "點擊進入其他頁面"],
 };

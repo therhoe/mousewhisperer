@@ -358,3 +358,115 @@ test("sessions by page says not recorded for imported measurements", () => {
   const html = render(GrowthSessionsByPage, { available: false, pages: [] });
   assert.match(html, /Not recorded for this measurement/);
 });
+
+function resultsWith(report, comparison = null) {
+  const section = (name) => (props) =>
+    el("section", { "data-section": name, "data-layout": props.layout || "" });
+  return load("app/components/GrowthMeasurementResults.tsx", {
+    ...common,
+    "../utils/background-json": {
+      useBackgroundJson: () => ({
+        data: { report, comparison },
+        loading: false,
+        error: null,
+        reload() {},
+      }),
+    },
+    "./GrowthEngagementMetrics": { GrowthEngagementMetrics: section("engagement") },
+    "./GrowthConversionFunnel": { GrowthConversionFunnel: section("funnel") },
+    "./GrowthExitPaths": { GrowthExitPathsCard: section("exits") },
+    "./GrowthSessionsByPage": { GrowthSessionsByPage: section("pages") },
+    "./EngagementOutcomes": { EngagementOutcomesView: section("zones") },
+  }).GrowthMeasurementResults;
+}
+const baseReport = {
+  sessions: 100,
+  addedToCart: 20,
+  conversions: 4,
+  conversionRate: 4,
+  atcRate: 20,
+  pageViews: 230,
+  averageTime: 40,
+  averageScroll: 55,
+  series: [{ date: "2026-10-22", sessions: 100, conversions: 4, conversionRate: 4 }],
+  channels: [
+    { source: "facebook", medium: "paid", campaign: "", sessions: 100, addedToCart: 20, conversions: 4, conversionRate: 4 },
+  ],
+  sources: ["facebook"],
+  engagement: { version: 1, maxSessions: 1, groups: [{ category: "Button", items: [] }] },
+  engagementUnavailable: false,
+  funnel: { sessions: 100, addedToCart: 20, checkoutStarted: 8, purchased: 4 },
+  engagementSummary: { ...summary, clickThroughRate: 31.5 },
+  exitPaths,
+  pages: [],
+};
+const props = {
+  shop: "s.myshopify.com",
+  projectId: "p",
+  measurementId: "m",
+  comparisonId: "",
+  filters: { audience: "all", source: "", medium: "", campaign: "" },
+};
+// Section order as rendered: mocked cards by data-section, real cards by heading text.
+const order = (html) =>
+  [...html.matchAll(/data-section="(\w+)"|Traffic by source|Conversion metrics/g)].map(
+    (match) => match[1] || (match[0] === "Traffic by source" ? "traffic" : "conversion"),
+  );
+
+test("store layout orders engagement, funnel, traffic, pages and drops the chart", () => {
+  const Results = resultsWith({ ...baseReport, layout: "store", pageType: null });
+  const html = render(Results, props);
+  assert.deepEqual(order(html), ["engagement", "funnel", "traffic", "pages"]);
+  assert.doesNotMatch(html, /Conversion rate over time/);
+  assert.doesNotMatch(html, /data-section="zones"/);
+});
+
+test("page layout orders conversion, engagement, zones, exits, traffic", () => {
+  const Results = resultsWith({ ...baseReport, layout: "page", pageType: "PRODUCT" });
+  const html = render(Results, props);
+  assert.deepEqual(order(html), ["conversion", "engagement", "zones", "exits", "traffic"]);
+  assert.doesNotMatch(html, /Conversion rate over time/);
+});
+
+test("product pages keep add-to-cart rate; other page types show click-through rate", () => {
+  const product = render(resultsWith({ ...baseReport, layout: "page", pageType: "PRODUCT" }), props);
+  assert.match(product, /Add-to-cart rate=20%/);
+  assert.doesNotMatch(product, /Click-through rate=/);
+  const collection = render(resultsWith({ ...baseReport, layout: "page", pageType: "COLLECTION" }), props);
+  assert.match(collection, /Click-through rate=31\.5% \[Clicked through to a product\]/);
+  assert.doesNotMatch(collection, /Add-to-cart rate=/);
+  const blog = render(resultsWith({ ...baseReport, layout: "page", pageType: "BLOG" }), props);
+  assert.match(blog, /Click-through rate=31\.5% \[Clicked through to another page\]/);
+});
+
+test("click-through tile says not recorded for imported page measurements", () => {
+  const html = render(
+    resultsWith({
+      ...baseReport,
+      layout: "page",
+      pageType: "COLLECTION",
+      engagementSummary: { ...summary, available: false },
+    }),
+    props,
+  );
+  assert.match(html, /Click-through rate=Not recorded/);
+});
+
+test("an empty report renders without NaN", () => {
+  const empty = {
+    ...baseReport,
+    layout: "page",
+    pageType: "COLLECTION",
+    sessions: 0,
+    addedToCart: 0,
+    conversions: 0,
+    conversionRate: 0,
+    atcRate: 0,
+    channels: [],
+    funnel: { sessions: 0, addedToCart: 0, checkoutStarted: 0, purchased: 0 },
+    engagementSummary: { ...summary, clickThroughRate: 0, devices: [], topSearches: [] },
+  };
+  const html = render(resultsWith(empty), props);
+  assert.doesNotMatch(html, /NaN/);
+  assert.match(html, /No sessions match these filters\./);
+});

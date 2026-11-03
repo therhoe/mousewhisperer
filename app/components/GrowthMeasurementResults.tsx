@@ -14,7 +14,11 @@ import {
 } from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
 import { useBackgroundJson } from "../utils/background-json";
-import { GrowthLineChart, MetricTile } from "./GrowthOverviewCard";
+import { MetricTile } from "./GrowthOverviewCard";
+import { GrowthConversionFunnel } from "./GrowthConversionFunnel";
+import { GrowthEngagementMetrics } from "./GrowthEngagementMetrics";
+import { GrowthExitPathsCard } from "./GrowthExitPaths";
+import { GrowthSessionsByPage } from "./GrowthSessionsByPage";
 import type { GrowthReport, GrowthReportFilters } from "../utils/growth-report";
 import { EngagementOutcomesView } from "./EngagementOutcomes";
 type Payload = { report: GrowthReport; comparison: GrowthReport | null };
@@ -98,25 +102,41 @@ export function GrowthMeasurementResults({
         )}
       </Card>
     );
-  return (
-    <BlockStack gap="400">
-      {error && <Banner tone="warning">{error}</Banner>}
-      <Card>
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center" gap="200">
-            <Text as="h2" variant="headingMd">
-              {t("Summary")}
-            </Text>
-            <Button variant="tertiary" onClick={reload} loading={loading}>
-              {t("Refresh")}
-            </Button>
-          </InlineStack>
-          <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+  const clickThrough =
+    report.pageType !== null && report.pageType !== "PRODUCT";
+  const summary = report.engagementSummary;
+  const conversionMetrics = (
+    <Card>
+      <BlockStack gap="400">
+        <Text as="h2" variant="headingMd">
+          {t("Conversion metrics")}
+        </Text>
+        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+          <MetricTile
+            label={t("Sessions")}
+            value={count(report.sessions)}
+            caption={versus(count(before?.sessions || 0))}
+          />
+          {clickThrough ? (
             <MetricTile
-              label={t("Sessions")}
-              value={count(report.sessions)}
-              caption={versus(count(before?.sessions || 0))}
+              label={t("Click-through rate")}
+              value={
+                summary.available
+                  ? percent(summary.clickThroughRate)
+                  : t("Not recorded")
+              }
+              caption={
+                before && summary.available
+                  ? points(
+                      summary.clickThroughRate,
+                      before.engagementSummary.clickThroughRate,
+                    )
+                  : report.pageType === "COLLECTION"
+                    ? t("Clicked through to a product")
+                    : t("Clicked through to another page")
+              }
             />
+          ) : (
             <MetricTile
               label={t("Add-to-cart rate")}
               value={percent(report.atcRate)}
@@ -128,137 +148,165 @@ export function GrowthMeasurementResults({
                     })
               }
             />
-            <MetricTile
-              label={t("Converted sessions")}
-              value={count(report.conversions)}
-              caption={versus(count(before?.conversions || 0))}
-            />
-            <MetricTile
-              label={t("Conversion rate")}
-              value={percent(report.conversionRate)}
-              caption={
-                before
-                  ? points(report.conversionRate, before.conversionRate)
-                  : undefined
-              }
-            />
-          </InlineGrid>
-          {before && (
-            <Text as="p" variant="bodySm" tone="subdued">
-              {t(
-                "Compared with {name} using the same filters. A before/after change suggests, but does not prove, that your change caused it. Use an A/B test for proof.",
-                { name: comparisonName || t("comparison") },
-              )}
-            </Text>
           )}
-        </BlockStack>
-      </Card>
-      <Card>
-        <BlockStack gap="200">
-          <Text as="h2" variant="headingMd">
-            {t("Conversion rate over time")}
-          </Text>
-          <GrowthLineChart
-            title={t("Conversion rate over time")}
-            percent
-            points={report.series.map((point) => ({
-              date: point.date,
-              value: point.conversionRate,
-            }))}
+          <MetricTile
+            label={t("Converted sessions")}
+            value={count(report.conversions)}
+            caption={versus(count(before?.conversions || 0))}
           />
-        </BlockStack>
-      </Card>
-      <Card padding="0">
-        <Box padding="400" paddingBlockEnd="0">
-          <Text as="h2" variant="headingMd">
-            {t("Traffic by source")}
+          <MetricTile
+            label={t("Conversion rate")}
+            value={percent(report.conversionRate)}
+            caption={
+              before
+                ? points(report.conversionRate, before.conversionRate)
+                : undefined
+            }
+          />
+        </InlineGrid>
+        {before && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {t(
+              "Compared with {name} using the same filters. A before/after change suggests, but does not prove, that your change caused it. Use an A/B test for proof.",
+              { name: comparisonName || t("comparison") },
+            )}
+          </Text>
+        )}
+      </BlockStack>
+    </Card>
+  );
+  const trafficBySource = (
+    <Card padding="0">
+      <Box padding="400" paddingBlockEnd="0">
+        <Text as="h2" variant="headingMd">
+          {t("Traffic by source")}
+        </Text>
+      </Box>
+      {report.channels.length ? (
+        <DataTable
+          columnContentTypes={[
+            "text",
+            "text",
+            "text",
+            "numeric",
+            "numeric",
+            "numeric",
+            "numeric",
+          ]}
+          headings={[
+            t("Source"),
+            t("Medium"),
+            t("Campaign"),
+            t("Sessions"),
+            t("Added to cart"),
+            t("Conversions"),
+            t("Conversion rate"),
+          ]}
+          rows={report.channels
+            .slice(page * CHANNEL_PAGE_SIZE, (page + 1) * CHANNEL_PAGE_SIZE)
+            .map((row) => [
+              row.source,
+              row.medium || "—",
+              row.campaign || "—",
+              count(row.sessions),
+              count(row.addedToCart),
+              count(row.conversions),
+              percent(row.conversionRate),
+            ])}
+        />
+      ) : (
+        <Box padding="400">
+          <Text as="p" tone="subdued">
+            {t("No sessions match these filters.")}
           </Text>
         </Box>
-        {report.channels.length ? (
-          <DataTable
-            columnContentTypes={[
-              "text",
-              "text",
-              "text",
-              "numeric",
-              "numeric",
-              "numeric",
-              "numeric",
-            ]}
-            headings={[
-              t("Source"),
-              t("Medium"),
-              t("Campaign"),
-              t("Sessions"),
-              t("Added to cart"),
-              t("Conversions"),
-              t("Conversion rate"),
-            ]}
-            rows={report.channels
-              .slice(page * CHANNEL_PAGE_SIZE, (page + 1) * CHANNEL_PAGE_SIZE)
-              .map((row) => [
-                row.source,
-                row.medium || "—",
-                row.campaign || "—",
-                count(row.sessions),
-                count(row.addedToCart),
-                count(row.conversions),
-                percent(row.conversionRate),
-              ])}
-          />
-        ) : (
-          <Box padding="400">
-            <Text as="p" tone="subdued">
-              {t("No sessions match these filters.")}
-            </Text>
-          </Box>
-        )}
-        {pages > 1 && (
-          <Box padding="300">
-            <InlineStack align="center">
-              <Pagination
-                hasPrevious={page > 0}
-                onPrevious={() => setChannelPage(page - 1)}
-                hasNext={page + 1 < pages}
-                onNext={() => setChannelPage(page + 1)}
-                label={t("Page {page} of {pages}", {
-                  page: count(page + 1),
-                  pages: count(pages),
-                })}
-              />
-            </InlineStack>
-          </Box>
-        )}
-      </Card>
-      {report.engagement && report.engagement.groups.length > 0 && (
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              {t("Engagement by zone")}
-            </Text>
-            <EngagementOutcomesView
-              data={report.engagement}
-              audience={t(
-                filters.audience === "active"
-                  ? "Active sessions"
-                  : "All recorded sessions",
-              )}
-              totals={Object.fromEntries(
-                report.engagement.groups.map((group) => [
-                  group.category,
-                  group.items.reduce((sum, item) => sum + item.clicks, 0),
-                ]),
-              )}
-            />
-          </BlockStack>
-        </Card>
       )}
-      {report.engagementUnavailable && (
-        <Banner tone="info">
-          {t(
-            "There is too much engagement data to show at once. Pick a source to narrow it down.",
+      {pages > 1 && (
+        <Box padding="300">
+          <InlineStack align="center">
+            <Pagination
+              hasPrevious={page > 0}
+              onPrevious={() => setChannelPage(page - 1)}
+              hasNext={page + 1 < pages}
+              onNext={() => setChannelPage(page + 1)}
+              label={t("Page {page} of {pages}", {
+                page: count(page + 1),
+                pages: count(pages),
+              })}
+            />
+          </InlineStack>
+        </Box>
+      )}
+    </Card>
+  );
+  const zones = report.engagement && report.engagement.groups.length > 0 && (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">
+          {t("Engagement by zone")}
+        </Text>
+        <EngagementOutcomesView
+          data={report.engagement}
+          audience={t(
+            filters.audience === "active"
+              ? "Active sessions"
+              : "All recorded sessions",
           )}
-        </Banner>
+          totals={Object.fromEntries(
+            report.engagement.groups.map((group) => [
+              group.category,
+              group.items.reduce((sum, item) => sum + item.clicks, 0),
+            ]),
+          )}
+        />
+      </BlockStack>
+    </Card>
+  );
+  return (
+    <BlockStack gap="400">
+      {error && <Banner tone="warning">{error}</Banner>}
+      <InlineStack align="end">
+        <Button variant="tertiary" onClick={reload} loading={loading}>
+          {t("Refresh")}
+        </Button>
+      </InlineStack>
+      {report.layout === "store" ? (
+        <>
+          <GrowthEngagementMetrics
+            summary={summary}
+            layout="store"
+            exitPages={report.exitPaths.exitPages}
+          />
+          <GrowthConversionFunnel
+            funnel={report.funnel}
+            before={before?.funnel}
+            comparisonName={comparisonName}
+          />
+          {trafficBySource}
+          <GrowthSessionsByPage
+            pages={report.pages}
+            available={report.exitPaths.available}
+          />
+        </>
+      ) : (
+        <>
+          {conversionMetrics}
+          <GrowthEngagementMetrics
+            summary={summary}
+            layout="page"
+            exitPages={[]}
+          />
+          {zones}
+          {report.engagementUnavailable && (
+            <Banner tone="info">
+              {t(
+                "There is too much engagement data to show at once. Pick a source to narrow it down.",
+              )}
+            </Banner>
+          )}
+          <GrowthExitPathsCard exitPaths={report.exitPaths} />
+          {trafficBySource}
+        </>
       )}
     </BlockStack>
   );
