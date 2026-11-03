@@ -61,6 +61,7 @@ import {
 import { getPageSnapshotResourcePath } from "../utils/page-snapshot-navigation";
 import { EngagementOutcomesView } from "../components/EngagementOutcomes";
 import { downloadAuthenticatedFile } from "../utils/authenticated-download";
+import { startStatsPolling } from "../utils/stats-polling";
 import { GrowthProjectError, transitionGrowthMeasurement } from "../utils/growth-projects.server";
 
 const INSIGHT_CATEGORIES = [
@@ -4067,35 +4068,31 @@ export default function ProjectDetails() {
     setProjectImageUrl(statsExtrasFetcher.data.productImageUrl || "");
   }, [statsExtrasFetcher.data]);
 
-  // SSE connection for real-time updates
+  // Live updates for an active snapshot reuse the authenticated stats loader,
+  // so they keep the report's filters and never need an open stream.
+  const statsFetcherState = useRef(statsFetcher.state);
+  statsFetcherState.current = statsFetcher.state;
   useEffect(() => {
-    if (!selectedSnapshotId || selectedSnapshotStatus !== "ACTIVE") return;
-
-    const eventSource = new EventSource(
-      `/api/stats-stream/${selectedSnapshotId}`,
-    );
-
-    eventSource.onopen = () => setIsLive(true);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const newStats = JSON.parse(event.data) as typeof stats;
-        setLiveStats(newStats);
-      } catch (e) {
-        console.error("Failed to parse SSE data:", e);
-      }
-    };
-
-    eventSource.onerror = () => {
-      setIsLive(false);
-      eventSource.close();
-    };
-
+    if (
+      !statsRequestUrl ||
+      compareMode ||
+      selectedSnapshotStatus !== "ACTIVE"
+    )
+      return;
+    setIsLive(true);
+    const stop = startStatsPolling({
+      url: statsRequestUrl,
+      load: (url) => loadStatsRef.current(url),
+      isVisible: () => document.visibilityState === "visible",
+      isBusy: () => statsFetcherState.current !== "idle",
+      setInterval: (callback, ms) => window.setInterval(callback, ms),
+      clearInterval: (id) => window.clearInterval(id),
+    });
     return () => {
-      eventSource.close();
+      stop();
       setIsLive(false);
     };
-  }, [selectedSnapshotId, selectedSnapshotStatus]);
+  }, [compareMode, selectedSnapshotStatus, statsRequestUrl]);
 
   const displayStats = liveStats;
   const analyticsLoading = Boolean(
