@@ -51,6 +51,12 @@ export type GrowthReport = {
   sources: string[];
   engagement: EngagementOutcomes | null;
   engagementUnavailable: boolean;
+  layout: GrowthReportLayout;
+  pageType: GrowthPageType | null;
+  funnel: GrowthFunnel;
+  engagementSummary: GrowthEngagementSummary;
+  exitPaths: GrowthExitPaths;
+  pages: RankedGrowthPage[];
 };
 export type GrowthReportLayout = "store" | "page";
 export type GrowthPageType =

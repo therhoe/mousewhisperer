@@ -167,7 +167,8 @@ Columns: Page · Type · Sessions · Key rate · Exit rate · Conversion rate ·
 
 ## Testing
 
-- **Pure functions** (no database): missed-sessions ranking, including thresholds, fewer than 3 pages of a type, ties, and zero or negative gaps; forward-click rule, including image-in-card clicks, header/footer exclusion and malformed `ctaClicks`.
+- **Pure functions** (no database): missed-sessions ranking, including thresholds, fewer than 3 pages of a type, ties, and zero or negative gaps.
+- **Click-through rule** (real SQL, because it runs in the report query): image-in-card clicks, locale-prefixed product paths, header/footer exclusion and malformed `ctaClicks`.
 - **Real SQL** (`scripts/check-growth-reports.mjs`, disposable loopback database only): funnel counts, medians, search grouping and the 2-session threshold, device conversion rates, exit grouping, private-path masking, All/Active and source filters applied to every new section, Channel/Customer measurements returning "not recorded".
 - **UI** (`scripts/check-projects-ui.mjs` and the preview fixture): Store and Page layouts, page-type tile switch, merged bar rendering with purchases greater than carts, 390px mobile width without horizontal overflow.
 - **i18n**: `node scripts/check-i18n.mjs` passes for all four locales.

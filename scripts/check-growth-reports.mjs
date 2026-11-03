@@ -45,6 +45,7 @@ const service = (client) =>
     "../db.server": client,
     "./growth-projects": pure,
     "./click-engagement": clicks,
+    "./growth-report": filters,
   });
 const all = { audience: "all", source: "", medium: "", campaign: "" };
 assert.equal(
