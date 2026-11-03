@@ -33,6 +33,7 @@ import {
   Checkbox,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { Prisma } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -59,6 +60,7 @@ import {
 } from "../utils/click-engagement";
 import { getPageSnapshotResourcePath } from "../utils/page-snapshot-navigation";
 import { EngagementOutcomesView } from "../components/EngagementOutcomes";
+import { downloadAuthenticatedFile } from "../utils/authenticated-download";
 import { GrowthProjectError, transitionGrowthMeasurement } from "../utils/growth-projects.server";
 
 const INSIGHT_CATEGORIES = [
@@ -3897,6 +3899,7 @@ function getChallengeSummaryCards(
 }
 
 export default function ProjectDetails() {
+  const appBridge = useAppBridge();
   const {
     project,
     snapshots,
@@ -4201,30 +4204,16 @@ export default function ProjectDetails() {
       if (!selectedSnapshot) return;
 
       try {
-        const response = await fetch(
-          `/api/export/${selectedSnapshot.id}?format=${format}`,
-        );
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Export failed:", errorText);
-          return;
-        }
-
-        // Get the blob and create download
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `report-snapshot-${selectedSnapshot.number}.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
+        await downloadAuthenticatedFile({
+          url: `/api/export/${selectedSnapshot.id}?format=${format}`,
+          filename: `report-snapshot-${selectedSnapshot.number}.${format}`,
+          getIdToken: () => appBridge.idToken(),
+        });
       } catch (error) {
         console.error("Export error:", error);
       }
     },
-    [selectedSnapshot],
+    [appBridge, selectedSnapshot],
   );
 
   const handleCreateSnapshot = useCallback(() => {

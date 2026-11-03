@@ -1,9 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../db.server";
+import { authenticate } from "../shopify.server";
 import { generateCSV, generatePDF } from "../utils/export.server";
-
-// Create a fresh Prisma client for this route
-const prisma = new PrismaClient();
 
 // Sanitize filename for Content-Disposition header (remove/replace special chars)
 function sanitizeFilename(name: string): string {
@@ -14,6 +12,8 @@ function sanitizeFilename(name: string): string {
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+  // Visit exports contain shopper data: only the owning shop may download them.
+  const { session } = await authenticate.admin(request);
   const snapshotId = params.snapshotId;
   const url = new URL(request.url);
   const format = url.searchParams.get("format") || "csv";
@@ -24,8 +24,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   try {
     // Fetch snapshot from database
-    const snapshot = await prisma.snapshot.findUnique({
-      where: { id: snapshotId },
+    const snapshot = await prisma.snapshot.findFirst({
+      where: { id: snapshotId, project: { shop: session.shop } },
       include: {
         visits: true,
         project: true,
@@ -33,7 +33,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
 
     if (!snapshot) {
-      return new Response(`Snapshot not found: ${snapshotId}`, { status: 404 });
+      return new Response("Snapshot not found", { status: 404 });
     }
 
     const snapshotInfo = {
@@ -142,14 +142,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     return new Response("Invalid format. Use ?format=csv or ?format=pdf", { status: 400 });
   } catch (error) {
+    // Details stay in the server log; the response never exposes internals.
     console.error("Export error:", error);
-    const msg = error instanceof Error ? error.message : String(error);
-    const stack = error instanceof Error ? error.stack : "";
-    return new Response(`Export failed: ${msg}\n\nStack: ${stack}`, {
+    return new Response("Export failed. Please try again.", {
       status: 500,
       headers: { "Content-Type": "text/plain" }
     });
-  } finally {
-    await prisma.$disconnect();
   }
 };
