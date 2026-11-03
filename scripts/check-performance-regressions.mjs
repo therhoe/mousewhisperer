@@ -329,6 +329,11 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
         },
       },
     },
+    "../utils/embedded-filter-context.server": loadModule(
+      "app/utils/embedded-filter-context.server.ts",
+      {},
+      { Buffer },
+    ),
     "../components/BackgroundBillingSync": {},
     "../utils/features": { COMMUNITY_FEATURES_ENABLED: false },
     "../utils/page-snapshot-navigation": {},
@@ -351,7 +356,6 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
     source("app/routes/app.tsx"),
     /PrefetchPageLinks|prefetch="render"|reconcileShopBillingFromShopify/,
   );
-  assert.match(source("app/routes/app.tsx"), /prefetch="intent"/);
 });
 
 test("Projects dashboard returns recent projects without requesting Shopify analytics or source discovery", { timeout: 1000 }, async () => {

@@ -163,6 +163,10 @@ function storeHarness(rows = [], cached = null) {
     "app/utils/store-snapshot.server.ts",
     {
       "../db.server": db,
+      "./growth-tracking.server": load("app/utils/growth-tracking.server.ts", {
+        "../db.server": db,
+        "./customer-journey": {},
+      }),
       "./notifications.server": { createNotification: async () => {} },
       "./loader-cache.server": { clearCacheKey: () => {}, loaderCacheKeys: {} },
     },

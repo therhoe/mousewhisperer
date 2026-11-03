@@ -147,6 +147,9 @@ function harness(source = listSource) {
       read("app/utils/ab-project-targeting.ts"),
     ),
     "../utils/i18n": { useI18n: () => ({ t: (key) => key }) },
+    "../utils/embedded-filter-params": compile(
+      read("app/utils/embedded-filter-params.ts"),
+    ),
     react: {
       ...React,
       useRef: (value) => ({ current: value }),

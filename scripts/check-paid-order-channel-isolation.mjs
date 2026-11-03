@@ -109,6 +109,7 @@ function fixture(options = {}) {
       },
     },
     "../db.server": prisma,
+    "../utils/growth-tracking.server": { growthAcquisitionMatch: () => ({}) },
     "../utils/channel-snapshot.server": {
       attributeChannelSnapshotEvent: async (args) => {
         record("channel", args);
@@ -211,6 +212,8 @@ test("Channel-only failure still runs Store, A/B and matching Page attribution, 
     assert.deepEqual(call(f, stage), {
       shop: SHOP,
       sessionId: SID,
+      // Store measurements match the exact acquisition; A/B stays SID-only.
+      ...(stage === "store" ? { acquisitionSessionId: ACQUISITION_ID } : {}),
       timestamp: new Date(CREATED_AT),
       totalPrice: 48.5,
       currency: "USD",
