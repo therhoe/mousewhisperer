@@ -515,3 +515,30 @@ test("store layout leaves the comparison footer to the funnel card", () => {
   });
   assert.doesNotMatch(html, /Compared with/);
 });
+
+test("page tiles show no points delta against a comparison with no sessions", () => {
+  const emptyComparison = (report) => ({
+    ...report,
+    sessions: 0,
+    addedToCart: 0,
+    conversions: 0,
+    conversionRate: 0,
+    atcRate: 0,
+    funnel: { sessions: 0, addedToCart: 0, checkoutStarted: 0, purchased: 0 },
+    engagementSummary: { ...summary, clickThroughRate: 0 },
+  });
+  const tileText = (html, label) =>
+    html.match(new RegExp(`data-tile="${label}">([^<]*)<`))[1];
+  const compared = { ...props, comparisonId: "c", comparisonName: "Empty" };
+  const product = { ...baseReport, layout: "page", pageType: "PRODUCT" };
+  const productHtml = render(resultsWith(product, emptyComparison(product)), compared);
+  assert.equal(tileText(productHtml, "Conversion rate"), "Conversion rate=4%");
+  assert.equal(tileText(productHtml, "Add-to-cart rate"), "Add-to-cart rate=20% [20 added to cart]");
+  const collection = { ...baseReport, layout: "page", pageType: "COLLECTION" };
+  const collectionHtml = render(resultsWith(collection, emptyComparison(collection)), compared);
+  assert.equal(
+    tileText(collectionHtml, "Click-through rate"),
+    "Click-through rate=31.5% [Clicked through to a product]",
+  );
+  assert.doesNotMatch(collectionHtml, /pts/);
+});

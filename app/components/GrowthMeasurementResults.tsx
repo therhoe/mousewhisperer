@@ -105,6 +105,8 @@ export function GrowthMeasurementResults({
   const clickThrough =
     report.pageType !== null && report.pageType !== "PRODUCT";
   const summary = report.engagementSummary;
+  // A rate change against a comparison with no sessions is not a real change.
+  const compared = !!before && before.sessions > 0;
   const conversionMetrics = (
     <Card>
       <BlockStack gap="400">
@@ -126,7 +128,7 @@ export function GrowthMeasurementResults({
                   : t("Not recorded")
               }
               caption={
-                before &&
+                compared &&
                 summary.available &&
                 before.engagementSummary.available
                   ? points(
@@ -143,7 +145,7 @@ export function GrowthMeasurementResults({
               label={t("Add-to-cart rate")}
               value={percent(report.atcRate)}
               caption={
-                before
+                compared
                   ? points(report.atcRate, before.atcRate)
                   : t("{count} added to cart", {
                       count: count(report.addedToCart),
@@ -160,7 +162,7 @@ export function GrowthMeasurementResults({
             label={t("Conversion rate")}
             value={percent(report.conversionRate)}
             caption={
-              before
+              compared
                 ? points(report.conversionRate, before.conversionRate)
                 : undefined
             }
