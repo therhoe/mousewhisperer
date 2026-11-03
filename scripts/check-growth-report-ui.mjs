@@ -271,3 +271,90 @@ test("short times show seconds only, and an empty search list explains why", () 
   assert.match(html, /No search term was used by two or more sessions yet\./);
   assert.match(html, /No sessions match these filters\./);
 });
+
+const exitPaths = {
+  available: true,
+  outcomes: [
+    { type: "internal_link", pageViews: 52, share: 52 },
+    { type: "checkout", pageViews: 0, share: 0 },
+    { type: "back_button", pageViews: 20, share: 20 },
+    { type: "window_closed", pageViews: 28, share: 28 },
+    { type: "idle", pageViews: 0, share: 0 },
+    { type: "external_link", pageViews: 0, share: 0 },
+    { type: "unknown", pageViews: 0, share: 0 },
+  ],
+  nextPages: [
+    { path: "/products/merchant-sample", pageViews: 30 },
+    { path: "/private-page", pageViews: 2 },
+  ],
+  exitPages: [],
+};
+
+test("exit paths list how visitors left and where they went next, skipping empty outcomes", () => {
+  const { GrowthExitPathsCard } = load("app/components/GrowthExitPaths.tsx", common);
+  const html = render(GrowthExitPathsCard, { exitPaths });
+  assert.match(html, /Continued to another page/);
+  assert.match(html, /Pressed back/);
+  assert.match(html, /Closed or switched tab/);
+  assert.doesNotMatch(html, /Went idle/, "Zero rows are hidden");
+  assert.match(html, /\/products\/merchant-sample/);
+  assert.match(html, /\/private-page/);
+});
+
+test("exit paths say not recorded for imported measurements", () => {
+  const { GrowthExitPathsCard } = load("app/components/GrowthExitPaths.tsx", common);
+  const html = render(GrowthExitPathsCard, { exitPaths: { ...exitPaths, available: false } });
+  assert.match(html, /Not recorded for this measurement/);
+  assert.doesNotMatch(html, /Continued to another page/);
+});
+
+const ranked = (path, type, sessions, extra = {}) => ({
+  path,
+  type,
+  sessions,
+  carts: 0,
+  forwards: 0,
+  conversions: 0,
+  exits: 0,
+  keyRate: null,
+  exitRate: 0,
+  conversionRate: 0,
+  typicalRate: null,
+  missed: null,
+  focus: false,
+  ...extra,
+});
+
+test("sessions by page explains each focus page in a sentence and badges it", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, {
+    available: true,
+    pages: [
+      ranked("/collections/autumn", "COLLECTION", 420, { keyRate: 20, typicalRate: 31, missed: 46, focus: true }),
+      ranked("/products/sample", "PRODUCT", 300, { keyRate: 16, typicalRate: 19, missed: 9, focus: true }),
+      ranked("/search", null, 40),
+    ],
+  });
+  assert.match(html, /About 46 more sessions would have continued if this page matched your other collections\./);
+  assert.match(html, /About 9 more sessions would have added to cart if this page matched your other products\./);
+  assert.equal((html.match(/<mark>Focus here<\/mark>/g) || []).length, 4, "Two sentences and two table rows");
+  assert.match(html, /Other/);
+  assert.match(html, /—/, "Unranked pages show a dash for missed sessions");
+});
+
+test("sessions by page shows ten rows per page", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, {
+    available: true,
+    pages: Array.from({ length: 12 }, (_, i) => ranked(`/pages/p${i}`, "PAGE", 100 - i)),
+  });
+  assert.match(html, /\/pages\/p9</);
+  assert.doesNotMatch(html, /\/pages\/p10</);
+  assert.match(html, /Page 1 of 2/);
+});
+
+test("sessions by page says not recorded for imported measurements", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, { available: false, pages: [] });
+  assert.match(html, /Not recorded for this measurement/);
+});
