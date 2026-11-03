@@ -470,3 +470,48 @@ test("an empty report renders without NaN", () => {
   assert.doesNotMatch(html, /NaN/);
   assert.match(html, /No sessions match these filters\./);
 });
+
+test("click-through delta is skipped when the comparison never recorded engagement", () => {
+  const current = { ...baseReport, layout: "page", pageType: "COLLECTION" };
+  const imported = {
+    ...current,
+    engagementSummary: { ...summary, available: false, clickThroughRate: 0 },
+  };
+  const html = render(resultsWith(current, imported), {
+    ...props,
+    comparisonId: "c",
+    comparisonName: "Imported",
+  });
+  assert.match(html, /Click-through rate=31\.5% \[Clicked through to a product\]/);
+  assert.doesNotMatch(html, /\+31\.5 pts/, "No points delta against unrecorded data");
+});
+
+test("page layout keeps Engagement by zone with a not-recorded note for imported measurements", () => {
+  const html = render(
+    resultsWith({
+      ...baseReport,
+      layout: "page",
+      pageType: "COLLECTION",
+      engagement: { version: 1, maxSessions: 1, groups: [] },
+      engagementSummary: { ...summary, available: false },
+    }),
+    props,
+  );
+  assert.match(html, /Engagement by zone/);
+  assert.match(html, /Not recorded for this measurement/);
+  assert.ok(
+    html.indexOf("Engagement by zone") < html.indexOf('data-section="exits"'),
+    "Zone card sits before exit paths",
+  );
+  assert.doesNotMatch(html, /data-section="zones"/);
+});
+
+test("store layout leaves the comparison footer to the funnel card", () => {
+  const store = { ...baseReport, layout: "store", pageType: null };
+  const html = render(resultsWith(store, store), {
+    ...props,
+    comparisonId: "c",
+    comparisonName: "Baseline",
+  });
+  assert.doesNotMatch(html, /Compared with/);
+});

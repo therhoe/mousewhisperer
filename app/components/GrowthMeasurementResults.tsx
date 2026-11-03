@@ -126,7 +126,9 @@ export function GrowthMeasurementResults({
                   : t("Not recorded")
               }
               caption={
-                before && summary.available
+                before &&
+                summary.available &&
+                before.engagementSummary.available
                   ? points(
                       summary.clickThroughRate,
                       before.engagementSummary.clickThroughRate,
@@ -239,26 +241,34 @@ export function GrowthMeasurementResults({
       )}
     </Card>
   );
-  const zones = report.engagement && report.engagement.groups.length > 0 && (
+  const engagement = report.engagement;
+  const hasZones = !!engagement && engagement.groups.length > 0;
+  const zones = (hasZones || !summary.available) && (
     <Card>
       <BlockStack gap="300">
         <Text as="h2" variant="headingMd">
           {t("Engagement by zone")}
         </Text>
-        <EngagementOutcomesView
-          data={report.engagement}
-          audience={t(
-            filters.audience === "active"
-              ? "Active sessions"
-              : "All recorded sessions",
-          )}
-          totals={Object.fromEntries(
-            report.engagement.groups.map((group) => [
-              group.category,
-              group.items.reduce((sum, item) => sum + item.clicks, 0),
-            ]),
-          )}
-        />
+        {engagement && hasZones ? (
+          <EngagementOutcomesView
+            data={engagement}
+            audience={t(
+              filters.audience === "active"
+                ? "Active sessions"
+                : "All recorded sessions",
+            )}
+            totals={Object.fromEntries(
+              engagement.groups.map((group) => [
+                group.category,
+                group.items.reduce((sum, item) => sum + item.clicks, 0),
+              ]),
+            )}
+          />
+        ) : (
+          <Text as="p" tone="subdued">
+            {t("Not recorded for this measurement")}
+          </Text>
+        )}
       </BlockStack>
     </Card>
   );
