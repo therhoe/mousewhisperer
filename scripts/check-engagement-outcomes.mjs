@@ -226,14 +226,19 @@ test("image cards come first with one merged bar that stays correct when purchas
       totals: { Image: 4, Button: 1 },
     }),
   );
+  const imageIdx = html.indexOf('aria-label="Image engagement outcomes"');
+  const buttonIdx = html.indexOf('aria-label="Button engagement outcomes"');
   assert.ok(
-    html.indexOf('aria-label="Image engagement outcomes"') <
-      html.indexOf('aria-label="Button engagement outcomes"'),
+    imageIdx >= 0 && imageIdx < buttonIdx,
     "Images render above the button, link and widget groups",
   );
   assert.match(html, /data-layer="clicked" style="width:100%/);
   assert.match(html, /data-layer="cart" style="width:50%/);
   assert.match(html, /data-layer="purchased" style="width:75%/);
+  assert.ok(
+    html.indexOf('data-layer="cart"') > html.indexOf('data-layer="purchased"'),
+    "Shorter cart layer paints on top",
+  );
   assert.equal((html.match(/class="eo-bar"/g) || []).length, 1, "Only the image card has a bar");
 });
 test("groups paginate five elements and retain accessible controls", () => {

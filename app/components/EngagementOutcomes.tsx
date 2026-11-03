@@ -50,7 +50,8 @@ function Numbers({ item }: { item: EngagementOutcomeItem }) {
   );
 }
 // Each layer starts at the left edge rather than stacking, because a purchase can
-// be recorded without a tracked cart step (purchases may exceed carts).
+// be recorded without a tracked cart step (purchases may exceed carts). Layers are
+// drawn longest first so the shortest is painted last and every shade stays visible.
 function MergedBar({
   item,
   maximum,
@@ -58,22 +59,23 @@ function MergedBar({
   item: EngagementOutcomeItem;
   maximum: number;
 }) {
-  const width = (value: number | null) =>
-    `${value === null ? 0 : (value / maximum) * 100}%`;
+  const layers = [
+    { layer: "clicked", value: item.sessions, color: shades.clicked },
+    { layer: "cart", value: item.carts, color: shades.cart },
+    { layer: "purchased", value: item.purchases, color: shades.purchased },
+  ].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
   return (
     <div className="eo-bar" aria-hidden="true">
-      <span
-        data-layer="clicked"
-        style={{ width: width(item.sessions), background: shades.clicked }}
-      />
-      <span
-        data-layer="cart"
-        style={{ width: width(item.carts), background: shades.cart }}
-      />
-      <span
-        data-layer="purchased"
-        style={{ width: width(item.purchases), background: shades.purchased }}
-      />
+      {layers.map(({ layer, value, color }) => (
+        <span
+          key={layer}
+          data-layer={layer}
+          style={{
+            width: `${value === null ? 0 : (value / maximum) * 100}%`,
+            background: color,
+          }}
+        />
+      ))}
     </div>
   );
 }
@@ -258,18 +260,18 @@ export function EngagementOutcomesView({
             {t("Image")}
           </h3>
           <div className="eo-key">
-            {(
-              [
-                ["Clicked sessions", shades.clicked],
-                ["Added to cart", shades.cart],
-                ["Purchased", shades.purchased],
-              ] as const
-            ).map(([label, color]) => (
-              <span key={label}>
-                <i className="eo-dot" style={{ background: color }} />
-                {t(label)}
-              </span>
-            ))}
+            <span>
+              <i className="eo-dot" style={{ background: shades.clicked }} />
+              {t("Clicked sessions")}
+            </span>
+            <span>
+              <i className="eo-dot" style={{ background: shades.cart }} />
+              {t("Added to cart")}
+            </span>
+            <span>
+              <i className="eo-dot" style={{ background: shades.purchased }} />
+              {t("Purchased")}
+            </span>
           </div>
           <div className="eo-images">
             {images.items.map((item) => (
