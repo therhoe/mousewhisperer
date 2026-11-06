@@ -48,6 +48,20 @@ function compile(file, mocks = {}) {
 const pure = compile("app/utils/growth-projects.ts");
 const reportPure = compile("app/utils/growth-report.ts");
 const embeddedFilters = compile("app/utils/embedded-filter-params.ts");
+const navigation = compile("app/utils/navigation.ts");
+const realJsx = require("react/jsx-runtime");
+// Records the click handlers of Polaris elements so tests can press them.
+function jsxRuntime(state) {
+  const record = (type, props) => {
+    if (typeof type === "string" && type.startsWith("s-") && typeof props?.onClick === "function")
+      state.buttons.push({ type, slot: props.slot, label: props.children, onClick: props.onClick });
+  };
+  return {
+    ...realJsx,
+    jsx: (type, props, key) => { record(type, props); return realJsx.jsx(type, props, key); },
+    jsxs: (type, props, key) => { record(type, props); return realJsx.jsxs(type, props, key); },
+  };
+}
 const t = (key, vars = {}) =>
   key.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? `{${name}}`));
 const i18n = {
@@ -177,9 +191,9 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     },
   );
   const services = {
-    listGrowthProjects: async (shop, page) => {
-      state.calls.push(["list", shop, page]);
-      return { projects: [], page: 1, pageCount: 1 };
+    listGrowthProjects: async (shop, filters) => {
+      state.calls.push(["list", shop, filters]);
+      return { projects: [], page: 1, pageCount: 1, total: 0, counts: { ALL: 0, MEASURING: 0, IDLE: 0, COMPLETED: 0 } };
     },
     createGrowthProject: async (shop, _admin, form, options) => {
       state.calls.push(["create", shop, form, options]);
@@ -228,8 +242,9 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
       useRouteLoaderData: () => state.appData,
       useSearchParams: () => [
         state.params,
-        (params) => {
+        (params, options) => {
           state.params = params;
+          state.navigationOptions = options;
         },
       ],
       useFetcher: () => fetcher,
@@ -271,6 +286,14 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     "../utils/growth-report.server": reportPure,
     "../utils/billing.server": { isPlanLimitError: () => false },
     "../utils/i18n": i18n,
+    "react/jsx-runtime": jsxRuntime(state),
+    "../utils/navigation": navigation,
+    "../components/ProjectsTable": {
+      ProjectsTable: (props) => {
+        state.table = props;
+        return React.createElement("table", { "data-page": props.page });
+      },
+    },
     "@shopify/app-bridge-react": {
       useAppBridge: () => ({ resourcePicker: async () => [] }),
       Modal: ({ open, children }) =>
@@ -603,13 +626,51 @@ test("successful measurement redirect closes the same-route modal", () => {
   assert.doesNotMatch(h.render(), /data-create-project/);
 });
 
-test("global quick-create opens on a new URL even when Project list is already mounted", () => {
-  const h = harness("app/routes/app.projects._index.tsx", {
-    projects: [],
-    page: 1,
-    pageCount: 1,
-    shop: "owner.myshopify.com",
+const projectsData = (overrides = {}) => ({
+  projects: [{ id: "p1" }],
+  page: 2,
+  pageCount: 3,
+  total: 23,
+  shop: "owner.myshopify.com",
+  counts: { ALL: 23, MEASURING: 2, IDLE: 14, COMPLETED: 7 },
+  filters: { status: "ALL", scope: "ALL", query: "", page: 2 },
+  ...overrides,
+});
+
+test("Projects reads its filters from the address and passes them to the list", async () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData());
+  const response = await h.route.loader({
+    request: new Request("https://app.test/app/projects?status=idle&scope=page&q=%20spring%20&page=3"),
   });
+  const call = h.state.calls.find((entry) => entry[0] === "list");
+  assert.deepEqual(JSON.parse(JSON.stringify(call[2])), { status: "IDLE", scope: "PAGE", query: "spring", page: 3 });
+  assert.equal((await response.json()).filters.status, "IDLE");
+});
+
+test("Projects filters replace the address, reset the page and keep the embedded context", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData());
+  h.state.params = new URLSearchParams("page=2&shop=owner.myshopify.com&host=abc");
+  const html = h.render();
+  assert.match(html, /<s-page heading="Projects">/);
+  assert.match(html, /slot="primary-action" variant="primary">Create project</);
+  assert.match(html, /slot="secondary-actions" href="\/app\/ab-tests\?create=1">Create A\/B test</);
+  assert.equal((html.match(/variant="primary"/g) || []).length, 1, "one primary button per screen");
+  for (const label of ["All 23", "Measuring 2", "Idle 14", "Completed 7"]) assert.ok(html.includes(label), label);
+  assert.equal(h.state.table.page, 2);
+  h.state.buttons.find((button) => button.label === "Idle 14").onClick();
+  assert.equal(h.state.params.get("status"), "IDLE");
+  assert.equal(h.state.params.has("page"), false, "a filter change starts at page 1");
+  assert.equal(h.state.params.get("shop"), "owner.myshopify.com");
+  assert.equal(h.state.navigationOptions.replace, true, "filters never add Back steps");
+  h.render();
+  h.state.table.onPage(3);
+  assert.equal(h.state.params.get("page"), "3");
+  assert.equal(h.state.params.get("status"), "IDLE");
+  assert.equal(h.state.navigationOptions.replace, true, "pages never add Back steps");
+});
+
+test("Projects quick-create opens from the address or the button and closes cleanly", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData());
   assert.doesNotMatch(h.render(), /data-create-project/);
   h.state.params = new URLSearchParams("create=1&next=ab-test");
   h.render();
@@ -618,8 +679,31 @@ test("global quick-create opens on a new URL even when Project list is already m
   assert.equal(h.state.params.has("create"), false);
   assert.equal(h.state.params.has("next"), false);
   h.render();
-  h.state.primary.onAction();
+  h.state.buttons.find((button) => button.slot === "primary-action").onClick();
   assert.doesNotMatch(h.render(), /data-next="ab-test"/);
+});
+
+test("Projects shows the first-project state, and a no-match state with Clear filters", () => {
+  const empty = harness("app/routes/app.projects._index.tsx", projectsData({
+    projects: [],
+    total: 0,
+    pageCount: 1,
+    counts: { ALL: 0, MEASURING: 0, IDLE: 0, COMPLETED: 0 },
+    filters: { status: "ALL", scope: "ALL", query: "", page: 1 },
+  }));
+  const first = empty.render();
+  assert.match(first, /Start your first project/);
+  assert.doesNotMatch(first, /<table/);
+  const filtered = harness("app/routes/app.projects._index.tsx", projectsData({
+    projects: [],
+    total: 0,
+    filters: { status: "COMPLETED", scope: "ALL", query: "zzz", page: 1 },
+  }));
+  filtered.state.params = new URLSearchParams("status=COMPLETED&q=zzz");
+  assert.match(filtered.render(), /No projects match these filters\./);
+  filtered.state.buttons.find((button) => button.label === "Clear filters").onClick();
+  assert.equal(filtered.state.params.toString(), "");
+  assert.equal(filtered.state.navigationOptions.replace, true);
 });
 
 test("A/B quick-create collects Project metadata without starting or requesting a baseline", () => {

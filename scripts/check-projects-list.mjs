@@ -141,3 +141,25 @@ test("the project list filters scope and search in the database and keeps its or
   assert.deepEqual(calls[0].where, { shop: "a.myshopify.com" });
   assert.equal(everything.total, 4);
 });
+
+test("the projects table shows status, scope and the latest measurement, with row links", () => {
+  const { ProjectsTable } = loadModule("app/components/ProjectsTable.tsx");
+  const html = renderToStaticMarkup(
+    React.createElement(ProjectsTable, {
+      page: 2,
+      pageCount: 3,
+      onPage() {},
+      projects: [
+        { id: "p1", title: "Spring collection", goal: "Raise add-to-cart", scope: "STORE", updatedAt: "2026-11-05T10:00:00.000Z", listStatus: "MEASURING", latestMeasurement: { name: "Baseline" }, _count: { abTests: 2 } },
+        { id: "p2", title: "Orange", goal: "", scope: "PAGE", updatedAt: "2026-10-23T10:00:00.000Z", listStatus: "IDLE", latestMeasurement: null, resourceProject: { productTitle: "Orange Snowboard" } },
+      ],
+    }),
+  );
+  assert.match(html, /<s-table paginate="" hasPreviousPage="" hasNextPage="">/);
+  assert.match(html, /<s-table-row clickDelegate="project-link-p1">/);
+  assert.match(html, /<s-link id="project-link-p1" href="\/app\/projects\/p1">Spring collection<\/s-link>/);
+  assert.match(html, /<s-badge tone="info">Measuring<\/s-badge>/);
+  assert.match(html, /<s-badge tone="neutral">Idle<\/s-badge>/);
+  for (const text of ["Store-level", "Page-level", "Orange Snowboard", "Baseline", "Not started"])
+    assert.ok(html.includes(text), text);
+});

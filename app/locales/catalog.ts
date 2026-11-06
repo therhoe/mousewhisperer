@@ -1973,4 +1973,13 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "已使用 {store}/{storeLimit} 次商店级别测量和 {page}/{pageLimit} 次页面级别测量 · {tests}/{testLimit} 个 A/B 测试",
     "已使用 {store}/{storeLimit} 次商店層級測量和 {page}/{pageLimit} 次頁面層級測量 · {tests}/{testLimit} 個 A/B 測試",
   ],
+  Measuring: ["Messung läuft", "测量中", "測量中"],
+  Idle: ["Inaktiv", "空闲", "閒置"],
+  "Store and page": ["Shop und Seite", "商店和页面", "商店和頁面"],
+  "Search projects": ["Projekte durchsuchen", "搜索项目", "搜尋專案"],
+  "No projects match these filters.": [
+    "Keine Projekte entsprechen diesen Filtern.",
+    "没有符合这些筛选条件的项目。",
+    "沒有符合這些篩選條件的專案。",
+  ],
 };

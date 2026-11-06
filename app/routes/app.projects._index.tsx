@@ -4,33 +4,33 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useEffect, useState } from "react";
 import { redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useSearchParams } from "react-router";
-import {
-  BlockStack,
-  InlineStack,
-  Layout,
-  Page,
-  Pagination,
-} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import {
   createGrowthProject,
   listGrowthProjects,
 } from "../utils/growth-projects.server";
-import { GrowthProjectError } from "../utils/growth-projects";
+import {
+  GrowthProjectError,
+  parseProjectListFilters,
+  PROJECT_LIST_STATUSES,
+  type ProjectListStatus,
+} from "../utils/growth-projects";
 import { isPlanLimitError } from "../utils/billing.server";
 import { GrowthProjectForm } from "../components/GrowthProjectForm";
-import { GrowthProjectList } from "../components/GrowthProjectList";
-import { useLanguageActionGroup } from "../components/LanguageMenu";
+import { ProjectsTable } from "../components/ProjectsTable";
+import { listParams } from "../utils/navigation";
 import { useI18n } from "../utils/i18n";
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const page = Number(new URL(request.url).searchParams.get("page")) || 1;
-  const list = await listGrowthProjects(session.shop, page);
+  const filters = parseProjectListFilters(new URL(request.url).searchParams);
+  const list = await listGrowthProjects(session.shop, filters);
   return json(
-    { ...list, shop: session.shop },
+    { ...list, filters, shop: session.shop },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 };
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const form = await request.formData();
@@ -70,16 +70,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 };
+
+const STATUS_LABELS: Record<ProjectListStatus, string> = {
+  ALL: "All",
+  MEASURING: "Measuring",
+  IDLE: "Idle",
+  COMPLETED: "Completed",
+};
+const valueOf = (event: { currentTarget: unknown }) =>
+  String((event.currentTarget as { value?: unknown } | null)?.value ?? "");
+
 export default function Projects() {
   const data = useLoaderData<typeof loader>();
   const { t, formatNumber } = useI18n();
-  const language = useLanguageActionGroup();
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(params.get("create") === "1");
   const requestedCreate = params.get("create");
   useEffect(() => {
     if (requestedCreate === "1") setOpen(true);
   }, [requestedCreate]);
+  const [query, setQuery] = useState(data.filters.query);
+  useEffect(() => {
+    setQuery(data.filters.query);
+  }, [data.filters.query]);
+
+  // Filters and pages never add Back steps (rule 2).
+  function update(changes: Record<string, string | null>) {
+    setParams(listParams(params, changes), { replace: true, preventScrollReset: true });
+  }
+  useEffect(() => {
+    const next = query.trim();
+    if (next === data.filters.query) return;
+    const timer = setTimeout(() => update({ q: next || null }), 300);
+    return () => clearTimeout(timer);
+  }, [query, data.filters.query]);
+
   function close() {
     setOpen(false);
     const next = new URLSearchParams(params);
@@ -87,42 +112,86 @@ export default function Projects() {
     next.delete("next");
     setParams(next, { replace: true });
   }
+  function clearFilters() {
+    setQuery("");
+    update({ status: null, scope: null, q: null });
+  }
+
+  const filtered =
+    data.filters.status !== "ALL" || data.filters.scope !== "ALL" || data.filters.query !== "";
   return (
-    <Page
-      title={t("Projects")}
-      primaryAction={{
-        content: t("Create project"),
-        onAction: () => setOpen(true),
-      }}
-      secondaryActions={[
-        { content: t("Create A/B test"), url: "/app/ab-tests?create=1" },
-      ]}
-      actionGroups={[language]}
-    >
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            <GrowthProjectList
+    <s-page heading={t("Projects")}>
+      <s-button slot="secondary-actions" href="/app/ab-tests?create=1">
+        {t("Create A/B test")}
+      </s-button>
+      <s-button slot="primary-action" variant="primary" onClick={() => setOpen(true)}>
+        {t("Create project")}
+      </s-button>
+      {data.counts.ALL === 0 && !filtered ? (
+        <s-section>
+          <s-stack gap="base" alignItems="center" padding="large">
+            <s-heading>{t("Start your first project")}</s-heading>
+            <s-paragraph>
+              {t("A project tracks one goal. Measure a page or your whole store, test ideas and see what moved the numbers.")}
+            </s-paragraph>
+            <s-button variant="secondary" onClick={() => setOpen(true)}>
+              {t("Create project")}
+            </s-button>
+          </s-stack>
+        </s-section>
+      ) : (
+        <s-section padding="none" accessibilityLabel={t("Projects")}>
+          <s-box padding="base">
+            <s-stack direction="inline" gap="base" alignItems="end">
+              <s-button-group gap="none" accessibilityLabel={t("Status")}>
+                {PROJECT_LIST_STATUSES.map((status) => (
+                  <s-press-button
+                    key={status}
+                    pressed={data.filters.status === status}
+                    onClick={() => update({ status: status === "ALL" ? null : status })}
+                  >
+                    {`${t(STATUS_LABELS[status])} ${formatNumber(data.counts[status])}`}
+                  </s-press-button>
+                ))}
+              </s-button-group>
+              <s-select
+                label={t("Scope")}
+                value={data.filters.scope}
+                onChange={(event) => {
+                  const value = valueOf(event);
+                  update({ scope: value === "ALL" ? null : value });
+                }}
+              >
+                <s-option value="ALL">{t("Store and page")}</s-option>
+                <s-option value="STORE">{t("Store-level")}</s-option>
+                <s-option value="PAGE">{t("Page-level")}</s-option>
+              </s-select>
+              <s-search-field
+                label={t("Search projects")}
+                labelAccessibilityVisibility="exclusive"
+                placeholder={t("Search projects")}
+                value={query}
+                onInput={(event) => setQuery(valueOf(event))}
+              />
+            </s-stack>
+          </s-box>
+          {data.projects.length ? (
+            <ProjectsTable
               projects={data.projects}
-              onCreate={() => setOpen(true)}
+              page={data.page}
+              pageCount={data.pageCount}
+              onPage={(page) => update({ page: page > 1 ? String(page) : null })}
             />
-            {data.pageCount > 1 && (
-              <InlineStack align="center">
-                <Pagination
-                  hasPrevious={data.page > 1}
-                  previousURL={`?page=${data.page - 1}`}
-                  hasNext={data.page < data.pageCount}
-                  nextURL={`?page=${data.page + 1}`}
-                  label={t("Page {page} of {pages}", {
-                    page: formatNumber(data.page),
-                    pages: formatNumber(data.pageCount),
-                  })}
-                />
-              </InlineStack>
-            )}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+          ) : (
+            <s-box padding="large">
+              <s-stack gap="base" alignItems="center">
+                <s-paragraph>{t("No projects match these filters.")}</s-paragraph>
+                <s-button onClick={clearFilters}>{t("Clear filters")}</s-button>
+              </s-stack>
+            </s-box>
+          )}
+        </s-section>
+      )}
       {open && (
         <GrowthProjectForm
           open
@@ -131,7 +200,7 @@ export default function Projects() {
           next={params.get("next") || undefined}
         />
       )}
-    </Page>
+    </s-page>
   );
 }
 
