@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "@remix-run/node";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import type { Prisma, ResourceType } from "@prisma/client";
 import { json, redirect } from "@remix-run/node";
@@ -1592,3 +1594,8 @@ export default function AuditsCategory() {
     </Page>
   );
 }
+
+// Single fetch applies route headers to data requests too; Shopify needs
+// them so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);

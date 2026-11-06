@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "@remix-run/node";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
@@ -697,3 +699,8 @@ function formatDate(value: string) {
     timeZone: "UTC",
   });
 }
+
+// Single fetch applies route headers to data requests too; Shopify needs
+// them so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);

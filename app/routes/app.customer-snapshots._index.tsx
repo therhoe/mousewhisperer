@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "@remix-run/node";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -451,3 +453,8 @@ const cell = {
   borderBottom: "1px solid var(--p-color-border-secondary)",
   verticalAlign: "top",
 } as const;
+
+// Single fetch applies route headers to data requests too; Shopify needs
+// them so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);
