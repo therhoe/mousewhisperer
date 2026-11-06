@@ -194,6 +194,7 @@ export default function Projects() {
                 {PROJECT_LIST_STATUSES.map((status) => (
                   <s-press-button
                     key={status}
+                    slot="secondary-actions"
                     ref={(element: unknown) => {
                       controls.current.statuses[status] = element as { pressed: boolean } | null;
                     }}

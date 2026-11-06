@@ -794,6 +794,14 @@ test("results for our own search do not overwrite later typing, but an address c
   assert.match(h.render(), /value="other"/);
 });
 
+test("the status press buttons sit in the button group's secondary-actions slot so Polaris shows them", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData());
+  h.render();
+  const presses = h.state.buttons.filter((button) => button.type === "s-press-button");
+  assert.deepEqual(presses.map((button) => button.label), ["All 23", "Measuring 2", "Idle 14", "Completed 7"]);
+  for (const button of presses) assert.equal(button.slot, "secondary-actions", button.label);
+});
+
 test("A/B quick-create collects Project metadata without starting or requesting a baseline", () => {
   const h = harness("app/components/GrowthProjectForm.tsx");
   const props = { open: true, onClose() {}, shop: "owner.myshopify.com", next: "ab-test" };
