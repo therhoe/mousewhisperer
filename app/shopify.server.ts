@@ -7,7 +7,7 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import type { Session } from "@shopify/shopify-api";
+import { LogSeverity, shopifyApi, type Session } from "@shopify/shopify-api";
 import type { SessionStorage } from "@shopify/shopify-app-session-storage";
 import prisma from "./db.server";
 import { SIGNAL_PLAN, WHISPER_PLAN } from "./utils/billing-plans";
@@ -126,3 +126,39 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export { sessionStorage };
+
+// authenticate.public.appProxy checks the signature and then loads the shop's
+// offline session, so a database outage made validly signed storefront
+// requests look forged. This is the same check as Shopify's own
+// validateAppProxyHmac, retries included, without touching the database. The
+// validator is built on first use, so a config problem fails only the check.
+let appProxyHmacValidator: ((query: URLSearchParams) => Promise<boolean>) | undefined;
+function validateAppProxyHmac(query: URLSearchParams) {
+  if (!appProxyHmacValidator) {
+    const { utils } = shopifyApi({
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
+      apiVersion,
+      hostName: new URL(process.env.SHOPIFY_APP_URL || "").host,
+      isEmbeddedApp: true,
+      logger: { level: LogSeverity.Error },
+    });
+    appProxyHmacValidator = (params) => utils.validateHmac(params, { signator: "appProxy" });
+  }
+  return appProxyHmacValidator(query);
+}
+
+export async function validateAppProxySignature(request: Request): Promise<boolean> {
+  const url = new URL(request.url);
+  const query = new URLSearchParams(url.search);
+  if (!query.get("index")) query.delete("index");
+  if (await validateAppProxyHmac(query)) return true;
+  // Remix fetches signed a `_data` route parameter the app never saw.
+  const route = `routes%2F${url.pathname.replace(/^\//, "").replace(/\/$/, "").replaceAll("/", ".")}`;
+  if (await validateAppProxyHmac(new URLSearchParams(`?_data=${route}&${query.toString()}`))) {
+    return true;
+  }
+  return validateAppProxyHmac(
+    new URLSearchParams(`?_data=${route}._index&${url.search.replace(/^\?/, "")}`),
+  );
+}
