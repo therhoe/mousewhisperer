@@ -3,6 +3,7 @@
 // connects to Shopify or a database.
 // Run: node --test scripts/check-framework-upgrade.mjs
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
@@ -236,4 +237,11 @@ test("Polaris React still server-renders a page under the installed React", () =
   );
   assert.match(html, /Projects/);
   assert.match(html, /Completed/);
+});
+
+test("Polaris web component elements type-check in TSX", () => {
+  const run = spawnSync("npx", ["tsc", "--noEmit", "-p", "scripts/fixtures/tsconfig.polaris.json"], {
+    encoding: "utf8",
+  });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
 });
