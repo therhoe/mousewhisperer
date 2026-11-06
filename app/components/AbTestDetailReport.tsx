@@ -5,7 +5,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import {
   Badge,

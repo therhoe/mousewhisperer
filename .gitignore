@@ -28,3 +28,6 @@ pnpm-lock.yaml
 .vscode
 # Smoke-test notes (framework upgrade plan)
 .smoke/
+
+# React Router type generation
+.react-router/

@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getGrowthMeasurementReport } from "../utils/growth-report.server";
@@ -29,7 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           )
         : Promise.resolve(null),
     ]);
-    return json(
+    return Response.json(
       { report, comparison },
       { headers: { "Cache-Control": "private, no-store" } },
     );

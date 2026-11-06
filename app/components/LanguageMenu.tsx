@@ -1,4 +1,4 @@
-import { useFetcher, useLocation } from "@remix-run/react";
+import { useFetcher, useLocation } from "react-router";
 import type { action as localeAction } from "../routes/api.locale";
 import {
   useI18n,

@@ -4,8 +4,8 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-} from "@remix-run/react";
-import type { MetaFunction } from "@remix-run/node";
+} from "react-router";
+import type { MetaFunction } from "react-router";
 
 export const meta: MetaFunction = () => [
   { title: "Snapshot" },

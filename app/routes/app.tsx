@@ -1,5 +1,5 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import type { ShouldRevalidateFunction } from "@remix-run/react";
+import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import type { ShouldRevalidateFunction } from "react-router";
 import {
   Link,
   Outlet,
@@ -7,10 +7,11 @@ import {
   useLocation,
   useNavigation,
   useRouteError,
-} from "@remix-run/react";
-import { boundary } from "@shopify/shopify-app-remix/server";
+} from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { NavMenu } from "@shopify/app-bridge-react";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-react-router/react";
+import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import enPolaris from "@shopify/polaris/locales/en.json";
 import dePolaris from "@shopify/polaris/locales/de.json";
@@ -20,6 +21,8 @@ import zhTWPolaris from "@shopify/polaris/locales/zh-TW.json";
 import { authenticate } from "../shopify.server";
 import { embeddedContextForShop } from "../utils/embedded-filter-context.server";
 import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
+import { PolarisLink } from "../components/PolarisLink";
+import { POLARIS_URL } from "../utils/polaris";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
 import { I18nProvider, useI18n } from "../utils/i18n";
 import { resolveRequestLocale } from "../utils/i18n.server";
@@ -218,19 +221,20 @@ function AppContent({ apiKey }: { apiKey: string }) {
     !isPageSnapshotCategoryTransition;
 
   return (
-    <AppProvider
-      isEmbeddedApp
-      apiKey={apiKey}
-      i18n={polarisTranslations[locale]}
-    >
-      <BackgroundBillingSync />
-      <AppBridgeNav />
-      {isRouteTransition ? (
-        <InstantRouteShell pathname={pendingPathname} />
-      ) : (
-        <Outlet />
-      )}
-    </AppProvider>
+    <ShopifyAppProvider apiKey={apiKey} polarisUrl={POLARIS_URL}>
+      <PolarisAppProvider
+        i18n={polarisTranslations[locale]}
+        linkComponent={PolarisLink}
+      >
+        <BackgroundBillingSync />
+        <AppBridgeNav />
+        {isRouteTransition ? (
+          <InstantRouteShell pathname={pendingPathname} />
+        ) : (
+          <Outlet />
+        )}
+      </PolarisAppProvider>
+    </ShopifyAppProvider>
   );
 }
 

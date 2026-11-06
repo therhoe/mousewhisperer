@@ -41,7 +41,7 @@ const en = require("@shopify/polaris/locales/en.json");
 const { SnapshotSetupGuide } = compile(
   "../app/components/SnapshotSetupGuide.tsx",
   {
-    "@remix-run/react": {
+    "react-router": {
       useFetcher: () => ({ state: "idle", load() {}, submit() {} }),
       useRouteLoaderData: () => ({ apiKey: "qa-key" }),
       Link: ({ to, ...props }) =>

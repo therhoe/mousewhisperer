@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
 import type { Prisma } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -48,5 +48,5 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     eventCount: _count.events,
     detailUrl: `/app/customer-snapshots/${encodeURIComponent(measurement.customerSnapshotId!)}?journey=${encodeURIComponent(row.id)}`,
   }));
-  return json({ sessions, total, page, pageCount }, { headers: { "Cache-Control": "private, no-store" } });
+  return Response.json({ sessions, total, page, pageCount }, { headers: { "Cache-Control": "private, no-store" } });
 };

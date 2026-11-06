@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createCookie } from "@remix-run/node";
+import { createCookie } from "react-router";
 import { normalizeLocale, preferredLocale, type AppLocale } from "./i18n-core";
 
 export function localeCookie(shop: string) {

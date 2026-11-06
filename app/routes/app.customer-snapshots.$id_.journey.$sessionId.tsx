@@ -1,5 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getCustomerJourney } from "../utils/customer-journey.server";
 
@@ -12,5 +11,5 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     new URL(request.url).searchParams.get("page"),
   );
   if (!journey) throw new Response("Journey not found", { status: 404 });
-  return json(journey, { headers: { "Cache-Control": "private, no-store" } });
+  return Response.json(journey, { headers: { "Cache-Control": "private, no-store" } });
 };

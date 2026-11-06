@@ -14,7 +14,7 @@ const shop = "journey-transport.myshopify.com";
 function trackingAction(recordCustomerJourney) {
   const module = { exports: {} };
   const imports = {
-    "@remix-run/node": { json: (body, init) => Response.json(body, init) },
+    "react-router": { json: (body, init) => Response.json(body, init) },
     "../db.server": {},
     "../utils/channel-report": {},
     "../utils/growth-tracking.server": {},

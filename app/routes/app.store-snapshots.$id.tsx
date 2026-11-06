@@ -1,17 +1,18 @@
-import type { HeadersFunction } from "@remix-run/node";
-import { boundary } from "@shopify/shopify-app-remix/server";
+import { json } from "../utils/route-data";
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import type { Prisma, ResourceType } from "@prisma/client";
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import {
   Link,
   useActionData,
   useLoaderData,
   useSubmit,
   useNavigation,
-} from "@remix-run/react";
+} from "react-router";
 import {
   Banner,
   Badge,

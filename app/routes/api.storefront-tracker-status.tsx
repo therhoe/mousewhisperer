@@ -1,5 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getStorefrontTrackerStatus } from "../utils/storefront-tracker-status.server";
 import { cachedValue } from "../utils/loader-cache.server";
@@ -11,7 +10,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     60_000,
     () => getStorefrontTrackerStatus(admin, session.shop),
   );
-  return json(
+  return Response.json(
     { trackerStatus },
     { headers: { "Cache-Control": "private, no-store" } },
   );

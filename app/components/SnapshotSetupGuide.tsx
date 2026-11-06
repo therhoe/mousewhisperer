@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useFetcher, useRouteLoaderData } from "@remix-run/react";
+import { Link, useFetcher, useRouteLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   Badge,

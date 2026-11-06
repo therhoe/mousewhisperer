@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigation, useRevalidator } from "@remix-run/react";
+import { useNavigation, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
 export function BackgroundBillingSync() {

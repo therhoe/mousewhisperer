@@ -208,7 +208,7 @@ const bundle = await build({
                 const specifier = statement.moduleSpecifier.text;
                 if (
                   specifier.endsWith(".server") ||
-                  specifier === "@remix-run/node"
+                  specifier === "react-router"
                 )
                   return false;
               }

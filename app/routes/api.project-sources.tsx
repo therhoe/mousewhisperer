@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { listProjectSources } from "../utils/growth-projects.server";
 import { cachedValue } from "../utils/loader-cache.server";
@@ -9,7 +9,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     300_000,
     () => listProjectSources(session.shop),
   );
-  return json(
+  return Response.json(
     { sources },
     { headers: { "Cache-Control": "private, no-store" } },
   );

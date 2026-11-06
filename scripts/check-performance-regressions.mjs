@@ -40,7 +40,10 @@ function loadModule(file, mocks = {}, globals = {}) {
       module: runtimeModule,
       require: (specifier) => {
         if (Object.hasOwn(mocks, specifier)) return mocks[specifier];
-        if (specifier === "@remix-run/node")
+        if (specifier === "../utils/route-data") return { json };
+        if (specifier === "../components/PolarisLink") return { PolarisLink: () => null };
+        if (specifier === "../utils/polaris") return { POLARIS_URL: "https://cdn.shopify.com/shopifycloud/polaris-2.js" };
+        if (specifier === "react-router")
           return {
             json,
             redirect: (to) =>
@@ -48,7 +51,7 @@ function loadModule(file, mocks = {}, globals = {}) {
           };
         if (
           specifier.startsWith("@shopify/") ||
-          specifier === "@remix-run/react"
+          specifier === "react-router"
         )
           return {};
         if (specifier.startsWith("react")) return require(specifier);
@@ -566,7 +569,7 @@ test("background billing transport errors stay local and changed state refreshes
           ],
           useEffect: (effect) => effects.push(effect),
         },
-        "@remix-run/react": {
+        "react-router": {
           useNavigation: () => navigation,
           useRevalidator: () => ({
             state: "idle",

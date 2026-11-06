@@ -1,5 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import { reconcileShopBillingFromShopify } from "../utils/billing.server";
@@ -9,7 +8,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
   if (request.method !== "POST") {
-    return json({ error: "Method not allowed" }, { status: 405 });
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
   try {
     const changed = await cachedValue(
@@ -29,7 +28,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       },
     );
-    return json(
+    return Response.json(
       { billingReconciled: true, changed },
       {
         headers: { "Cache-Control": "private, no-store" },
@@ -41,7 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     // A background refresh is not an authorization decision. Keep the page
     // usable; creation and upgrade still perform their fresh server checks.
-    return json(
+    return Response.json(
       { billingReconciled: true, changed: false },
       {
         headers: { "Cache-Control": "private, no-store" },

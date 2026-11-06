@@ -1,5 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 
 type AvailableResource = {
@@ -17,7 +16,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     try {
       const resp = await admin.graphql(`{ pages(first: 50) { edges { node { id title handle } } } }`);
       const data = await resp.json();
-      return json({
+      return Response.json({
         category,
         resources: (data.data?.pages?.edges || []).map((edge: any) => ({
           id: edge.node.id,
@@ -26,7 +25,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         })),
       });
     } catch {
-      return json({ category, resources });
+      return Response.json({ category, resources });
     }
   }
 
@@ -53,8 +52,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     } catch {}
 
-    return json({ category, resources });
+    return Response.json({ category, resources });
   }
 
-  return json({ category, resources }, { status: 404 });
+  return Response.json({ category, resources }, { status: 404 });
 };

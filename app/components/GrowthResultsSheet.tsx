@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useNavigate } from "@remix-run/react";
+import { useFetcher, useNavigate } from "react-router";
 import { Modal as AppBridgeModal, TitleBar } from "@shopify/app-bridge-react";
 import {
   Banner,

@@ -36,7 +36,7 @@ const result = await build({
         b.onResolve(
           {
             filter:
-              /^(?:@remix-run\/react|@shopify\/app-bridge-react)$|(?:^|\/)background-json$/,
+              /^(?:react-router|@shopify\/app-bridge-react)$|(?:^|\/)background-json$/,
           },
           (args) => ({ path: args.path, namespace: "fixture" }),
         );

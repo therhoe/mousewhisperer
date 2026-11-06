@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { authenticate, isShopifyBillingTestMode } from "../shopify.server";
 import { BILLING_PLAN_NAMES, SIGNAL_PLAN } from "../utils/billing-plans";
 import { syncShopBillingFromSubscription } from "../utils/billing.server";

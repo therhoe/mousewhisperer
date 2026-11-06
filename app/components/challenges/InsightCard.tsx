@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Card, Text, Badge, Button, TextField, InlineStack, BlockStack } from "@shopify/polaris";
-import { Link } from "@remix-run/react";
+import { Link } from "react-router";
 import { CategoryBadge } from "./CategoryBadge";
 import type { InsightCategory } from "@prisma/client";
 

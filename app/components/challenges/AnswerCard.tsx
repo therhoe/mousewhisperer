@@ -1,6 +1,6 @@
 import { Card, BlockStack, InlineStack, Text, Button, Popover, ActionList, Modal } from "@shopify/polaris";
 import { useState, useCallback } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { RichTextDisplay } from "./RichTextDisplay";
 
 interface AnswerCardProps {

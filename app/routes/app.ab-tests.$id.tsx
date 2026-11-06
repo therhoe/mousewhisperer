@@ -1,9 +1,10 @@
-import type { HeadersFunction } from "@remix-run/node";
-import { boundary } from "@shopify/shopify-app-remix/server";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "../utils/route-data";
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import type { loader as appLoader } from "./app";
 import { useMemo, useState } from "react";
-import { json, redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import {
   Link,
   useLoaderData,
@@ -11,7 +12,7 @@ import {
   useSearchParams,
   useRouteLoaderData,
   useSubmit,
-} from "@remix-run/react";
+} from "react-router";
 import {
   Badge,
   BlockStack,

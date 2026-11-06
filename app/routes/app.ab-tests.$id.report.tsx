@@ -1,5 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import {
@@ -56,7 +55,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (!snapshot) {
       throw new Response("Variant not found", { status: 404 });
     }
-    return json({ testId: test.id, variantId, snapshot, filterQuery });
+    return Response.json({ testId: test.id, variantId, snapshot, filterQuery });
   }
 
   const stats = await cachedValue(
@@ -64,5 +63,5 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     AB_REPORT_CACHE_TTL_MS,
     () => getAbTestStats(test.id, test.goal, filters),
   );
-  return json({ testId: test.id, stats, filterQuery });
+  return Response.json({ testId: test.id, stats, filterQuery });
 };

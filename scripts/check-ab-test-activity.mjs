@@ -12,6 +12,12 @@ import { runInNewContext } from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+// React Router 7: screen loaders import json() from ../utils/route-data; this
+// double answers with a real Response so the assertions below stay unchanged.
+const routeDataMock = {
+  json: (body, init) =>
+    Response.json(JSON.parse(JSON.stringify(body) ?? "null"), typeof init === "number" ? { status: init } : init),
+};
 
 const require = createRequire(import.meta.url);
 const read = (path) =>
@@ -35,7 +41,7 @@ function compile(source, mocks = {}, globals = {}) {
     exports: mod.exports,
     module: mod,
     require: (specifier) =>
-      specifier in mocks ? mocks[specifier] : require(specifier),
+      specifier in mocks ? mocks[specifier] : specifier === "../utils/route-data" ? routeDataMock : require(specifier),
     URL,
     URLSearchParams,
     Request,
@@ -155,7 +161,8 @@ function harness(source = listSource) {
       useRef: (value) => ({ current: value }),
       useEffect: (effect) => state.effects.push(effect),
     },
-    "@remix-run/react": { useFetcher: () => fetcher },
+    "react-router": {
+    ...require("react-router"), useFetcher: () => fetcher },
     "@shopify/polaris": {
       ...polaris,
       Button: (props) => {

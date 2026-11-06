@@ -22,7 +22,7 @@ const result = await build({
       name: "fixture-services",
       setup(b) {
         b.onResolve(
-          { filter: /^(@remix-run\/react|@shopify\/app-bridge-react)$/ },
+          { filter: /^(react-router|@shopify\/app-bridge-react)$/ },
           (args) => ({ path: args.path, namespace: "fixture" }),
         );
         b.onLoad({ filter: /.*/, namespace: "fixture" }, (args) => ({

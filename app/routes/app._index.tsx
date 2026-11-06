@@ -1,8 +1,9 @@
-import type { HeadersFunction } from "@remix-run/node";
-import { boundary } from "@shopify/shopify-app-remix/server";
+import { json } from "../utils/route-data";
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { type LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import { BlockStack, Layout, Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { listGrowthProjects } from "../utils/growth-projects.server";

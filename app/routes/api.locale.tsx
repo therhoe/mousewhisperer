@@ -1,4 +1,4 @@
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { SUPPORTED_LOCALES, type AppLocale } from "../utils/i18n-core";
 import { localeCookie } from "../utils/i18n.server";
@@ -10,12 +10,12 @@ export async function action({ request }: ActionFunctionArgs) {
     typeof locale !== "string" ||
     !SUPPORTED_LOCALES.includes(locale as AppLocale)
   ) {
-    return json(
+    return Response.json(
       { error: "Unsupported language" },
       { status: 400, headers: { "Cache-Control": "private, no-store" } },
     );
   }
-  return json(
+  return Response.json(
     { locale },
     {
       headers: {

@@ -1,5 +1,5 @@
 import { Banner } from "@shopify/polaris";
-import { useNavigate } from "@remix-run/react";
+import { useNavigate } from "react-router";
 
 export function ProfileSetupBanner() {
   const navigate = useNavigate();

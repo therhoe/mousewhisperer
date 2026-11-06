@@ -1,5 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import prisma from "../db.server";
 import { readChannelAcquisition } from "../utils/channel-report";
 import { growthAcquisitionMatch, writeGrowthVisit } from "../utils/growth-tracking.server";
@@ -100,7 +99,7 @@ function getRequestShop(request: Request): string | null {
 export const action = async ({ request }: ActionFunctionArgs) => {
   // Only allow POST requests
   if (request.method !== "POST") {
-    return json({ error: "Method not allowed" }, { status: 405 });
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
   // Enable CORS for storefront requests
@@ -117,7 +116,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const access = await verifyTrackingRequest(request, data.eventType);
     if (!access.allowed) {
-      return json(
+      return Response.json(
         { error: "Invalid tracking signature" },
         { status: 401, headers },
       );
@@ -156,8 +155,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
       if (customerOnly) {
-        if (!customerError) return json({ ok: true }, { headers });
-        return json(
+        if (!customerError) return Response.json({ ok: true }, { headers });
+        return Response.json(
           { error: "Please retry this event" },
           { status: 503, headers },
         );
@@ -185,7 +184,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return handleEngagementTrack(data, headers, request);
   } catch (error) {
     console.error("Tracking error:", error);
-    return json({ error: "Invalid request" }, { status: 400, headers });
+    return Response.json({ error: "Invalid request" }, { status: 400, headers });
   }
 };
 
@@ -202,7 +201,7 @@ export const loader = async ({ request }: { request: Request }) => {
     });
   }
 
-  return json({ error: "Method not allowed" }, { status: 405 });
+  return Response.json({ error: "Method not allowed" }, { status: 405 });
 };
 
 async function handleEngagementTrack(
@@ -256,7 +255,7 @@ async function handleEngagementTrack(
   } = data;
 
   if (!sessionId || (!productHandle && !pagePath && !pageUrl)) {
-    return json({ error: "Missing required fields" }, { status: 400, headers });
+    return Response.json({ error: "Missing required fields" }, { status: 400, headers });
   }
 
   // Generate pageViewId server-side if not provided (backward compat with old tracker)
@@ -356,7 +355,7 @@ async function handleEngagementTrack(
     !abTestId
   ) {
     // Independent channel captures also collect pages without any other audit.
-    return json({ ok: true, tracked: false }, { headers });
+    return Response.json({ ok: true, tracked: false }, { headers });
   }
 
   // Get geo data only after we know this request maps to an active audit.
@@ -715,7 +714,7 @@ async function handleEngagementTrack(
     }
   }
 
-  return json({ ok: true, tracked: true, visitorType }, { headers });
+  return Response.json({ ok: true, tracked: true, visitorType }, { headers });
 }
 
 async function handlePixelEvent(
@@ -728,9 +727,9 @@ async function handlePixelEvent(
 
   if (eventType === "journey_batch") {
     if (!channelShop || data.consent !== true)
-      return json({ accepted: false }, { status: 400, headers });
+      return Response.json({ accepted: false }, { status: 400, headers });
     if (JSON.stringify(data).length > 64_000)
-      return json({ error: "Batch too large" }, { status: 413, headers });
+      return Response.json({ error: "Batch too large" }, { status: 413, headers });
     const visitorType = classifyVisitor({
       timeOnPage: Math.max(0, Number(data.timeOnPage) || 0),
       scrollDepth: Number(data.scrollDepth) || 0,
@@ -743,7 +742,7 @@ async function handlePixelEvent(
       linearMovement: data.linearMovement === true,
       datacenterIP: isDatacenterIP(getClientIP(request) || "").isDatacenter,
     });
-    return json(
+    return Response.json(
       await recordCustomerJourney(
         channelShop,
         { ...data, enrollmentOnly: false },
@@ -753,18 +752,18 @@ async function handlePixelEvent(
     );
   }
 
-  if (eventType === "cart_removed") return json({ ok: true }, { headers });
+  if (eventType === "cart_removed") return Response.json({ ok: true }, { headers });
 
   if (!sessionId) {
     console.log(`[MW Pixel] Event "${eventType}" missing sessionId — dropping`);
-    return json({ error: "Missing sessionId" }, { status: 400, headers });
+    return Response.json({ error: "Missing sessionId" }, { status: 400, headers });
   }
 
   if (eventType === "ab_test_assign") {
     const clientShop = normalizeShopDomain(data.shop);
     const shop = getRequestShop(request) || clientShop;
     if (!shop) {
-      return json(
+      return Response.json(
         { ok: true, assigned: false, reason: "missing_shop" },
         { headers },
       );
@@ -784,13 +783,13 @@ async function handlePixelEvent(
     });
 
     if (!assignment.assigned) {
-      return json(
+      return Response.json(
         { ok: true, assigned: false, reason: assignment.reason },
         { headers },
       );
     }
 
-    return json(
+    return Response.json(
       {
         ok: true,
         assigned: true,
@@ -831,7 +830,7 @@ async function handlePixelEvent(
 
     if (!productHandle) {
       console.log("[MW Pixel] ATC missing productHandle, skipping");
-      return json({ ok: true, tracked: channelTracked > 0 }, { headers });
+      return Response.json({ ok: true, tracked: channelTracked > 0 }, { headers });
     }
 
     const productMatch = buildProductProjectMatch({
@@ -879,7 +878,7 @@ async function handlePixelEvent(
       timestamp,
     });
 
-    return json(
+    return Response.json(
       {
         ok: true,
         tracked: !!visit || storeTracked || abTracked > 0 || channelTracked > 0,
@@ -1021,7 +1020,7 @@ async function handlePixelEvent(
       totalPrice: data.totalPrice,
       currency: data.currency,
     });
-    return json(
+    return Response.json(
       {
         ok: true,
         tracked: true,
@@ -1085,7 +1084,7 @@ async function handlePixelEvent(
       return 0;
     });
 
-    return json(
+    return Response.json(
       {
         ok: true,
         tracked:
@@ -1107,7 +1106,7 @@ async function handlePixelEvent(
   }
 
   console.log(`[MW Pixel] Unknown event type: ${eventType}`);
-  return json({ ok: true, tracked: false }, { headers });
+  return Response.json({ ok: true, tracked: false }, { headers });
 }
 
 function buildProductProjectMatch(product: {

@@ -1,8 +1,4 @@
-import {
-  json,
-  type ActionFunctionArgs,
-  type LoaderFunctionArgs,
-} from "@remix-run/node";
+import { type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   savedTrackerState,
@@ -11,11 +7,11 @@ import {
 const headers = { "Cache-Control": "private, no-store" };
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
-  return json({ tracker: await savedTrackerState(admin) }, { headers });
+  return Response.json({ tracker: await savedTrackerState(admin) }, { headers });
 };
 export const action = async ({ request }: ActionFunctionArgs) => {
   await authenticate.admin(request);
-  return json(
+  return Response.json(
     { error: "Create a Project to start collecting data.", redirectUrl: "/app/projects?create=1" },
     { status: 409, headers },
   );

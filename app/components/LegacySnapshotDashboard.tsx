@@ -1,14 +1,15 @@
+import { json } from "../utils/route-data";
 // Retained during the Projects migration to preserve the previous dashboard and setup work.
 import { useCallback, useState, useEffect, useRef } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import {
   useLoaderData,
   useSubmit,
   useNavigation,
   Link,
   useFetcher,
-} from "@remix-run/react";
+} from "react-router";
 import {
   Page,
   Card,

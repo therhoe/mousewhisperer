@@ -1,5 +1,4 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import { getCROActivityTimeline } from "../utils/optimization-timeline.server";
@@ -46,7 +45,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       progress.rangeEnd,
     );
 
-    return json(
+    return Response.json(
       { progress, events },
       {
         headers: {
@@ -59,7 +58,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.warn("[dashboard] Conversion report failed", {
       error: error instanceof Error ? error.name : "UnknownError",
     });
-    return json(
+    return Response.json(
       {
         error:
           "Your dashboard is ready, but the conversion report is temporarily unavailable. Please retry.",
@@ -80,7 +79,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "delete-optimization") {
     const id = String(formData.get("id") || "");
     if (!id)
-      return json(
+      return Response.json(
         { ok: false, error: "Missing optimization ID" },
         { status: 400 },
       );
@@ -88,15 +87,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id, shop: session.shop, sourceType: "MANUAL" },
     });
     return result.count
-      ? json({ ok: true })
-      : json({ ok: false, error: "Optimization not found" }, { status: 404 });
+      ? Response.json({ ok: true })
+      : Response.json({ ok: false, error: "Optimization not found" }, { status: 404 });
   }
 
   if (
     actionType !== "create-optimization" &&
     actionType !== "update-optimization"
   ) {
-    return json({ ok: false, error: "Invalid action" }, { status: 400 });
+    return Response.json({ ok: false, error: "Invalid action" }, { status: 400 });
   }
 
   const title = String(formData.get("title") || "").trim();
@@ -119,7 +118,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const endedAt = parseEventDate(formData.get("endedAt"));
 
   if (!title || title.length > 120) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: "Enter an optimization title of 120 characters or fewer.",
@@ -128,13 +127,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
   if (!implementedAt) {
-    return json(
+    return Response.json(
       { ok: false, error: "Enter a valid implementation date." },
       { status: 400 },
     );
   }
   if (endedAt && endedAt < implementedAt) {
-    return json(
+    return Response.json(
       {
         ok: false,
         error: "End date cannot be before the implementation date.",
@@ -162,12 +161,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       data,
     });
     return result.count
-      ? json({ ok: true })
-      : json({ ok: false, error: "Optimization not found" }, { status: 404 });
+      ? Response.json({ ok: true })
+      : Response.json({ ok: false, error: "Optimization not found" }, { status: 404 });
   }
 
   await prisma.optimizationEvent.create({
     data: { ...data, shop: session.shop },
   });
-  return json({ ok: true });
+  return Response.json({ ok: true });
 };

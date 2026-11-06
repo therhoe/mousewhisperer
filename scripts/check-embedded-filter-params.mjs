@@ -8,6 +8,12 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+// React Router 7: screen loaders import json() from ../utils/route-data; this
+// double answers with a real Response so the assertions below stay unchanged.
+const routeDataMock = {
+  json: (body, init) =>
+    Response.json(JSON.parse(JSON.stringify(body) ?? "null"), typeof init === "number" ? { status: init } : init),
+};
 
 const require = createRequire(import.meta.url);
 function compile(file, mocks = {}) {
@@ -27,7 +33,7 @@ function compile(file, mocks = {}) {
     {
       module: mod,
       exports: mod.exports,
-      require: (id) => (id in mocks ? mocks[id] : require(id)),
+      require: (id) => (id in mocks ? mocks[id] : id === "../utils/route-data" ? routeDataMock : require(id)),
       URLSearchParams,
       Buffer,
     },
@@ -102,7 +108,8 @@ test("both actual A/B filter controls retain embedded recovery context without a
   const Container = ({ children }) => React.createElement("div", null, children);
   const Layout = Object.assign(Container, { Section: Container });
   const route = compile("app/routes/app.ab-tests.$id.tsx", {
-    "@remix-run/react": {
+    "react-router": {
+    ...require("react-router"),
       Link: Container,
       useLoaderData: () => ({
         test: { id: "test-one", name: "QA", status: "LIVE", goal: "CONVERSION", trafficSplit: 50, targetPageType: "PRODUCT" },

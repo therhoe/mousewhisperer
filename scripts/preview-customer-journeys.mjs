@@ -64,7 +64,7 @@ const bundle = await build({
               if (
                 ts.isImportDeclaration(s) &&
                 (s.moduleSpecifier.text.endsWith(".server") ||
-                  s.moduleSpecifier.text === "@remix-run/node" ||
+                  s.moduleSpecifier.text === "react-router" ||
                   s.importClause?.isTypeOnly)
               )
                 return false;

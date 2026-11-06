@@ -43,6 +43,7 @@ function fixture(failCustomer = false) {
     exports: module.exports,
     URL,
     Error,
+    Response,
     console: { warn() {}, error() {} },
     json: (body, options) => new Response(JSON.stringify(body), options),
     recordCustomerCommerce: async (input) => {

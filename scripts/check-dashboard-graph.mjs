@@ -35,7 +35,7 @@ function loadComponents(react = React) {
       require: (specifier) =>
         specifier === "react"
           ? react
-          : specifier === "@remix-run/react"
+          : specifier === "react-router"
             ? {
                 useFetcher: () => ({
                   state: "idle",

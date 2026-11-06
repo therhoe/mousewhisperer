@@ -1,16 +1,17 @@
-import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
   BillingInterval,
   BillingReplacementBehavior,
   shopifyApp,
-} from "@shopify/shopify-app-remix/server";
+} from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import type { Session } from "@shopify/shopify-api";
 import type { SessionStorage } from "@shopify/shopify-app-session-storage";
 import prisma from "./db.server";
 import { SIGNAL_PLAN, WHISPER_PLAN } from "./utils/billing-plans";
+import { POLARIS_URL } from "./utils/polaris";
 
 const SESSION_CACHE_TTL_MS = 5 * 60_000;
 
@@ -89,9 +90,7 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage,
   distribution: AppDistribution.AppStore,
-  future: {
-    unstable_newEmbeddedAuthStrategy: true,
-  },
+  polarisUrl: POLARIS_URL,
   billing: {
     [WHISPER_PLAN]: {
       replacementBehavior: BillingReplacementBehavior.ApplyImmediately,
