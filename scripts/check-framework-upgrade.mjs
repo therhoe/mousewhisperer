@@ -206,3 +206,34 @@ test("document responses get Shopify's headers before Vercel renders them", asyn
   assert.equal(vLoad, loadContext);
   assert.equal(mod.streamTimeout, 5000);
 });
+
+test("React and React DOM are the same 19.x version", () => {
+  const deps = JSON.parse(read("package.json")).dependencies;
+  assert.match(deps.react, /^19\.\d+\.\d+$/);
+  assert.equal(deps["react-dom"], deps.react);
+});
+
+test("Polaris React still server-renders a page under the installed React", () => {
+  const React = require("react");
+  const { renderToStaticMarkup } = require("react-dom/server");
+  const { AppProvider, Page, Card, Badge, Button, Text } = require("@shopify/polaris");
+  const html = renderToStaticMarkup(
+    React.createElement(
+      AppProvider,
+      { i18n: require("@shopify/polaris/locales/en.json") },
+      React.createElement(
+        Page,
+        { title: "Projects", primaryAction: { content: "Create project" } },
+        React.createElement(
+          Card,
+          null,
+          React.createElement(Text, { as: "p" }, "Spring collection"),
+          React.createElement(Badge, { tone: "success" }, "Completed"),
+          React.createElement(Button, null, "View results"),
+        ),
+      ),
+    ),
+  );
+  assert.match(html, /Projects/);
+  assert.match(html, /Completed/);
+});
