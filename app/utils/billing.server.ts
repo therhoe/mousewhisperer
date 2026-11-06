@@ -168,8 +168,12 @@ type AdminGraphqlClient = {
   ) => Promise<Response>;
 };
 
+// Partner API ActiveSubscription has no `id`. `legacySubscriptionId` is the
+// Admin API AppSubscription GID, the same id the legacy query and the
+// app_subscriptions/update webhook store.
+// https://shopify.dev/docs/api/partner/2026-07/objects/ActiveSubscription
 type PartnerActiveSubscription = {
-  id?: string | null;
+  legacySubscriptionId?: string | null;
   billingPeriod?: string | null;
   cancelAtEndOfCycle?: boolean | null;
   currentBillingCycle?: {
@@ -187,7 +191,7 @@ type PartnerActiveSubscription = {
 const SHOPIFY_APP_PRICING_QUERY = `#graphql
   query ActiveSubscription($appId: ID!, $shopId: ID!) {
     activeSubscription(appId: $appId, shopId: $shopId) {
-      id
+      legacySubscriptionId
       billingPeriod
       cancelAtEndOfCycle
       currentBillingCycle {
@@ -381,13 +385,15 @@ async function syncShopBillingFromShopifyAppPricing(
     return null;
   }
 
+  const shopifySubscriptionId =
+    subscription.legacySubscriptionId || mappedPlan.handle;
   const billing = await prisma.shopBilling.upsert({
     where: { shop },
     create: {
       shop,
       plan: mappedPlan.plan,
       status: "ACTIVE",
-      shopifySubscriptionId: subscription.id || mappedPlan.handle,
+      shopifySubscriptionId,
       currentPeriodEnd: subscription.currentBillingCycle?.endTime
         ? new Date(subscription.currentBillingCycle.endTime)
         : null,
@@ -395,7 +401,7 @@ async function syncShopBillingFromShopifyAppPricing(
     update: {
       plan: mappedPlan.plan,
       status: subscription.cancelAtEndOfCycle ? "CANCELLED" : "ACTIVE",
-      shopifySubscriptionId: subscription.id || mappedPlan.handle,
+      shopifySubscriptionId,
       currentPeriodEnd: subscription.currentBillingCycle?.endTime
         ? new Date(subscription.currentBillingCycle.endTime)
         : null,
