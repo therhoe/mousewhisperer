@@ -24,4 +24,7 @@ extensions/*/dist/
 # Local research and synthetic UI fixtures are not runtime assets.
 docs/
 preview/
+.smoke/
+.superpowers/
+.react-router/
 public/_dev/
