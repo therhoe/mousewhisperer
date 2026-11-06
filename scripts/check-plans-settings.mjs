@@ -236,6 +236,49 @@ test("the tracking status API answers with the theme embed and the pixel togethe
   assert.equal(body.pixelStatus, "missing");
 });
 
+test("an unknown tracking status is not kept in the cache, so Retry asks again", async () => {
+  const store = new Map();
+  const cleared = [];
+  let pixel = "unknown";
+  let tracker = { status: "unknown", storefrontUrl: "", checkedAt: "", message: "offline" };
+  let trackerCalls = 0;
+  const route = loadModule("app/routes/api.storefront-tracker-status.tsx", {
+    "../shopify.server": { authenticate: { admin: async () => ({ admin: {}, session: { shop: "a.myshopify.com" } }) } },
+    "../utils/storefront-tracker-status.server": {
+      getStorefrontTrackerStatus: async () => { trackerCalls += 1; return tracker; },
+    },
+    "../utils/web-pixel.server": { getWebPixelStatus: async () => pixel },
+    "../utils/loader-cache.server": {
+      cachedValue: async (key, _ttl, load) => {
+        if (store.has(key)) return store.get(key);
+        const value = await load();
+        store.set(key, value);
+        return value;
+      },
+      clearCacheKey: (key) => { cleared.push(key); store.delete(key); },
+    },
+    "@shopify/shopify-app-react-router/server": boundaryMock,
+  });
+  const ask = async () => (await route.loader({ request: new Request("https://app.test/api/storefront-tracker-status") })).json();
+  const first = await ask();
+  assert.equal(first.trackerStatus.status, "unknown");
+  assert.equal(first.pixelStatus, "unknown");
+  pixel = "active";
+  tracker = { status: "active", storefrontUrl: "https://a.example", checkedAt: "", message: "" };
+  const retry = await ask();
+  assert.equal(retry.trackerStatus.status, "active", "Retry asked Shopify again");
+  assert.equal(retry.pixelStatus, "active");
+  assert.equal(trackerCalls, 2);
+  const cachedCalls = trackerCalls;
+  await ask();
+  assert.equal(trackerCalls, cachedCalls, "an active result stays cached");
+  pixel = "missing";
+  store.clear();
+  tracker = { status: "missing", storefrontUrl: "", checkedAt: "", message: "" };
+  await ask();
+  assert.deepEqual(cleared.length, 2, "only the two unknown results were cleared");
+});
+
 function settingsRoute(tracking) {
   let loaderData;
   const route = loadModule("app/routes/app.settings.tsx", {

@@ -4,18 +4,22 @@ import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getStorefrontTrackerStatus } from "../utils/storefront-tracker-status.server";
 import { getWebPixelStatus } from "../utils/web-pixel.server";
-import { cachedValue } from "../utils/loader-cache.server";
+import { cachedValue, clearCacheKey } from "../utils/loader-cache.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
+  const trackerKey = `tracker-status:${session.shop}`;
+  const pixelKey = `pixel-status:${session.shop}`;
   const [trackerStatus, pixelStatus] = await Promise.all([
-    cachedValue(`tracker-status:${session.shop}`, 60_000, () =>
+    cachedValue(trackerKey, 60_000, () =>
       getStorefrontTrackerStatus(admin, session.shop),
     ),
-    cachedValue(`pixel-status:${session.shop}`, 60_000, () =>
-      getWebPixelStatus(admin),
-    ),
+    cachedValue(pixelKey, 60_000, () => getWebPixelStatus(admin)),
   ]);
+  // "unknown" means the check failed, not that the answer is unknown for a
+  // minute: forget it so the next request, including Retry, asks again.
+  if (trackerStatus.status === "unknown") clearCacheKey(trackerKey);
+  if (pixelStatus === "unknown") clearCacheKey(pixelKey);
   return Response.json(
     { trackerStatus, pixelStatus },
     { headers: { "Cache-Control": "private, no-store" } },
