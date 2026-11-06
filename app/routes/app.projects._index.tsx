@@ -1,7 +1,7 @@
 import { json } from "../utils/route-data";
 import type { HeadersFunction } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -90,29 +90,61 @@ export default function Projects() {
     if (requestedCreate === "1") setOpen(true);
   }, [requestedCreate]);
   const [query, setQuery] = useState(data.filters.query);
+
+  // The most recently requested address. `params` stays on the old address
+  // until the loader finishes, so every change builds on this ref instead.
+  const latest = useRef(params);
+  // Addresses this screen requested that have not arrived yet, oldest first.
+  const pending = useRef<string[]>([]);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelSearch() {
+    if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+    searchTimer.current = null;
+  }
   useEffect(() => {
+    const at = pending.current.indexOf(params.toString());
+    if (at >= 0) {
+      // Our own request arrived: keep what the merchant typed since.
+      pending.current.splice(0, at + 1);
+      if (!pending.current.length) latest.current = params;
+      return;
+    }
+    // Back/Forward or a link: the address wins.
+    pending.current = [];
+    latest.current = params;
+    cancelSearch();
     setQuery(data.filters.query);
-  }, [data.filters.query]);
+  }, [params]);
 
   // Filters and pages never add Back steps (rule 2).
+  function request(next: URLSearchParams) {
+    if (next.toString() !== latest.current.toString()) pending.current.push(next.toString());
+    latest.current = next;
+    setParams(next, { replace: true, preventScrollReset: true });
+  }
   function update(changes: Record<string, string | null>) {
-    setParams(listParams(params, changes), { replace: true, preventScrollReset: true });
+    request(listParams(latest.current, changes));
   }
   useEffect(() => {
     const next = query.trim();
-    if (next === data.filters.query) return;
-    const timer = setTimeout(() => update({ q: next || null }), 300);
-    return () => clearTimeout(timer);
-  }, [query, data.filters.query]);
+    cancelSearch();
+    if (next === (latest.current.get("q") ?? "")) return;
+    searchTimer.current = setTimeout(() => {
+      searchTimer.current = null;
+      update({ q: next || null });
+    }, 300);
+    return cancelSearch;
+  }, [query, params]);
 
   function close() {
     setOpen(false);
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams(latest.current);
     next.delete("create");
     next.delete("next");
-    setParams(next, { replace: true });
+    request(next);
   }
   function clearFilters() {
+    cancelSearch();
     setQuery("");
     update({ status: null, scope: null, q: null });
   }

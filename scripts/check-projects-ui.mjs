@@ -18,6 +18,18 @@ const routeDataMock = {
 const require = createRequire(import.meta.url);
 const read = (file) =>
   readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+// Controllable timers: the compile context gets these instead of real ones.
+const timers = [];
+const fakeSetTimeout = (fn, ms) => {
+  timers.push({ fn, ms, cancelled: false, fired: false });
+  return timers.length;
+};
+const fakeClearTimeout = (id) => {
+  if (timers[id - 1]) timers[id - 1].cancelled = true;
+};
+const fireTimers = () => {
+  for (const timer of timers.splice(0)) if (!timer.cancelled && !timer.fired) { timer.fired = true; timer.fn(); }
+};
 function compile(file, mocks = {}) {
   const mod = { exports: {} };
   runInNewContext(
@@ -41,6 +53,8 @@ function compile(file, mocks = {}) {
       Date,
       crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000001" },
       console,
+      setTimeout: fakeSetTimeout,
+      clearTimeout: fakeClearTimeout,
     },
   );
   return mod.exports;
@@ -53,6 +67,7 @@ const realJsx = require("react/jsx-runtime");
 // Records the click handlers of Polaris elements so tests can press them.
 function jsxRuntime(state) {
   const record = (type, props) => {
+    if (type === "s-search-field" && typeof props?.onInput === "function") state.searchInput = props.onInput;
     if (typeof type === "string" && type.startsWith("s-") && typeof props?.onClick === "function")
       state.buttons.push({ type, slot: props.slot, label: props.children, onClick: props.onClick });
   };
@@ -243,7 +258,9 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
       useSearchParams: () => [
         state.params,
         (params, options) => {
-          state.params = params;
+          // holdNavigation simulates a slow loader: the address stays put until the test lets it arrive.
+          if (state.holdNavigation) state.requested = params;
+          else state.params = params;
           state.navigationOptions = options;
         },
       ],
@@ -704,6 +721,71 @@ test("Projects shows the first-project state, and a no-match state with Clear fi
   filtered.state.buttons.find((button) => button.label === "Clear filters").onClick();
   assert.equal(filtered.state.params.toString(), "");
   assert.equal(filtered.state.navigationOptions.replace, true);
+});
+
+const typeInto = (h, value) => h.state.searchInput({ currentTarget: { value } });
+
+test("a pending search cannot undo Clear filters while the loader is slow", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({
+    projects: [],
+    total: 0,
+    filters: { status: "COMPLETED", scope: "ALL", query: "zzz", page: 1 },
+  }));
+  h.state.params = new URLSearchParams("status=COMPLETED&q=zzz");
+  h.state.holdNavigation = true;
+  h.render();
+  typeInto(h, "zzzy");
+  h.render();
+  h.state.buttons.find((button) => button.label === "Clear filters").onClick();
+  h.render();
+  fireTimers();
+  h.render();
+  fireTimers();
+  const last = h.state.requested;
+  assert.equal(last.has("status"), false, "status stays cleared");
+  assert.equal(last.has("q"), false, "the search stays cleared");
+});
+
+test("a pending search keeps a status chosen before it fires, and a status keeps the search", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({
+    filters: { status: "ALL", scope: "ALL", query: "", page: 1 },
+  }));
+  h.state.params = new URLSearchParams();
+  h.state.holdNavigation = true;
+  h.render();
+  typeInto(h, "spring");
+  h.render();
+  h.state.buttons.find((button) => button.label === "Idle 14").onClick();
+  assert.equal(h.state.requested.get("status"), "IDLE");
+  h.render();
+  fireTimers();
+  assert.equal(h.state.requested.get("status"), "IDLE", "the old address does not restore the status");
+  assert.equal(h.state.requested.get("q"), "spring");
+  assert.equal(h.state.navigationOptions.replace, true);
+  assert.equal(h.state.navigationOptions.preventScrollReset, true);
+});
+
+test("results for our own search do not overwrite later typing, but an address change does", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({
+    filters: { status: "ALL", scope: "ALL", query: "", page: 1 },
+  }));
+  h.state.params = new URLSearchParams();
+  h.state.holdNavigation = true;
+  h.render();
+  typeInto(h, "spring");
+  h.render();
+  fireTimers();
+  typeInto(h, "springs");
+  // the loader answers the first request while the merchant has typed one more letter
+  h.state.params = h.state.requested;
+  h.state.data = projectsData({ filters: { status: "ALL", scope: "ALL", query: "spring", page: 1 } });
+  h.render();
+  assert.match(h.render(), /value="springs"/);
+  // Back to an address the screen did not request
+  h.state.params = new URLSearchParams("q=other");
+  h.state.data = projectsData({ filters: { status: "ALL", scope: "ALL", query: "other", page: 1 } });
+  h.render();
+  assert.match(h.render(), /value="other"/);
 });
 
 test("A/B quick-create collects Project metadata without starting or requesting a baseline", () => {
