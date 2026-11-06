@@ -78,7 +78,7 @@ const bundle = await build({
     contents: `
       import React from 'react';
       import { createRoot } from 'react-dom/client';
-      import { createBrowserRouter, RouterProvider, Link, Outlet, redirect } from 'react-router-dom';
+      import { createBrowserRouter, RouterProvider, Link, Outlet, redirect } from 'react-router';
       import { AppProvider, Page } from '@shopify/polaris';
       import i18n from '@shopify/polaris/locales/en.json';
       import { ConversionProgressCard } from './app/components/ConversionProgressCard';
@@ -208,7 +208,7 @@ const bundle = await build({
                 const specifier = statement.moduleSpecifier.text;
                 if (
                   specifier.endsWith(".server") ||
-                  specifier === "react-router"
+                  specifier === "@shopify/shopify-app-react-router/server"
                 )
                   return false;
               }
@@ -217,7 +217,7 @@ const bundle = await build({
                 statement.declarationList.declarations.some(
                   (declaration) =>
                     ts.isIdentifier(declaration.name) &&
-                    ["loader", "action"].includes(declaration.name.text),
+                    ["loader", "action", "headers"].includes(declaration.name.text),
                 )
               );
             });

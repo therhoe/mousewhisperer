@@ -67,6 +67,46 @@ test("package.json pins React Router 7.18.5 and Shopify's React Router package",
   assert.equal(pkg.engines.node, ">=22.12");
 });
 
+test("the preview harnesses only import packages installed at the top level", () => {
+  // Remix used to bring esbuild and react-router-dom in as transitive
+  // packages; the harnesses (and check-customer-journey-ui) need them direct.
+  const packageName = (specifier) =>
+    specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
+  const missing = listFiles("scripts")
+    .filter((file) => /^scripts\/preview-[^/]+\.mjs$/.test(file))
+    .flatMap((file) =>
+      [...read(file).matchAll(/(?:from|import)\s+['"]([^'"./][^'"]*)['"]/g)]
+        .map((match) => match[1])
+        .filter((specifier) => !specifier.startsWith("node:"))
+        .map(packageName)
+        .filter((name) => {
+          try {
+            readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url));
+            return false;
+          } catch {
+            return true;
+          }
+        })
+        .map((name) => `${file}: ${name}`),
+    );
+  assert.deepEqual([...new Set(missing)], []);
+});
+
+test("the preview harnesses keep route hooks and strip only server code from route files", () => {
+  // Hooks like useLoaderData now come from "react-router" (they used to come
+  // from @remix-run/react), so dropping that import breaks every route page.
+  const strippers = listFiles("scripts")
+    .filter((file) => /^scripts\/preview-[^/]+\.mjs$/.test(file))
+    .filter((file) => /\["loader", "action"/.test(read(file)));
+  assert.deepEqual(strippers, ["scripts/preview-customer-journeys.mjs", "scripts/preview-snapshot-changes.mjs"]);
+  for (const file of strippers) {
+    const source = read(file);
+    assert.doesNotMatch(source, /(?:specifier|moduleSpecifier\.text) === "react-router"/, file);
+    assert.match(source, /"@shopify\/shopify-app-react-router\/server"/, file);
+    assert.match(source, /\["loader", "action", "headers"\]/, file);
+  }
+});
+
 test("routes and React Router config are set up", () => {
   assert.match(read("app/routes.ts"), /from "@react-router\/fs-routes"/);
   assert.match(read("react-router.config.ts"), /ssr: true/);

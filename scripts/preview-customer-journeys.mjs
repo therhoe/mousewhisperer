@@ -21,7 +21,7 @@ const bundle = await build({
     contents: `
     import React from 'react';
     import { createRoot } from 'react-dom/client';
-    import { createBrowserRouter, RouterProvider, Link, Outlet, redirect } from 'react-router-dom';
+    import { createBrowserRouter, RouterProvider, Link, Outlet, redirect } from 'react-router';
     import { AppProvider } from '@shopify/polaris';
     import i18n from '@shopify/polaris/locales/en.json';
     import Index from './app/routes/app.customer-snapshots._index';
@@ -64,7 +64,7 @@ const bundle = await build({
               if (
                 ts.isImportDeclaration(s) &&
                 (s.moduleSpecifier.text.endsWith(".server") ||
-                  s.moduleSpecifier.text === "react-router" ||
+                  s.moduleSpecifier.text === "@shopify/shopify-app-react-router/server" ||
                   s.importClause?.isTypeOnly)
               )
                 return false;
@@ -73,7 +73,7 @@ const bundle = await build({
                 s.declarationList.declarations.some(
                   (d) =>
                     ts.isIdentifier(d.name) &&
-                    ["loader", "action"].includes(d.name.text),
+                    ["loader", "action", "headers"].includes(d.name.text),
                 )
               );
             });
