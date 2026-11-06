@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+import { validateAppProxySignature } from "../shopify.server";
 
 // The web pixel cannot post through the app proxy, so its commerce events
 // arrive unsigned. They only update visits already matched by unguessable
@@ -34,9 +34,9 @@ export async function verifyTrackingRequest(
   const hasSignature = new URL(request.url).searchParams.has("signature");
   let signed = false;
   if (hasSignature) {
+    // Signature only: the shop's session (and so the database) is not needed.
     try {
-      await authenticate.public.appProxy(request);
-      signed = true;
+      signed = await validateAppProxySignature(request);
     } catch {
       signed = false;
     }

@@ -2,6 +2,7 @@
 // anything that creates tracking data, with a log-only rollout mode.
 // Run: node --test scripts/check-track-signature.mjs
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
@@ -32,17 +33,11 @@ function run(file, mocks, globals = {}) {
   });
   return mod.exports;
 }
-// Shopify signs proxied requests; the mock accepts only signature=good.
+// Shopify signs proxied requests; the mock accepts only signature=good. The
+// real check is exercised further down with a throwaway signing secret.
 const shopifyServer = {
-  authenticate: {
-    public: {
-      appProxy: async (request) => {
-        if (new URL(request.url).searchParams.get("signature") !== "good")
-          throw new Response(null, { status: 400 });
-        return {};
-      },
-    },
-  },
+  validateAppProxySignature: async (request) =>
+    new URL(request.url).searchParams.get("signature") === "good",
 };
 const loadAuth = (mode) =>
   run("app/utils/tracking-auth.server.ts", { "../shopify.server": shopifyServer }, {
@@ -165,4 +160,104 @@ test("a page view with no shop never matches another shop's project", async () =
   });
   assert.equal(response.status, 200);
   assert.equal(seen.projectWhere.length, 0);
+});
+
+// The real app/shopify.server.ts, signing with throwaway test values (never
+// real credentials). Its Prisma session table passes the startup check, then
+// every session lookup fails the way the 2026-11-06 cold start did.
+const TEST_SECRET = "throwaway-app-proxy-test-secret";
+function loadShopifyServerWithUnreachableSessions() {
+  const sessionQueries = [];
+  const unreachable = async (...args) => {
+    sessionQueries.push(args);
+    throw new Error("Can't reach database server at `db.test:5432`");
+  };
+  const prisma = {
+    session: {
+      count: async () => 0,
+      findUnique: unreachable,
+      findMany: unreachable,
+      upsert: unreachable,
+      delete: unreachable,
+      deleteMany: unreachable,
+    },
+  };
+  const shopifyServer = run(
+    "app/shopify.server.ts",
+    {
+      "./db.server": { __esModule: true, default: prisma },
+      "./utils/billing-plans": { WHISPER_PLAN: "Whisper", SIGNAL_PLAN: "Signal" },
+      "./utils/polaris": { POLARIS_URL: "https://cdn.shopify.com/shopifycloud/polaris-2.js" },
+    },
+    {
+      URLSearchParams,
+      process: {
+        env: {
+          SHOPIFY_API_KEY: "throwaway-api-key",
+          SHOPIFY_API_SECRET: TEST_SECRET,
+          SHOPIFY_APP_URL: "https://app.test",
+          SCOPES: "read_products",
+        },
+      },
+    },
+  );
+  return { shopifyServer, sessionQueries };
+}
+const loadAuthWith = (shopifyServer) =>
+  run("app/utils/tracking-auth.server.ts", { "../shopify.server": shopifyServer }, {
+    process: { env: { TRACKING_SIGNATURE_MODE: "enforce" } },
+  });
+// Shopify's app proxy signature: HMAC-SHA256 (hex) over the query's key=value
+// pairs, sorted by key and joined with nothing in between.
+const signProxyParams = (params, secret = TEST_SECRET) =>
+  createHmac("sha256", secret)
+    .update(Object.keys(params).sort().map((key) => `${key}=${params[key]}`).join(""))
+    .digest("hex");
+function signedProxyParams(overrides = {}) {
+  const params = {
+    shop: "owner.myshopify.com",
+    path_prefix: "/apps/api",
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    logged_in_customer_id: "",
+    ...overrides,
+  };
+  return { ...params, signature: signProxyParams(params) };
+}
+const postWith = (params) => post(new URLSearchParams(params).toString());
+
+test("a correctly signed request counts as signed even when session storage is unreachable", async () => {
+  const { shopifyServer, sessionQueries } = loadShopifyServerWithUnreachableSessions();
+  const { verifyTrackingRequest } = loadAuthWith(shopifyServer);
+  const warnings = [];
+  const result = await verifyTrackingRequest(postWith(signedProxyParams()), undefined, {
+    warn: (...args) => warnings.push(args),
+  });
+  assert.deepEqual(
+    { result: { ...result }, warnings: warnings.map(([, detail]) => detail.reason), sessionQueries: sessionQueries.length },
+    { result: { allowed: true, signed: true }, warnings: [], sessionQueries: 0 },
+  );
+});
+
+test("a tampered app proxy signature is still reported as invalid", async () => {
+  const { shopifyServer } = loadShopifyServerWithUnreachableSessions();
+  const { verifyTrackingRequest } = loadAuthWith(shopifyServer);
+  const { signature: _signature, ...unsigned } = signedProxyParams();
+  const cases = {
+    "shop changed after signing": { ...signedProxyParams(), shop: "intruder.myshopify.com" },
+    "signed with another secret": { ...unsigned, signature: signProxyParams(unsigned, "another-secret") },
+    "signature replayed after the 90 s window": signedProxyParams({
+      timestamp: String(Math.floor(Date.now() / 1000) - 600),
+    }),
+  };
+  for (const [name, params] of Object.entries(cases)) {
+    const warnings = [];
+    const result = await verifyTrackingRequest(postWith(params), undefined, {
+      warn: (...args) => warnings.push(args),
+    });
+    assert.deepEqual(
+      { result: { ...result }, warnings: warnings.map(([, detail]) => detail.reason) },
+      { result: { allowed: false, signed: false }, warnings: ["invalid"] },
+      name,
+    );
+  }
 });
