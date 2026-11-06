@@ -1,4 +1,4 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["polaris-jsx.tsx"]
+  "include": ["polaris-jsx.tsx", "../../app/types/app-bridge-jsx.d.ts"]
 }

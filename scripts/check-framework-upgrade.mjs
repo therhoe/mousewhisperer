@@ -172,7 +172,7 @@ test("Polaris React links stay inside the app and keep external targets", () => 
   assert.doesNotMatch(external, /\bexternal=/);
 });
 
-test("the app frame loads Polaris 2 and keeps Polaris React translations per language", () => {
+test("the app frame loads Polaris 2, keeps Polaris React translations and shows the app menu", () => {
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
   const seen = {};
@@ -199,17 +199,23 @@ test("the app frame loads Polaris 2 and keeps Polaris React translations per lan
     "../utils/embedded-filter-context.server": { embeddedContextForShop: () => ({}) },
     "../components/BackgroundBillingSync": { BackgroundBillingSync: () => null },
     "../components/PolarisLink": { PolarisLink: PolarisLinkMock },
+    "../components/polaris/navigation": { useBackInterceptor: () => { seen.interceptor = true; } },
     "../utils/features": { COMMUNITY_FEATURES_ENABLED: false },
     "../utils/i18n": { I18nProvider: (props) => props.children, useI18n: () => ({ locale: "de", t: (text) => text }) },
     "../utils/i18n.server": { resolveRequestLocale: async () => "de" },
     "../utils/page-snapshot-navigation": { isPageSnapshotsPath: () => false, PAGE_SNAPSHOTS_PATH: "/app/page-snapshots" },
     "../utils/polaris": { POLARIS_URL: "https://cdn.shopify.com/shopifycloud/polaris-2.js" },
   });
-  renderToStaticMarkup(React.createElement(mod.default));
+  const html = renderToStaticMarkup(React.createElement(mod.default));
   assert.equal(seen.shopify.apiKey, "test-key");
   assert.equal(seen.shopify.polarisUrl, "https://cdn.shopify.com/shopifycloud/polaris-2.js");
   assert.equal(seen.polaris.i18n, require("@shopify/polaris/locales/de.json"));
   assert.equal(seen.polaris.linkComponent, PolarisLinkMock);
+  assert.equal(seen.interceptor, true, "the Back interceptor is installed once in the app frame");
+  assert.match(
+    html,
+    /<s-app-nav><s-link href="\/app" rel="home">Snapshot<\/s-link><s-link href="\/app\/projects">Projects<\/s-link><s-link href="\/app\/ab-tests">A\/B tests<\/s-link><s-link href="\/app\/plans">Plans<\/s-link><s-link href="\/app\/settings">Settings<\/s-link><\/s-app-nav>/,
+  );
 });
 
 test("Vercel's React Router preset builds the app", () => {

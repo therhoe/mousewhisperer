@@ -11,3 +11,16 @@ export function PolarisTypesFixture() {
     </s-page>
   );
 }
+
+// App Bridge's menu element and its home link (Task 5 of plan 2a).
+const HOME_LINK = { rel: "home" } as const;
+export function AppNavFixture() {
+  return (
+    <s-app-nav>
+      <s-link href="/app" {...HOME_LINK}>
+        Snapshot
+      </s-link>
+      <s-link href="/app/projects">Projects</s-link>
+    </s-app-nav>
+  );
+}

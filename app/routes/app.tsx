@@ -1,7 +1,6 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import type { ShouldRevalidateFunction } from "react-router";
 import {
-  Link,
   Outlet,
   useLoaderData,
   useLocation,
@@ -9,7 +8,6 @@ import {
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { NavMenu } from "@shopify/app-bridge-react";
 import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
@@ -21,6 +19,7 @@ import zhTWPolaris from "@shopify/polaris/locales/zh-TW.json";
 import { authenticate } from "../shopify.server";
 import { embeddedContextForShop } from "../utils/embedded-filter-context.server";
 import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
+import { useBackInterceptor } from "../components/polaris/navigation";
 import { PolarisLink } from "../components/PolarisLink";
 import { POLARIS_URL } from "../utils/polaris";
 import { COMMUNITY_FEATURES_ENABLED } from "../utils/features";
@@ -64,14 +63,21 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
     nextUrl.searchParams.get("locale") ||
   currentUrl.searchParams.get("shop") !== nextUrl.searchParams.get("shop");
 
+// Spec 4.1: the app name opens Home; then Projects, A/B tests, Plans, Settings.
 const APP_NAV_ITEMS = [
-  { label: "Dashboard", to: "/app" },
   { label: "Projects", to: "/app/projects" },
+  { label: "A/B tests", to: "/app/ab-tests" },
+  { label: "Plans", to: "/app/plans" },
+  { label: "Settings", to: "/app/settings" },
 ];
+// s-link has no typed `rel`; App Bridge reads it to mark the home link.
+const HOME_LINK = { rel: "home" } as const;
 
 function getRouteTitle(pathname: string) {
   if (pathname === "/app") return "Dashboard";
   if (pathname.startsWith("/app/projects")) return "Projects";
+  if (pathname.startsWith("/app/plans") || pathname.startsWith("/app/upgrade")) return "Plans";
+  if (pathname.startsWith("/app/settings")) return "Settings";
   if (pathname.startsWith("/app/store-snapshots")) return "Store Snapshots";
   if (pathname.startsWith("/app/channel-snapshots")) return "Channel Snapshots";
   if (pathname.startsWith("/app/customer-snapshots"))
@@ -80,12 +86,6 @@ function getRouteTitle(pathname: string) {
   if (isPageSnapshotsPath(pathname)) return "Page Snapshots";
   if (pathname.includes("/challenges")) return "Challenges";
   return "Loading";
-}
-
-function isNavItemActive(pathname: string, destination: string) {
-  if (destination === "/app") return pathname === "/app";
-  if (destination === PAGE_SNAPSHOTS_PATH) return isPageSnapshotsPath(pathname);
-  return pathname === destination || pathname.startsWith(`${destination}/`);
 }
 
 function InstantRouteShell({ pathname }: { pathname: string }) {
@@ -175,26 +175,23 @@ function InstantRouteShell({ pathname }: { pathname: string }) {
   );
 }
 
-function AppBridgeNav() {
+function AppNav() {
   const { t } = useI18n();
-  const { pathname } = useLocation();
-
+  useBackInterceptor();
   return (
-    <NavMenu>
+    <s-app-nav>
+      <s-link href="/app" {...HOME_LINK}>
+        Snapshot
+      </s-link>
       {APP_NAV_ITEMS.map((item) => (
-        <Link
-          key={item.to}
-          to={item.to}
-          rel={item.to === "/app" ? "home" : undefined}
-          aria-current={isNavItemActive(pathname, item.to) ? "page" : undefined}
-        >
+        <s-link key={item.to} href={item.to}>
           {t(item.label)}
-        </Link>
+        </s-link>
       ))}
       {COMMUNITY_FEATURES_ENABLED && (
-        <Link to="/app/challenges">{t("Challenges")}</Link>
+        <s-link href="/app/challenges">{t("Challenges")}</s-link>
       )}
-    </NavMenu>
+    </s-app-nav>
   );
 }
 
@@ -227,7 +224,7 @@ function AppContent({ apiKey }: { apiKey: string }) {
         linkComponent={PolarisLink}
       >
         <BackgroundBillingSync />
-        <AppBridgeNav />
+        <AppNav />
         {isRouteTransition ? (
           <InstantRouteShell pathname={pendingPathname} />
         ) : (

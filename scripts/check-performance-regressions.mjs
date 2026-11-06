@@ -338,6 +338,7 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
       { Buffer },
     ),
     "../components/BackgroundBillingSync": {},
+    "../components/polaris/navigation": {},
     "../utils/features": { COMMUNITY_FEATURES_ENABLED: false },
     "../utils/page-snapshot-navigation": {},
     "../utils/i18n": {},
