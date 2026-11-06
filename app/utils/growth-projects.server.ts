@@ -6,8 +6,9 @@ import { ensureWebPixel } from "./web-pixel.server";
 import { resolveSetupPage, savedTrackerState } from "./snapshot-setup.server";
 import { cachedValue, clearCacheKey, clearCachePrefix, loaderCacheKeys } from "./loader-cache.server";
 import {
-  GROWTH_PROJECT_PAGE_SIZE, GrowthProjectError, growthMeasurementStatus,
+  GrowthProjectError, growthMeasurementStatus,
   growthRequestKey, parseGrowthProjectInput, parseMeasurementInput,
+  projectListStatus, selectProjectPage, type ProjectListFilters,
 } from "./growth-projects";
 
 export { GrowthProjectError } from "./growth-projects";
@@ -104,22 +105,70 @@ function decorateMeasurement<T extends {
   };
 }
 
-export async function listGrowthProjects(shop: string, requestedPage = 1) {
+const latestCaptureStatus = {
+  take: 1,
+  orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
+  select: {
+    snapshot: { select: { status: true } },
+    storeSnapshot: { select: { status: true } },
+    channelSnapshot: { select: { status: true } },
+    customerSnapshot: { select: { status: true } },
+  },
+};
+
+/**
+ * One shop's projects, newest first. Scope and search filter in the database.
+ * The status of each project comes from its latest measurement, so status
+ * counts and the status filter are worked out on the (small) id list, and only
+ * the shown page is loaded in full.
+ */
+export async function listGrowthProjects(shop: string, filters: Partial<ProjectListFilters> = {}) {
   await expireGrowthMeasurements(shop);
-  const total = await prisma.growthProject.count({ where: { shop } });
-  const pageCount = Math.max(1, Math.ceil(total / GROWTH_PROJECT_PAGE_SIZE));
-  const page = Math.min(pageCount, Math.max(1, Math.floor(Number(requestedPage) || 1)));
-  const rows = await prisma.growthProject.findMany({
-    where: { shop }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], skip: (page - 1) * GROWTH_PROJECT_PAGE_SIZE, take: GROWTH_PROJECT_PAGE_SIZE,
-    include: {
-      resourceProject: true,
-      _count: { select: { measurements: true, abTests: true } },
-      measurements: { take: 1, orderBy: [{ createdAt: "desc" }, { id: "desc" }], include: captures },
-    },
+  const where: Prisma.GrowthProjectWhereInput = { shop };
+  if (filters.scope === "STORE" || filters.scope === "PAGE") where.scope = filters.scope;
+  const query = filters.query?.trim();
+  if (query)
+    where.OR = [
+      { title: { contains: query, mode: "insensitive" } },
+      { goal: { contains: query, mode: "insensitive" } },
+    ];
+  const summaries = await prisma.growthProject.findMany({
+    where,
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    select: { id: true, measurements: latestCaptureStatus },
   });
+  const selection = selectProjectPage(
+    summaries.map((row) => ({ id: row.id, status: projectListStatus(row.measurements[0]) })),
+    filters.status ?? "ALL",
+    filters.page ?? 1,
+  );
+  const ids = selection.rows.map((row) => row.id);
+  const rows = ids.length
+    ? await prisma.growthProject.findMany({
+        where: { shop, id: { in: ids } },
+        include: {
+          resourceProject: true,
+          _count: { select: { measurements: true, abTests: true } },
+          measurements: { take: 1, orderBy: [{ createdAt: "desc" }, { id: "desc" }], include: captures },
+        },
+      })
+    : [];
+  const byId = new Map(rows.map((row) => [row.id, row]));
   return {
-    projects: rows.map((row) => ({ ...row, latestMeasurement: row.measurements[0] ? decorateMeasurement(row.measurements[0]) : null })),
-    total, page, pageCount,
+    projects: ids.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row) return [];
+      const latest = row.measurements[0];
+      return [{
+        ...row,
+        listStatus: projectListStatus(latest),
+        latestMeasurement: latest ? decorateMeasurement(latest) : null,
+      }];
+    }),
+    total: selection.total,
+    page: selection.page,
+    pageCount: selection.pageCount,
+    counts: selection.counts,
   };
 }
 

@@ -85,3 +85,63 @@ export function growthMeasurementStatus(measurement: {
 }) {
   return (measurement.snapshot || measurement.storeSnapshot || measurement.channelSnapshot || measurement.customerSnapshot)?.status || "COMPLETED";
 }
+
+export const PROJECT_LIST_STATUSES = ["ALL", "MEASURING", "IDLE", "COMPLETED"] as const;
+export type ProjectListStatus = (typeof PROJECT_LIST_STATUSES)[number];
+export type ProjectListScope = "ALL" | "STORE" | "PAGE";
+export type ProjectListFilters = {
+  status: ProjectListStatus;
+  scope: ProjectListScope;
+  query: string;
+  page: number;
+};
+
+/** Reads the Projects filters from the address; anything unknown means "all". */
+export function parseProjectListFilters(params: URLSearchParams): ProjectListFilters {
+  const status = String(params.get("status") || "ALL").toUpperCase();
+  const scope = String(params.get("scope") || "ALL").toUpperCase();
+  const page = Math.floor(Number(params.get("page")));
+  return {
+    status: (PROJECT_LIST_STATUSES as readonly string[]).includes(status)
+      ? (status as ProjectListStatus)
+      : "ALL",
+    scope: scope === "STORE" || scope === "PAGE" ? scope : "ALL",
+    query: (params.get("q") || "").replace(/\p{Cc}/gu, "").trim().slice(0, 120),
+    page: Number.isFinite(page) && page > 0 ? page : 1,
+  };
+}
+
+/**
+ * Measuring: the latest measurement's capture is running. Completed: it
+ * finished. Idle: nothing started yet, or it is paused. Never overlapping.
+ */
+export function projectListStatus(
+  latest: Parameters<typeof growthMeasurementStatus>[0] | null | undefined,
+): Exclude<ProjectListStatus, "ALL"> {
+  if (!latest) return "IDLE";
+  const status = growthMeasurementStatus(latest);
+  if (status === "ACTIVE") return "MEASURING";
+  if (status === "COMPLETED") return "COMPLETED";
+  return "IDLE";
+}
+
+/** Counts every status, keeps the chosen one, clamps the page and slices it. */
+export function selectProjectPage<Row extends { status: Exclude<ProjectListStatus, "ALL"> }>(
+  rows: Row[],
+  status: ProjectListStatus,
+  requestedPage: number,
+  pageSize = GROWTH_PROJECT_PAGE_SIZE,
+) {
+  const counts: Record<ProjectListStatus, number> = { ALL: rows.length, MEASURING: 0, IDLE: 0, COMPLETED: 0 };
+  for (const row of rows) counts[row.status] += 1;
+  const matching = status === "ALL" ? rows : rows.filter((row) => row.status === status);
+  const pageCount = Math.max(1, Math.ceil(matching.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, Math.floor(requestedPage) || 1));
+  return {
+    counts,
+    total: matching.length,
+    page,
+    pageCount,
+    rows: matching.slice((page - 1) * pageSize, page * pageSize),
+  };
+}
