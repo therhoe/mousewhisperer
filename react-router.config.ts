@@ -1,4 +1,5 @@
 import type { Config } from "@react-router/dev/config";
+import { vercelPreset } from "@vercel/react-router/vite";
 
 // React Router rejects form posts whose Origin header doesn't match the request
 // URL. The Shopify CLI tunnel ends TLS before the dev server, so the browser's
@@ -16,5 +17,6 @@ const host = appHost();
 
 export default {
   ssr: true,
+  presets: [vercelPreset()],
   allowedActionOrigins: host ? [host] : [],
 } satisfies Config;

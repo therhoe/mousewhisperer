@@ -1,8 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
-  "framework": "remix",
+  "framework": "react-router",
   "installCommand": "npm install",
-  "buildCommand": "npm run build",
-  "outputDirectory": "build"
+  "buildCommand": "npm run build"
 }

@@ -166,3 +166,43 @@ test("the app frame loads Polaris 2 and keeps Polaris React translations per lan
   assert.equal(seen.polaris.i18n, require("@shopify/polaris/locales/de.json"));
   assert.equal(seen.polaris.linkComponent, PolarisLinkMock);
 });
+
+test("Vercel's React Router preset builds the app", () => {
+  assert.match(read("react-router.config.ts"), /presets:\s*\[\s*vercelPreset\(\)\s*\]/);
+  const vercel = JSON.parse(read("vercel.json"));
+  assert.equal(vercel.framework, "react-router");
+  assert.deepEqual(vercel.regions, ["fra1"]);
+  assert.equal(vercel.outputDirectory, undefined);
+});
+
+test("document responses get Shopify's headers before Vercel renders them", async () => {
+  const calls = [];
+  const mod = loadModule("app/entry.server.tsx", {
+    "@vercel/react-router/entry.server": {
+      handleRequest: async (...args) => {
+        calls.push(["vercel", ...args]);
+        return new Response("ok");
+      },
+    },
+    "./shopify.server": {
+      addDocumentResponseHeaders: (request, headers) => {
+        calls.push(["shopify", request, headers]);
+        headers.set("X-Shopify-Test", "1");
+      },
+    },
+  });
+  const request = new Request("https://app.test/app");
+  const headers = new Headers();
+  const context = { marker: true };
+  const loadContext = { load: true };
+  const response = await mod.default(request, 200, headers, context, loadContext);
+  assert.equal(await response.text(), "ok");
+  assert.deepEqual(calls.map((call) => call[0]), ["shopify", "vercel"]);
+  const [, vRequest, vStatus, vHeaders, vContext, vLoad] = calls[1];
+  assert.equal(vRequest, request);
+  assert.equal(vStatus, 200);
+  assert.equal(vHeaders.get("X-Shopify-Test"), "1");
+  assert.equal(vContext, context);
+  assert.equal(vLoad, loadContext);
+  assert.equal(mod.streamTimeout, 5000);
+});
