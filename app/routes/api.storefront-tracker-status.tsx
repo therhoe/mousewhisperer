@@ -3,17 +3,21 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getStorefrontTrackerStatus } from "../utils/storefront-tracker-status.server";
+import { getWebPixelStatus } from "../utils/web-pixel.server";
 import { cachedValue } from "../utils/loader-cache.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  const trackerStatus = await cachedValue(
-    `tracker-status:${session.shop}`,
-    60_000,
-    () => getStorefrontTrackerStatus(admin, session.shop),
-  );
+  const [trackerStatus, pixelStatus] = await Promise.all([
+    cachedValue(`tracker-status:${session.shop}`, 60_000, () =>
+      getStorefrontTrackerStatus(admin, session.shop),
+    ),
+    cachedValue(`pixel-status:${session.shop}`, 60_000, () =>
+      getWebPixelStatus(admin),
+    ),
+  ]);
   return Response.json(
-    { trackerStatus },
+    { trackerStatus, pixelStatus },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 };

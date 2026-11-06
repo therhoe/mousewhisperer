@@ -1939,4 +1939,38 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "升级会打开 Shopify 的套餐页面。确认后，您将返回点击升级时所在的页面。",
     "升級會開啟 Shopify 的方案頁面。確認後，您將返回點擊升級時所在的頁面。",
   ],
+  Settings: ["Einstellungen", "设置", "設定"],
+  "Storefront tracking": ["Shop-Tracking", "店面跟踪", "店面追蹤"],
+  "Snapshot needs both parts on to record visits, add-to-cart and checkout.": [
+    "Snapshot benötigt beide Teile, um Besuche, Warenkorb und Checkout zu erfassen.",
+    "Snapshot 需要同时开启这两部分，才能记录访问、加入购物车和结账。",
+    "Snapshot 需要同時開啟這兩部分，才能記錄造訪、加入購物車和結帳。",
+  ],
+  "Theme app embed in your live theme. Records page views, clicks and scrolling.": [
+    "App-Einbettung in Ihrem Live-Theme. Erfasst Seitenaufrufe, Klicks und Scrollen.",
+    "您当前主题中的应用嵌入。记录页面浏览、点击和滚动。",
+    "您目前佈景主題中的應用程式嵌入。記錄頁面瀏覽、點擊和捲動。",
+  ],
+  "Web pixel": ["Web-Pixel", "网站像素", "網站像素"],
+  "Records add-to-cart, checkout and purchases. Turned on automatically when a measurement starts.": [
+    "Erfasst Warenkorb, Checkout und Käufe. Wird automatisch aktiviert, wenn eine Messung startet.",
+    "记录加入购物车、结账和购买。测量开始时自动开启。",
+    "記錄加入購物車、結帳和購買。測量開始時自動開啟。",
+  ],
+  "Not active": ["Nicht aktiv", "未启用", "未啟用"],
+  "Not verified": ["Nicht bestätigt", "未验证", "未驗證"],
+  "Checking…": ["Wird geprüft…", "正在检查…", "正在檢查…"],
+  "Applies to Snapshot only. Your Shopify admin language stays the same.": [
+    "Gilt nur für Snapshot. Die Sprache Ihres Shopify-Adminbereichs bleibt unverändert.",
+    "仅适用于 Snapshot，您的 Shopify 后台语言保持不变。",
+    "僅適用於 Snapshot，您的 Shopify 管理介面語言保持不變。",
+  ],
+  Plan: ["Tarif", "套餐", "方案"],
+  "View plans": ["Tarife ansehen", "查看套餐", "查看方案"],
+  "{price} every 30 days": ["{price} alle 30 Tage", "每 30 天 {price}", "每 30 天 {price}"],
+  "{store} of {storeLimit} store-level and {page} of {pageLimit} page-level measurements used · {tests} of {testLimit} A/B tests": [
+    "{store} von {storeLimit} shopweiten und {page} von {pageLimit} Seitenmessungen genutzt · {tests} von {testLimit} A/B-Tests",
+    "已使用 {store}/{storeLimit} 次商店级别测量和 {page}/{pageLimit} 次页面级别测量 · {tests}/{testLimit} 个 A/B 测试",
+    "已使用 {store}/{storeLimit} 次商店層級測量和 {page}/{pageLimit} 次頁面層級測量 · {tests}/{testLimit} 個 A/B 測試",
+  ],
 };

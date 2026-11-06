@@ -215,3 +215,19 @@ export async function ensureWebPixel(
   // setup can surface the failure; unsuccessful requests never enter the cache.
   return setup;
 }
+
+export type WebPixelStatus = "active" | "missing" | "unknown";
+
+/**
+ * Whether this app's web pixel exists on the shop. Read-only: it never creates
+ * or updates the pixel (that happens when a measurement starts).
+ */
+export async function getWebPixelStatus(
+  admin: ShopifyAdminClient,
+): Promise<WebPixelStatus> {
+  try {
+    return (await currentPixel(admin)) ? "active" : "missing";
+  } catch {
+    return "unknown";
+  }
+}

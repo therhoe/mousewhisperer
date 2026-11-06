@@ -202,3 +202,90 @@ test("the retired /app/upgrade keeps its query and billing returns land on Plans
     assert.equal(response.headers.get("Location"), expected);
   }
 });
+
+test("the pixel status only reads: active, missing or unknown", async () => {
+  const pixel = loadModule("app/utils/web-pixel.server.ts");
+  const queries = [];
+  const admin = (payload, ok = true) => ({
+    graphql: async (query) => {
+      queries.push(query);
+      if (payload instanceof Error) throw payload;
+      return new Response(JSON.stringify(payload), { status: ok ? 200 : 500 });
+    },
+  });
+  assert.equal(await pixel.getWebPixelStatus(admin({ data: { webPixel: { id: "gid://shopify/WebPixel/1", settings: "{}" } } })), "active");
+  assert.equal(await pixel.getWebPixelStatus(admin({ data: { webPixel: null } })), "missing");
+  assert.equal(await pixel.getWebPixelStatus(admin({ errors: [{ message: "denied" }] })), "unknown");
+  assert.equal(await pixel.getWebPixelStatus(admin({}, false)), "unknown");
+  assert.equal(await pixel.getWebPixelStatus(admin(new Error("offline"))), "unknown");
+  assert.ok(queries.every((query) => /query CurrentAppWebPixel/.test(query) && !/mutation/.test(query)));
+});
+
+test("the tracking status API answers with the theme embed and the pixel together", async () => {
+  const route = loadModule("app/routes/api.storefront-tracker-status.tsx", {
+    "../shopify.server": { authenticate: { admin: async () => ({ admin: {}, session: { shop: "a.myshopify.com" } }) } },
+    "../utils/storefront-tracker-status.server": {
+      getStorefrontTrackerStatus: async () => ({ status: "active", storefrontUrl: "https://a.example", checkedAt: "2026-11-06T00:00:00.000Z", message: "" }),
+    },
+    "../utils/web-pixel.server": { getWebPixelStatus: async () => "missing" },
+    "../utils/loader-cache.server": { cachedValue: async (_key, _ttl, load) => load() },
+    "@shopify/shopify-app-react-router/server": boundaryMock,
+  });
+  const body = await (await route.loader({ request: new Request("https://app.test/api/storefront-tracker-status") })).json();
+  assert.equal(body.trackerStatus.status, "active");
+  assert.equal(body.pixelStatus, "missing");
+});
+
+function settingsRoute(tracking) {
+  let loaderData;
+  const route = loadModule("app/routes/app.settings.tsx", {
+    "../shopify.server": { authenticate: { admin: async () => ({ session: { shop: "a.myshopify.com" } }) } },
+    "../utils/billing.server": { getBillingDisplayAccess: async () => billingAccess },
+    "@shopify/shopify-app-react-router/server": boundaryMock,
+    "../utils/background-json": { useBackgroundJson: () => tracking },
+    "../components/LanguageMenu": { useLanguageSwitch: () => ({ locale: "de", change() {} }) },
+    "react-router": { useLoaderData: () => loaderData, useNavigate: () => () => {} },
+  });
+  return {
+    async html() {
+      loaderData = await route.loader({ request: new Request("https://app.test/app/settings") });
+      return renderToStaticMarkup(React.createElement(route.default));
+    },
+  };
+}
+
+test("Settings shows tracking, language and plan, with a warning when the embed is off", async () => {
+  process.env.SHOPIFY_API_KEY = "test-key";
+  const html = await settingsRoute({
+    data: {
+      trackerStatus: { status: "missing", storefrontUrl: "https://a.example", checkedAt: "2026-11-06T00:00:00.000Z", message: "" },
+      pixelStatus: "active",
+    },
+    loading: false,
+    error: null,
+    reload() {},
+  }).html();
+  assert.match(html, /<s-page heading="Settings">/);
+  assert.doesNotMatch(html, /breadcrumb-actions/, "Settings is a top-level screen");
+  assert.match(html, /Snapshot Tracker must be turned on in your theme\./);
+  assert.match(html, /<s-badge tone="warning">Not active<\/s-badge>/);
+  assert.match(html, /<s-badge tone="success">Active<\/s-badge>/);
+  assert.match(
+    html,
+    /href="https:\/\/a\.myshopify\.com\/admin\/themes\/current\/editor\?context=apps&amp;activateAppId=test-key%2Ftracker" target="_blank"/,
+  );
+  assert.match(html, /<s-select label="Language" value="de"/);
+  for (const label of ["English", "Deutsch", "简体中文", "繁體中文"]) assert.ok(html.includes(label), label);
+  assert.ok(html.includes("Whisper · $49.99 every 30 days"));
+  assert.ok(html.includes("3 of 5 store-level and 12 of 50 page-level measurements used · 2 of 5 A/B tests"));
+  assert.match(html, /href="\/app\/plans\?returnTo=%2Fapp%2Fsettings"/);
+});
+
+test("Settings says Checking… while the status loads and offers Retry when it fails", async () => {
+  const loading = await settingsRoute({ data: undefined, loading: true, error: null, reload() {} }).html();
+  assert.equal((loading.match(/Checking…/g) || []).length, 2);
+  assert.doesNotMatch(loading, /must be turned on/);
+  const failed = await settingsRoute({ data: undefined, loading: false, error: "Tracking status is temporarily unavailable.", reload() {} }).html();
+  assert.equal((failed.match(/Unavailable/g) || []).length, 2);
+  assert.match(failed, />Retry<\/s-button>/);
+});

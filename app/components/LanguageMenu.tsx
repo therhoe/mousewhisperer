@@ -7,23 +7,34 @@ import {
   type AppLocale,
 } from "../utils/i18n";
 
-/** Page secondary-action group that switches and persists the app language. */
-export function useLanguageActionGroup() {
-  const { locale, setLocale, t } = useI18n();
+/** Switches the app language now and saves it for this store. */
+export function useLanguageSwitch() {
+  const { locale, setLocale } = useI18n();
   const fetcher = useFetcher<typeof localeAction>();
   const location = useLocation();
+  return {
+    locale,
+    change(next: AppLocale) {
+      if (!SUPPORTED_LOCALES.includes(next)) return;
+      setLocale(next);
+      fetcher.submit(
+        { locale: next },
+        { method: "post", action: `/api/locale${location.search}` },
+      );
+    },
+  };
+}
+
+/** Page secondary-action group used by screens still on Polaris React. */
+export function useLanguageActionGroup() {
+  const { t } = useI18n();
+  const { locale, change } = useLanguageSwitch();
   return {
     title: `${t("Language")}: ${LOCALE_LABELS[locale]}`,
     actions: SUPPORTED_LOCALES.map((option: AppLocale) => ({
       content: LOCALE_LABELS[option],
       active: option === locale,
-      onAction: () => {
-        setLocale(option);
-        fetcher.submit(
-          { locale: option },
-          { method: "post", action: `/api/locale${location.search}` },
-        );
-      },
+      onAction: () => change(option),
     })),
   };
 }
