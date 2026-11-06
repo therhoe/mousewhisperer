@@ -1391,7 +1391,7 @@ Run this against the **shep-dev** dev store with a **throwaway local database**,
    PGBIN=/opt/homebrew/opt/postgresql@17/bin
    PGDATA="$HOME/.cache/snapshot-smoke-pg"
    test -d "$PGDATA" || LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 "$PGBIN/initdb" -D "$PGDATA" -U growth_test --auth=trust
-   "$PGBIN/pg_ctl" -D "$PGDATA" -l "$PGDATA/log" -o "-p 55443 -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" start
+   LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 "$PGBIN/pg_ctl" -D "$PGDATA" -l "$PGDATA/log" -o "-p 55443 -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" start
    "$PGBIN/createdb" -h 127.0.0.1 -p 55443 -U growth_test snapshot_smoke || true
    ```
 
