@@ -158,3 +158,60 @@ test("only Back links are intercepted, and they pop or replace", () => {
     null,
   );
 });
+
+test("the Back control sits in the title bar's breadcrumb slot and links to the parent", () => {
+  const { BackAction } = loadModule("app/components/polaris/navigation.tsx", {
+    "react-router": { useNavigate: () => () => {} },
+  });
+  assert.equal(
+    renderToStaticMarkup(React.createElement(BackAction, { parentPath: "/app/projects" })),
+    '<s-link slot="breadcrumb-actions" href="/app/projects" data-snapshot-back="">Back</s-link>',
+  );
+});
+
+test("the Back interceptor listens in the capture phase and steps back or replaces", () => {
+  const listeners = [];
+  const navigations = [];
+  let cleanup;
+  const { useBackInterceptor } = loadModule("app/components/polaris/navigation.tsx", {
+    react: { ...React, useEffect: (effect) => { cleanup = effect(); } },
+    "react-router": { useNavigate: () => (...args) => navigations.push(args) },
+  });
+  globalThis.document = {
+    addEventListener: (name, handler, capture) => listeners.push({ name, handler, capture }),
+    removeEventListener: (name, handler, capture) =>
+      listeners.splice(
+        listeners.findIndex((entry) => entry.name === name && entry.handler === handler && entry.capture === capture),
+        1,
+      ),
+  };
+  globalThis.window = { history: { state: { idx: 2 } } };
+  try {
+    useBackInterceptor();
+    assert.equal(listeners.length, 1);
+    assert.equal(listeners[0].name, "shopify:navigate");
+    assert.equal(listeners[0].capture, true);
+    listeners[0].handler(navigateEvent(backLink("/app")).event);
+    globalThis.window.history.state = { idx: 0 };
+    listeners[0].handler(navigateEvent(backLink("/app")).event);
+    listeners[0].handler(navigateEvent(null).event);
+    assert.deepEqual(navigations, [[-1], ["/app", { replace: true }]]);
+    cleanup();
+    assert.equal(listeners.length, 0);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
+
+test("element events subscribe and unsubscribe", () => {
+  const { listen } = loadModule("app/components/polaris/events.ts");
+  const target = new EventTarget();
+  let calls = 0;
+  const stop = listen(target, "nextpage", () => calls++);
+  target.dispatchEvent(new Event("nextpage"));
+  stop();
+  target.dispatchEvent(new Event("nextpage"));
+  assert.equal(calls, 1);
+  assert.doesNotThrow(() => listen(null, "nextpage", () => {})());
+});
