@@ -18,15 +18,21 @@ export function backTarget(historyIndex: unknown, parentPath: string): BackTarge
     : { kind: "replace", to: parentPath };
 }
 
-// Signed launch values must never be replayed, and a returnTo never nests.
-const DROPPED_PARAMS = ["id_token", "hmac", "timestamp", "session", "returnTo"];
+// Signed launch values must never be replayed.
+const TRANSIENT_PARAMS = ["id_token", "hmac", "timestamp", "session"];
+// A returnTo never nests.
+const DROPPED_PARAMS = [...TRANSIENT_PARAMS, "returnTo"];
 
 /** An in-app path (`/app` or below) with its query, or null for anything else. */
 export function safeReturnTo(value: unknown): string | null {
   if (typeof value !== "string" || !value || value.length > 2000) return null;
   if (!value.startsWith("/app")) return null;
   // URL parsing would quietly drop newlines and turn \ into /, so refuse both.
-  if (/[\\\u0000-\u001f]/.test(value)) return null;
+  const forbidden = (char: string) => {
+    const code = char.charCodeAt(0);
+    return char === "\\" || code < 0x20 || code === 0x7f;
+  };
+  if (Array.from(value).some(forbidden)) return null;
   let url: URL;
   try {
     url = new URL(value, "https://snapshot.invalid");
@@ -47,8 +53,6 @@ export function plansHref(from?: string | null): string {
     return "/app/plans";
   return `/app/plans?returnTo=${encodeURIComponent(returnTo)}`;
 }
-
-const TRANSIENT_PARAMS = ["id_token", "hmac", "timestamp", "session"];
 
 /**
  * Search params after a list filter or page change. A filter change resets the

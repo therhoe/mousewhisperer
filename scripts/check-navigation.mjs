@@ -179,11 +179,12 @@ test("the Back interceptor listens in the capture phase and steps back or replac
   });
   globalThis.document = {
     addEventListener: (name, handler, capture) => listeners.push({ name, handler, capture }),
-    removeEventListener: (name, handler, capture) =>
-      listeners.splice(
-        listeners.findIndex((entry) => entry.name === name && entry.handler === handler && entry.capture === capture),
-        1,
-      ),
+    removeEventListener: (name, handler, capture) => {
+      const index = listeners.findIndex(
+        (entry) => entry.name === name && entry.handler === handler && entry.capture === capture,
+      );
+      if (index >= 0) listeners.splice(index, 1);
+    },
   };
   globalThis.window = { history: { state: { idx: 2 } } };
   try {
