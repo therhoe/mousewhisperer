@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { SUPPORTED_LOCALES, type AppLocale } from "../utils/i18n-core";
@@ -25,3 +27,8 @@ export async function action({ request }: ActionFunctionArgs) {
     },
   );
 }
+
+// Fetchers reach this route as a single-fetch .data request; Shopify needs
+// these headers there so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);

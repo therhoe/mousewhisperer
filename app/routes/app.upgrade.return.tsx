@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { LoaderFunctionArgs } from "react-router";
 import { redirect } from "react-router";
 import { authenticate, isShopifyBillingTestMode } from "../shopify.server";
@@ -23,3 +25,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   await syncShopBillingFromSubscription(session.shop, subscription);
   return redirect("/app/upgrade?billing=approved");
 };
+
+// Fetchers reach this route as a single-fetch .data request; Shopify needs
+// these headers there so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);

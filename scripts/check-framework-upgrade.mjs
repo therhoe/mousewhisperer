@@ -36,10 +36,14 @@ function loadModule(file, mocks = {}) {
   return mod.exports;
 }
 
-test("every screen route that calls authenticate.admin exports Shopify's boundary headers", () => {
+test("every route that calls authenticate.admin exports Shopify's boundary headers", () => {
+  // Resource routes too: fetcher.load/submit reach them as single-fetch .data
+  // requests, where a route without `headers` drops the thrown 401's
+  // re-auth headers (X-Shopify-Retry-Invalid-Session-Request) and App Bridge
+  // can't retry. Direct requests ignore the export, so it is always safe.
   const missing = routeFiles.filter((file) => {
     const source = read(file);
-    if (!isScreenRoute(source) || !source.includes("authenticate.admin")) return false;
+    if (!source.includes("authenticate.admin")) return false;
     return !/export const headers\b[\s\S]{0,160}?boundary\.headers\(/.test(source);
   });
   assert.deepEqual(missing, []);

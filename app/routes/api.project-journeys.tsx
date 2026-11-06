@@ -1,3 +1,5 @@
+import type { HeadersFunction } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { type LoaderFunctionArgs } from "react-router";
 import type { Prisma } from "@prisma/client";
 import { authenticate } from "../shopify.server";
@@ -50,3 +52,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }));
   return Response.json({ sessions, total, page, pageCount }, { headers: { "Cache-Control": "private, no-store" } });
 };
+
+// Fetchers reach this route as a single-fetch .data request; Shopify needs
+// these headers there so App Bridge can re-authenticate an expired session.
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);
