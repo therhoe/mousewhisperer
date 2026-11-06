@@ -19,11 +19,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     subscriptions[0];
 
   if (!subscription) {
-    return redirect("/app/upgrade?billing=not-approved");
+    return redirect("/app/plans?billing=not-approved");
   }
 
   await syncShopBillingFromSubscription(session.shop, subscription);
-  return redirect("/app/upgrade?billing=approved");
+  return redirect("/app/plans?billing=approved");
 };
 
 // Fetchers reach this route as a single-fetch .data request; Shopify needs

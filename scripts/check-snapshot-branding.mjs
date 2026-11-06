@@ -96,7 +96,7 @@ test("active UI, onboarding, analytics messages, and generated reports use the n
     "app/components/LegacySnapshotDashboard.tsx",
     "app/routes/app.channel-snapshots._index.tsx",
     "app/routes/app.channel-snapshots.$id.tsx",
-    "app/routes/app.upgrade.tsx",
+    "app/utils/plans.ts",
     "app/routes/app.ab-tests._index.tsx",
     "app/components/ConversionProgressCard.tsx",
     "app/utils/shopify-analytics.server.ts",
@@ -188,11 +188,11 @@ test("paid plan names, prices, managed-pricing handle, and persisted model ident
   const plans = read("app/utils/billing-plans.ts");
   assert.match(plans, /WHISPER_PLAN\s*=\s*"Whisper"/);
   assert.match(plans, /SIGNAL_PLAN\s*=\s*"Signal"/);
-  const upgrade = read("app/routes/app.upgrade.tsx");
-  assert.ok(upgrade.includes('price: "$49.99"'));
-  assert.ok(upgrade.includes('price: "$99.99"'));
+  const plansData = read("app/utils/plans.ts");
+  assert.ok(plansData.includes('price: "$49.99"'));
+  assert.ok(plansData.includes('price: "$99.99"'));
   assert.ok(
-    upgrade.includes('DEFAULT_MANAGED_PRICING_APP_HANDLE = "mousewhisperer"'),
+    read("app/utils/plans.server.ts").includes('DEFAULT_MANAGED_PRICING_APP_HANDLE = "mousewhisperer"'),
   );
   const schema = read("prisma/schema.prisma");
   for (const model of [

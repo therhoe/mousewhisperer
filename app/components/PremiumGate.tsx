@@ -50,7 +50,7 @@ export function PremiumGateCard({
   title,
   message,
   action = "Upgrade plan",
-  url = "/app/upgrade",
+  url = "/app/plans",
 }: PremiumGateCardProps) {
   return (
     <Card padding="0">
@@ -146,7 +146,7 @@ export function planUsagePillLabel(
 export function PlanUsagePill({
   access,
   metric,
-  url = "/app/upgrade",
+  url = "/app/plans",
 }: {
   access: BillingAccessLike;
   metric: PlanUsageMetric;
