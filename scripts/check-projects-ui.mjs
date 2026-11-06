@@ -68,6 +68,8 @@ const realJsx = require("react/jsx-runtime");
 function jsxRuntime(state) {
   const record = (type, props) => {
     if (type === "s-search-field" && typeof props?.onInput === "function") state.searchInput = props.onInput;
+    if (type === "s-press-button" || type === "s-select")
+      state.controls?.push({ type, label: props.children, pressed: props.pressed, value: props.value, ref: props.ref, onClick: props.onClick, onChange: props.onChange });
     if (typeof type === "string" && type.startsWith("s-") && typeof props?.onClick === "function")
       state.buttons.push({ type, slot: props.slot, label: props.children, onClick: props.onClick });
   };
@@ -126,6 +128,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     owned: true,
     calls: [],
     buttons: [],
+    controls: [],
     primary: null,
     secondary: [],
     states: [],
@@ -396,7 +399,10 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     state.refIndex = 0;
     state.effectIndex = 0;
     state.buttons = [];
+    state.controls = [];
     const html = renderToStaticMarkup(React.createElement(route.default || route.GrowthProjectForm || route.GrowthResultsSheet, props));
+    // The DOM commit (props written, refs attached) comes before effects run.
+    state.afterCommit?.();
     const effects = state.pending.splice(0);
     effects.forEach((effect) => effect());
     return html;
@@ -842,4 +848,124 @@ test("measurement form submits exactly one completion field and keeps default ta
     () => pure.parseMeasurementInput(target),
     /only one completion method/,
   );
+});
+
+// Fake DOM for the status buttons and the Scope select. Polaris flips `pressed`
+// itself on every click, and React only writes a prop that changed between
+// renders; this reproduces both so the screen's corrections can be checked.
+function filterDom(h) {
+  const els = new Map();
+  const lastProp = new Map();
+  const key = (control) => (control.type === "s-select" ? "scope" : String(control.label).replace(/ \d+$/, ""));
+  const commit = () => {
+    for (const control of h.state.controls) {
+      const k = key(control);
+      const prop = control.type === "s-select" ? control.value : control.pressed;
+      const el = els.get(k) ?? {};
+      if (!els.has(k) || lastProp.get(k) !== prop) el[control.type === "s-select" ? "value" : "pressed"] = prop;
+      els.set(k, el);
+      lastProp.set(k, prop);
+      control.ref?.(el);
+    }
+  };
+  h.state.afterCommit = commit;
+  const render = () => h.render();
+  const find = (name) => h.state.controls.find((control) => key(control) === name);
+  return {
+    render,
+    el: (name) => els.get(name),
+    pressed: () => [...els].filter(([k, el]) => k !== "scope" && el.pressed).map(([k]) => k),
+    click(name) {
+      els.get(name).pressed = !els.get(name).pressed; // Polaris's own handler runs first
+      find(name).onClick();
+    },
+    choose(value) {
+      els.get("scope").value = value;
+      find("scope").onChange({ currentTarget: els.get("scope") });
+    },
+  };
+}
+
+test("syncProjectFilterControls writes the requested status and scope onto the elements", () => {
+  const controls = {
+    statuses: { ALL: { pressed: false }, MEASURING: { pressed: true }, IDLE: { pressed: true }, COMPLETED: null },
+    scope: { value: "STORE" },
+  };
+  pure.syncProjectFilterControls(controls, new URLSearchParams("status=idle&scope=page"));
+  assert.deepEqual(
+    [controls.statuses.ALL.pressed, controls.statuses.MEASURING.pressed, controls.statuses.IDLE.pressed],
+    [false, false, true],
+  );
+  assert.equal(controls.scope.value, "PAGE");
+  pure.syncProjectFilterControls(controls, new URLSearchParams("status=bogus"));
+  assert.equal(controls.statuses.ALL.pressed, true);
+  assert.equal(controls.statuses.IDLE.pressed, false);
+  assert.equal(controls.scope.value, "ALL");
+  pure.syncProjectFilterControls({ statuses: {}, scope: null }, new URLSearchParams());
+});
+
+test("clicking the status that is already applied keeps it pressed", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({ filters: { status: "ALL", scope: "ALL", query: "", page: 1 } }));
+  const dom = filterDom(h);
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["All"]);
+  dom.click("All");
+  assert.deepEqual(dom.pressed(), ["All"], "the self-toggle is undone");
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["All"]);
+});
+
+test("two quick status clicks before the loader answers leave exactly the latest pressed", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({ filters: { status: "ALL", scope: "ALL", query: "", page: 1 } }));
+  h.state.holdNavigation = true;
+  const dom = filterDom(h);
+  dom.render();
+  dom.click("Idle");
+  const idleAddress = h.state.requested;
+  dom.render();
+  dom.click("Measuring");
+  assert.deepEqual(dom.pressed(), ["Measuring"]);
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["Measuring"]);
+  // Idle's answer arrives while Measuring is still the latest request.
+  h.state.params = idleAddress;
+  h.state.data = projectsData({ filters: { status: "IDLE", scope: "ALL", query: "", page: 1 } });
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["Measuring"]);
+  // Measuring's answer arrives.
+  h.state.params = h.state.requested;
+  h.state.data = projectsData({ filters: { status: "MEASURING", scope: "ALL", query: "", page: 1 } });
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["Measuring"]);
+});
+
+test("Back or Forward moves the pressed status to the one in the new address", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({ filters: { status: "IDLE", scope: "ALL", query: "", page: 1 } }));
+  h.state.params = new URLSearchParams("status=IDLE");
+  const dom = filterDom(h);
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["Idle"]);
+  h.state.params = new URLSearchParams("status=COMPLETED");
+  h.state.data = projectsData({ filters: { status: "COMPLETED", scope: "ALL", query: "", page: 1 } });
+  dom.render();
+  assert.deepEqual(dom.pressed(), ["Completed"]);
+});
+
+test("Clear filters during a held load puts the Scope select back to all scopes", () => {
+  const h = harness("app/routes/app.projects._index.tsx", projectsData({
+    projects: [],
+    total: 0,
+    filters: { status: "ALL", scope: "PAGE", query: "", page: 1 },
+  }));
+  h.state.params = new URLSearchParams("scope=PAGE");
+  h.state.holdNavigation = true;
+  const dom = filterDom(h);
+  dom.render();
+  assert.equal(dom.el("scope").value, "PAGE");
+  dom.choose("STORE");
+  dom.render();
+  h.state.buttons.find((button) => button.label === "Clear filters").onClick();
+  assert.equal(dom.el("scope").value, "ALL");
+  dom.render();
+  assert.equal(dom.el("scope").value, "ALL");
 });

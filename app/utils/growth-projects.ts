@@ -111,6 +111,34 @@ export function parseProjectListFilters(params: URLSearchParams): ProjectListFil
   };
 }
 
+type PressedLike = { pressed: boolean };
+type ValueLike = { value: string };
+export type ProjectFilterControls = {
+  statuses: Partial<Record<ProjectListStatus, PressedLike | null>>;
+  scope: ValueLike | null;
+};
+
+/**
+ * Writes the requested status and scope onto the Polaris elements. A
+ * `s-press-button` flips its own `pressed` on every click and React only writes
+ * a prop that changed between renders, so a click on the applied status, or two
+ * quick clicks, would leave the buttons (and the Scope select) out of step
+ * with the filter. This puts them back.
+ */
+export function syncProjectFilterControls(
+  controls: ProjectFilterControls,
+  params: URLSearchParams,
+): void {
+  const filters = parseProjectListFilters(params);
+  for (const status of PROJECT_LIST_STATUSES) {
+    const button = controls.statuses[status];
+    const pressed = status === filters.status;
+    if (button && button.pressed !== pressed) button.pressed = pressed;
+  }
+  if (controls.scope && controls.scope.value !== filters.scope)
+    controls.scope.value = filters.scope;
+}
+
 /**
  * Measuring: the latest measurement's capture is running. Completed: it
  * finished. Idle: nothing started yet, or it is paused. Never overlapping.

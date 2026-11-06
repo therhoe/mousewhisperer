@@ -13,6 +13,8 @@ import {
   GrowthProjectError,
   parseProjectListFilters,
   PROJECT_LIST_STATUSES,
+  syncProjectFilterControls,
+  type ProjectFilterControls,
   type ProjectListStatus,
 } from "../utils/growth-projects";
 import { isPlanLimitError } from "../utils/billing.server";
@@ -96,6 +98,10 @@ export default function Projects() {
   const latest = useRef(params);
   // Addresses this screen requested that have not arrived yet, oldest first.
   const pending = useRef<string[]>([]);
+  // The status buttons and Scope select, so their state can follow the request.
+  const controls = useRef<ProjectFilterControls>({ statuses: {}, scope: null });
+  const syncControls = (from: URLSearchParams) =>
+    syncProjectFilterControls(controls.current, from);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function cancelSearch() {
     if (searchTimer.current !== null) clearTimeout(searchTimer.current);
@@ -107,6 +113,8 @@ export default function Projects() {
       // Our own request arrived: keep what the merchant typed since.
       pending.current.splice(0, at + 1);
       if (!pending.current.length) latest.current = params;
+      // A later request may still be on its way: show that one, not this one.
+      syncControls(latest.current);
       return;
     }
     // Back/Forward or a link: the address wins.
@@ -114,12 +122,17 @@ export default function Projects() {
     latest.current = params;
     cancelSearch();
     setQuery(data.filters.query);
+    syncControls(params);
+    // Deliberate: `data` and `params` arrive together, and the rest only reads refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
   // Filters and pages never add Back steps (rule 2).
   function request(next: URLSearchParams) {
     if (next.toString() !== latest.current.toString()) pending.current.push(next.toString());
     latest.current = next;
+    // Runs inside the click, after Polaris's own handler, so it corrects its self-toggle.
+    syncControls(next);
     setParams(next, { replace: true, preventScrollReset: true });
   }
   function update(changes: Record<string, string | null>) {
@@ -134,6 +147,8 @@ export default function Projects() {
       update({ q: next || null });
     }, 300);
     return cancelSearch;
+    // Deliberate: `update` only reads refs and the latest request, so it never goes stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, params]);
 
   function close() {
@@ -179,6 +194,9 @@ export default function Projects() {
                 {PROJECT_LIST_STATUSES.map((status) => (
                   <s-press-button
                     key={status}
+                    ref={(element: unknown) => {
+                      controls.current.statuses[status] = element as { pressed: boolean } | null;
+                    }}
                     pressed={data.filters.status === status}
                     onClick={() => update({ status: status === "ALL" ? null : status })}
                   >
@@ -188,6 +206,9 @@ export default function Projects() {
               </s-button-group>
               <s-select
                 label={t("Scope")}
+                ref={(element: unknown) => {
+                  controls.current.scope = element as { value: string } | null;
+                }}
                 value={data.filters.scope}
                 onChange={(event) => {
                   const value = valueOf(event);
