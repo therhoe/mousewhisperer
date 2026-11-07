@@ -6,8 +6,9 @@ import prisma from "../db.server";
 import { getGrowthMeasurementReport } from "../utils/growth-report.server";
 import { growthReportFilters } from "../utils/growth-report";
 import { GrowthProjectError } from "../utils/growth-projects";
+import { getShopCurrency } from "../utils/shop-currency.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const params = new URL(request.url).searchParams;
   const project = await prisma.growthProject.findFirst({
     where: { id: params.get("projectId") || "", shop: session.shop },
@@ -15,12 +16,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!project) throw new Response("Not found", { status: 404 });
   try {
     const filters = growthReportFilters(params, project);
+    // Revenue is summed and shown in the shop's currency (cached 5 minutes; null
+    // when Shopify does not answer, which shows revenue as "Not recorded").
+    const currency = await getShopCurrency(admin, session.shop);
     const [report, comparison] = await Promise.all([
       getGrowthMeasurementReport(
         session.shop,
         project.id,
         params.get("measurement") || "",
         filters,
+        currency,
       ),
       params.get("compare")
         ? getGrowthMeasurementReport(
@@ -28,6 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             project.id,
             params.get("compare")!,
             filters,
+            currency,
           )
         : Promise.resolve(null),
     ]);

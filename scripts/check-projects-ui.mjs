@@ -558,17 +558,22 @@ test("Project report navigation restores missing launch context from the authent
   assert.equal(h.state.params.has("session"), false);
 });
 
-test("before/after report API authorizes the Project and passes identical filters to both tenant-scoped measurements", async () => {
+test("before/after report API authorizes the Project and passes identical filters and the shop currency to both tenant-scoped measurements", async () => {
   const calls = [];
   let owned = true;
+  const admin = { graphql: async () => Response.json({}) };
   const api = compile("app/routes/api.growth-report.tsx", {
-    "../shopify.server": { authenticate: { admin: async () => ({ session: { shop: "owner.myshopify.com" } }) } },
+    "../shopify.server": { authenticate: { admin: async () => ({ session: { shop: "owner.myshopify.com" }, admin }) } },
     "../db.server": { growthProject: { findFirst: async ({ where }) => {
       calls.push(["ownership", where]);
       return owned ? project : null;
     } } },
     "../utils/growth-projects": pure,
     "../utils/growth-report": reportPure,
+    "../utils/shop-currency.server": { getShopCurrency: async (client, shop) => {
+      calls.push(["currency", client === admin, shop]);
+      return "EUR";
+    } },
     "../utils/growth-report.server": { getGrowthMeasurementReport: async (...args) => {
       calls.push(["report", ...args]);
       if (args[2] === "foreign-measurement") throw new pure.GrowthProjectError("Measurement not found.", 404);
@@ -579,6 +584,11 @@ test("before/after report API authorizes the Project and passes identical filter
   const response = await get("projectId=project-one&measurement=after&compare=before&audience=active&source=&medium=&campaign=sale");
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   assert.equal(calls[0][1].shop, "owner.myshopify.com");
+  assert.deepEqual(
+    calls.filter((call) => call[0] === "currency"),
+    [["currency", true, "owner.myshopify.com"]],
+    "One authenticated currency lookup for both reports",
+  );
   const reports = calls.filter((call) => call[0] === "report");
   assert.deepEqual(reports.map((call) => call.slice(1, 4)), [
     ["owner.myshopify.com", "project-one", "after"],
@@ -588,11 +598,13 @@ test("before/after report API authorizes the Project and passes identical filter
   assert.equal(reports[0][4].source, "");
   assert.equal(reports[0][4].audience, "active");
   assert.equal(reports[0][4].campaign, "sale");
+  assert.deepEqual(reports.map((call) => call[5]), ["EUR", "EUR"]);
   await assert.rejects(() => get("projectId=project-one&measurement=after&compare=foreign-measurement"), (error) => error.status === 404);
   owned = false;
   calls.length = 0;
   await assert.rejects(() => get("projectId=foreign&measurement=after"), (error) => error.status === 404);
   assert.equal(calls.filter((call) => call[0] === "report").length, 0);
+  assert.equal(calls.filter((call) => call[0] === "currency").length, 0, "No Shopify call for a foreign Project");
 });
 
 test("Project tabs preserve filters and A/B shortcut preselects the containing project", () => {
