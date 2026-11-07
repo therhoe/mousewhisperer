@@ -3610,7 +3610,7 @@ Executed subagent-driven on 2026-11-07 on `polaris-ui-redesign`, commits `7bfc8d
 
 **shep-dev check (Task 9)** ran with the throwaway database, currency USD.
 - **Pass:** Weakness column, help text and Focus rows; store revenue ($365.00 with the hint; `*` and footnote in traffic, devices and pages); page revenue ($420.00, no hint); "Not recorded" everywhere for the no-amount measurement; Project summaries; the German pass.
-- **Real test order** on the live store measurement: 1 conversion at $749.95, counted once. In this setup the pixel reached the dev server and the `orders/paid` webhook went to production, so the double delivery was not reproduced live. The database fixtures cover it.
+- **Real test order** on the live store measurement: 1 conversion at $749.95, counted once. Only the pixel delivery reached the dev server. No `orders/paid` webhook for this order showed up in the dev log or in production. The production webhooks logged at that time belonged to another store. So the double delivery was not reproduced live; the database fixtures cover it.
 - **Not verified live:** the Source filter (the dropdown inside the results sheet takes no automated input; the database tests cover filtered revenue) and 375 px (Chrome would not resize).
 - **Visual note:** "Not recorded" wraps onto two lines in the Project summary's Revenue tile.
 - **Teardown:** the pixel points back at production, `shopify app dev clean` was run, and Postgres is stopped.
