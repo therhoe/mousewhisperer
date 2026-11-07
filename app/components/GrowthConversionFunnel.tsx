@@ -1,5 +1,6 @@
 import { BlockStack, Card, InlineGrid, Text } from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
+import { revenueText } from "../utils/revenue";
 import { MetricTile } from "./GrowthOverviewCard";
 import type { GrowthFunnel } from "../utils/growth-report";
 
@@ -9,10 +10,12 @@ export function GrowthConversionFunnel({
   funnel,
   before,
   comparisonName,
+  currency,
 }: {
   funnel: GrowthFunnel;
   before?: GrowthFunnel | null;
   comparisonName?: string;
+  currency: string | null;
 }) {
   const { t, formatNumber } = useI18n();
   const share = (value: number, sessions: number) =>
@@ -26,13 +29,21 @@ export function GrowthConversionFunnel({
     { key: "checkoutStarted", label: t("Reached checkout") },
     { key: "purchased", label: t("Purchased") },
   ] as const;
+  // Revenue of the purchases, in the shop's currency (spec 7.2).
+  const revenue = revenueText(funnel.purchased, funnel, currency, {
+    t,
+    formatNumber,
+  });
+  const beforeRevenue = before
+    ? revenueText(before.purchased, before, currency, { t, formatNumber })
+    : null;
   return (
     <Card>
       <BlockStack gap="400">
         <Text as="h2" variant="headingMd">
           {t("Conversion funnel")}
         </Text>
-        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+        <InlineGrid columns={{ xs: 2, md: 5 }} gap="300">
           {steps.map(({ key, label }) => {
             const current = share(funnel[key], funnel.sessions);
             let caption: string | undefined;
@@ -65,6 +76,16 @@ export function GrowthConversionFunnel({
               />
             );
           })}
+          <MetricTile
+            label={t("Revenue")}
+            value={revenue.value}
+            caption={
+              revenue.hint ??
+              (beforeRevenue
+                ? t("{value} in {name}", { value: beforeRevenue.value, name })
+                : undefined)
+            }
+          />
         </InlineGrid>
         <Text as="p" variant="bodySm" tone="subdued">
           {before

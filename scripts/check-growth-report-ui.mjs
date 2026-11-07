@@ -93,6 +93,7 @@ function load(file, mocks = {}) {
 const common = {
   "@shopify/polaris": polaris,
   "../utils/i18n": i18n,
+  "../utils/revenue": load("app/utils/revenue.ts"),
   "./GrowthOverviewCard": tile,
 };
 const render = (component, props) => renderToStaticMarkup(el(component, props));
@@ -106,8 +107,8 @@ const summary = {
   searchRate: 12.5,
   topSearches: [{ term: "winter boots", sessions: 41 }],
   devices: [
-    { device: "mobile", sessions: 880, share: 65.7, conversionRate: 2.4 },
-    { device: "desktop", sessions: 410, share: 30.6, conversionRate: 4.9 },
+    { device: "mobile", sessions: 880, share: 65.7, conversions: 21, conversionRate: 2.4, revenue: 1050, pricedConversions: 20, unpricedConversions: 1 },
+    { device: "desktop", sessions: 410, share: 30.6, conversions: 20, conversionRate: 4.9, revenue: 1200, pricedConversions: 20, unpricedConversions: 0 },
   ],
 };
 
@@ -321,6 +322,9 @@ const ranked = (path, type, sessions, extra = {}) => ({
   conversionRate: 0,
   typicalRate: null,
   weakness: null,
+  revenue: 0,
+  pricedConversions: 0,
+  unpricedConversions: 0,
   focus: false,
   ...extra,
 });
@@ -383,7 +387,11 @@ test("sessions by page says not recorded for imported measurements", () => {
 
 function resultsWith(report, comparison = null) {
   const section = (name) => (props) =>
-    el("section", { "data-section": name, "data-layout": props.layout || "" });
+    el("section", {
+      "data-section": name,
+      "data-layout": props.layout || "",
+      "data-currency": props.currency ?? "",
+    });
   return load("app/components/GrowthMeasurementResults.tsx", {
     ...common,
     "../utils/background-json": {
@@ -402,6 +410,10 @@ function resultsWith(report, comparison = null) {
   }).GrowthMeasurementResults;
 }
 const baseReport = {
+  currency: "EUR",
+  revenue: 180,
+  pricedConversions: 4,
+  unpricedConversions: 0,
   sessions: 100,
   addedToCart: 20,
   conversions: 4,
@@ -412,12 +424,12 @@ const baseReport = {
   averageScroll: 55,
   series: [{ date: "2026-10-22", sessions: 100, conversions: 4, conversionRate: 4 }],
   channels: [
-    { source: "facebook", medium: "paid", campaign: "", sessions: 100, addedToCart: 20, conversions: 4, conversionRate: 4 },
+    { source: "facebook", medium: "paid", campaign: "", sessions: 100, addedToCart: 20, conversions: 4, conversionRate: 4, revenue: 180, pricedConversions: 4, unpricedConversions: 0 },
   ],
   sources: ["facebook"],
   engagement: { version: 1, maxSessions: 1, groups: [{ category: "Button", items: [] }] },
   engagementUnavailable: false,
-  funnel: { sessions: 100, addedToCart: 20, checkoutStarted: 8, purchased: 4 },
+  funnel: { sessions: 100, addedToCart: 20, checkoutStarted: 8, purchased: 4, revenue: 180, pricedConversions: 4, unpricedConversions: 0 },
   engagementSummary: { ...summary, clickThroughRate: 31.5 },
   exitPaths,
   pages: [],
@@ -563,4 +575,129 @@ test("page tiles show no points delta against a comparison with no sessions", ()
     "Click-through rate=31.5% [Clicked through to a product]",
   );
   assert.doesNotMatch(collectionHtml, /pts/);
+});
+
+test("funnel shows revenue for purchases, with the hint, Not recorded, zero and the comparison", () => {
+  const { GrowthConversionFunnel } = load("app/components/GrowthConversionFunnel.tsx", common);
+  const funnel = {
+    sessions: 200,
+    addedToCart: 40,
+    checkoutStarted: 10,
+    purchased: 12,
+    revenue: 480.5,
+    pricedConversions: 12,
+    unpricedConversions: 0,
+  };
+  assert.match(render(GrowthConversionFunnel, { funnel, currency: "EUR" }), /Revenue=€480\.50</);
+  assert.match(
+    render(GrowthConversionFunnel, { funnel: { ...funnel, pricedConversions: 10, unpricedConversions: 2 }, currency: "EUR" }),
+    /Revenue=€480\.50 \[Some orders have no recorded amount\]/,
+  );
+  assert.match(
+    render(GrowthConversionFunnel, { funnel: { ...funnel, revenue: 0, pricedConversions: 0, unpricedConversions: 12 }, currency: "EUR" }),
+    /Revenue=Not recorded/,
+  );
+  assert.match(
+    render(GrowthConversionFunnel, { funnel: { ...funnel, purchased: 0, revenue: 0, pricedConversions: 0 }, currency: "EUR" }),
+    /Revenue=€0\.00</,
+  );
+  assert.match(
+    render(GrowthConversionFunnel, { funnel, currency: "EUR", before: { ...funnel, revenue: 100 }, comparisonName: "Baseline" }),
+    /Revenue=€480\.50 \[€100\.00 in Baseline\]/,
+  );
+});
+
+test("devices show conversions and revenue beside the conversion rate and explain the mark", () => {
+  const { GrowthEngagementMetrics } = load("app/components/GrowthEngagementMetrics.tsx", common);
+  const html = render(GrowthEngagementMetrics, { summary, layout: "store", exitPages: [], currency: "EUR" });
+  assert.match(html, /<th>Share of sessions<\/th><th>Conversions<\/th><th>Conversion rate<\/th><th>Revenue<\/th>/);
+  assert.match(html, /<td>21<\/td><td>2\.4%<\/td><td>€1,050\.00\*<\/td>/);
+  assert.match(html, /<td>20<\/td><td>4\.9%<\/td><td>€1,200\.00<\/td>/);
+  assert.match(html, /\* Some orders have no recorded amount/);
+});
+
+test("sessions by page shows conversions and revenue per page, marking partly recorded rows", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, {
+    available: true,
+    currency: "EUR",
+    pages: [
+      ranked("/collections/shoes", "COLLECTION", 2, { conversions: 2, conversionRate: 100, revenue: 90, pricedConversions: 2 }),
+      ranked("/products/red", "PRODUCT", 3, { conversions: 3, conversionRate: 100, revenue: 40, pricedConversions: 1, unpricedConversions: 2 }),
+      ranked("/pages/about", "PAGE", 1),
+      ranked("/products/green", "PRODUCT", 1, { conversions: 1, conversionRate: 100, unpricedConversions: 1 }),
+    ],
+  });
+  assert.match(html, /<th>Conversions<\/th><th>Conversion rate<\/th><th>Revenue<\/th><th>Weakness<\/th>/);
+  assert.match(html, /<td>€90\.00<\/td>/);
+  assert.match(html, /<td>€40\.00\*<\/td>/);
+  assert.match(html, /<td>€0\.00<\/td>/, "A page without conversions has zero revenue");
+  assert.match(html, /<td>Not recorded<\/td>/);
+  assert.match(html, /\* Some orders have no recorded amount/);
+  assert.match(html, /so one order can count on several pages\./);
+});
+
+test("sessions by page has no footnote when every amount was recorded", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, {
+    available: true,
+    currency: "EUR",
+    pages: [ranked("/collections/shoes", "COLLECTION", 2, { conversions: 2, revenue: 90, pricedConversions: 2 })],
+  });
+  assert.doesNotMatch(html, /Some orders have no recorded amount/);
+});
+
+test("page tiles show conversions, the conversion rate and revenue in the shop currency", () => {
+  const html = render(resultsWith({ ...baseReport, layout: "page", pageType: "PRODUCT" }), props);
+  assert.match(html, /Converted sessions=4/);
+  assert.match(html, /Conversion rate=4%/);
+  assert.match(html, /Revenue=€180\.00</);
+});
+
+test("the revenue tile hints at partial amounts and says Not recorded when none were recorded", () => {
+  const partial = render(
+    resultsWith({ ...baseReport, layout: "page", pageType: "PRODUCT", revenue: 150, pricedConversions: 3, unpricedConversions: 1 }),
+    props,
+  );
+  assert.match(partial, /Revenue=€150\.00 \[Some orders have no recorded amount\]/);
+  const imported = render(
+    resultsWith({ ...baseReport, layout: "page", pageType: "PRODUCT", revenue: 0, pricedConversions: 0, unpricedConversions: 4 }),
+    props,
+  );
+  assert.match(imported, /Revenue=Not recorded/);
+  assert.doesNotMatch(imported, /NaN/);
+});
+
+test("the revenue tile names the comparison's revenue", () => {
+  const current = { ...baseReport, layout: "page", pageType: "PRODUCT" };
+  const html = render(resultsWith(current, { ...current, revenue: 100 }), {
+    ...props,
+    comparisonId: "c",
+    comparisonName: "Baseline",
+  });
+  assert.match(html, /Revenue=€180\.00 \[€100\.00 in Baseline\]/);
+});
+
+test("traffic by source shows revenue next to the conversion rate and marks partly recorded rows", () => {
+  const html = render(
+    resultsWith({
+      ...baseReport,
+      layout: "store",
+      pageType: null,
+      channels: [
+        baseReport.channels[0],
+        { source: "google", medium: "", campaign: "", sessions: 20, addedToCart: 4, conversions: 2, conversionRate: 10, revenue: 30, pricedConversions: 1, unpricedConversions: 1 },
+      ],
+    }),
+    props,
+  );
+  assert.match(html, /<th>Conversion rate<\/th><th>Revenue<\/th>/);
+  assert.match(html, /<td>4%<\/td><td>€180\.00<\/td>/);
+  assert.match(html, /<td>10%<\/td><td>€30\.00\*<\/td>/);
+  assert.match(html, /\* Some orders have no recorded amount/);
+});
+
+test("the store layout hands the shop currency to the engagement, funnel and pages cards", () => {
+  const html = render(resultsWith({ ...baseReport, layout: "store", pageType: null }), props);
+  assert.equal((html.match(/data-currency="EUR"/g) || []).length, 3);
 });

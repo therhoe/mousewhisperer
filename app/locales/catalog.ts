@@ -1992,4 +1992,9 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "薄弱度 {count}：从此页面继续浏览的会话比您同类型的典型页面少约 {count} 个。",
     "薄弱度 {count}：從此頁面繼續瀏覽的工作階段比您同類型的典型頁面少約 {count} 個。",
   ],
+  "Conversions and revenue count every converted session that viewed the page, so one order can count on several pages.": [
+    "Conversions und Umsatz zählen jede Sitzung mit Kauf, die die Seite aufgerufen hat. Eine Bestellung kann daher auf mehreren Seiten zählen.",
+    "转化和收入统计浏览过该页面的每个已转化会话，因此一笔订单可能计入多个页面。",
+    "轉換和營收統計瀏覽過該頁面的每個已轉換工作階段，因此一筆訂單可能計入多個頁面。",
+  ],
 };

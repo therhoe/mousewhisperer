@@ -21,6 +21,11 @@ import { GrowthExitPathsCard } from "./GrowthExitPaths";
 import { GrowthSessionsByPage } from "./GrowthSessionsByPage";
 import type { GrowthReport, GrowthReportFilters } from "../utils/growth-report";
 import { EngagementOutcomesView } from "./EngagementOutcomes";
+import {
+  PARTIAL_REVENUE_MARK,
+  revenueCell,
+  revenueText,
+} from "../utils/revenue";
 type Payload = { report: GrowthReport; comparison: GrowthReport | null };
 const isPayload = (value: unknown): value is Payload =>
   !!value &&
@@ -105,6 +110,19 @@ export function GrowthMeasurementResults({
   const clickThrough =
     report.pageType !== null && report.pageType !== "PRODUCT";
   const summary = report.engagementSummary;
+  // Revenue sits beside every conversion rate (spec 7.2), in the shop's currency.
+  const money = { t, formatNumber };
+  const revenue = revenueText(report.conversions, report, report.currency, money);
+  const beforeRevenue = before
+    ? revenueText(before.conversions, before, report.currency, money)
+    : null;
+  const channelRows = report.channels.slice(
+    page * CHANNEL_PAGE_SIZE,
+    (page + 1) * CHANNEL_PAGE_SIZE,
+  );
+  const channelRevenue = channelRows.map((row) =>
+    revenueText(row.conversions, row, report.currency, money),
+  );
   // A rate change against a comparison with no sessions is not a real change.
   const compared = !!before && before.sessions > 0;
   const conversionMetrics = (
@@ -113,7 +131,7 @@ export function GrowthMeasurementResults({
         <Text as="h2" variant="headingMd">
           {t("Conversion metrics")}
         </Text>
-        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+        <InlineGrid columns={{ xs: 2, md: 5 }} gap="300">
           <MetricTile
             label={t("Sessions")}
             value={count(report.sessions)}
@@ -167,6 +185,14 @@ export function GrowthMeasurementResults({
                 : undefined
             }
           />
+          <MetricTile
+            label={t("Revenue")}
+            value={revenue.value}
+            caption={
+              revenue.hint ??
+              (beforeRevenue ? versus(beforeRevenue.value) : undefined)
+            }
+          />
         </InlineGrid>
         {before && (
           <Text as="p" variant="bodySm" tone="subdued">
@@ -187,28 +213,29 @@ export function GrowthMeasurementResults({
         </Text>
       </Box>
       {report.channels.length ? (
-        <DataTable
-          columnContentTypes={[
-            "text",
-            "text",
-            "text",
-            "numeric",
-            "numeric",
-            "numeric",
-            "numeric",
-          ]}
-          headings={[
-            t("Source"),
-            t("Medium"),
-            t("Campaign"),
-            t("Sessions"),
-            t("Added to cart"),
-            t("Conversions"),
-            t("Conversion rate"),
-          ]}
-          rows={report.channels
-            .slice(page * CHANNEL_PAGE_SIZE, (page + 1) * CHANNEL_PAGE_SIZE)
-            .map((row) => [
+        <>
+          <DataTable
+            columnContentTypes={[
+              "text",
+              "text",
+              "text",
+              "numeric",
+              "numeric",
+              "numeric",
+              "numeric",
+              "numeric",
+            ]}
+            headings={[
+              t("Source"),
+              t("Medium"),
+              t("Campaign"),
+              t("Sessions"),
+              t("Added to cart"),
+              t("Conversions"),
+              t("Conversion rate"),
+              t("Revenue"),
+            ]}
+            rows={channelRows.map((row, index) => [
               row.source,
               row.medium || "—",
               row.campaign || "—",
@@ -216,8 +243,17 @@ export function GrowthMeasurementResults({
               count(row.addedToCart),
               count(row.conversions),
               percent(row.conversionRate),
+              revenueCell(channelRevenue[index]),
             ])}
-        />
+          />
+          {channelRevenue.some((text) => text.partial) && (
+            <Box padding="400" paddingBlockStart="0">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {`${PARTIAL_REVENUE_MARK} ${t("Some orders have no recorded amount")}`}
+              </Text>
+            </Box>
+          )}
+        </>
       ) : (
         <Box padding="400">
           <Text as="p" tone="subdued">
@@ -288,16 +324,19 @@ export function GrowthMeasurementResults({
             summary={summary}
             layout="store"
             exitPages={report.exitPaths.exitPages}
+            currency={report.currency}
           />
           <GrowthConversionFunnel
             funnel={report.funnel}
             before={before?.funnel}
             comparisonName={comparisonName}
+            currency={report.currency}
           />
           {trafficBySource}
           <GrowthSessionsByPage
             pages={report.pages}
             available={report.exitPaths.available}
+            currency={report.currency}
           />
         </>
       ) : (
@@ -307,6 +346,7 @@ export function GrowthMeasurementResults({
             summary={summary}
             layout="page"
             exitPages={[]}
+            currency={report.currency}
           />
           {zones}
           {report.engagementUnavailable && (

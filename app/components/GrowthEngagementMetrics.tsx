@@ -6,6 +6,11 @@ import {
   Text,
 } from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
+import {
+  PARTIAL_REVENUE_MARK,
+  revenueCell,
+  revenueText,
+} from "../utils/revenue";
 import { MetricTile } from "./GrowthOverviewCard";
 import type {
   GrowthEngagementSummary,
@@ -17,10 +22,12 @@ export function GrowthEngagementMetrics({
   summary,
   layout,
   exitPages,
+  currency,
 }: {
   summary: GrowthEngagementSummary;
   layout: GrowthReportLayout;
   exitPages: GrowthExitPaths["exitPages"];
+  currency: string | null;
 }) {
   const { t, formatNumber } = useI18n();
   const store = layout === "store";
@@ -60,6 +67,10 @@ export function GrowthEngagementMetrics({
         </BlockStack>
       </Card>
     );
+  // Revenue per device, in the shop's currency (spec 7.2).
+  const deviceRevenue = summary.devices.map((row) =>
+    revenueText(row.conversions, row, currency, { t, formatNumber }),
+  );
   return (
     <Card>
       <BlockStack gap="500">
@@ -120,19 +131,36 @@ export function GrowthEngagementMetrics({
               {t("Devices")}
             </Text>
             {summary.devices.length ? (
-              <DataTable
-                columnContentTypes={["text", "numeric", "numeric"]}
-                headings={[
-                  t("Device"),
-                  t("Share of sessions"),
-                  t("Conversion rate"),
-                ]}
-                rows={summary.devices.map((row) => [
-                  device(row.device),
-                  percent(row.share),
-                  percent(row.conversionRate),
-                ])}
-              />
+              <>
+                <DataTable
+                  columnContentTypes={[
+                    "text",
+                    "numeric",
+                    "numeric",
+                    "numeric",
+                    "numeric",
+                  ]}
+                  headings={[
+                    t("Device"),
+                    t("Share of sessions"),
+                    t("Conversions"),
+                    t("Conversion rate"),
+                    t("Revenue"),
+                  ]}
+                  rows={summary.devices.map((row, index) => [
+                    device(row.device),
+                    percent(row.share),
+                    formatNumber(row.conversions),
+                    percent(row.conversionRate),
+                    revenueCell(deviceRevenue[index]),
+                  ])}
+                />
+                {deviceRevenue.some((text) => text.partial) && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {`${PARTIAL_REVENUE_MARK} ${t("Some orders have no recorded amount")}`}
+                  </Text>
+                )}
+              </>
             ) : (
               <Text as="p" tone="subdued">
                 {t("No sessions match these filters.")}
