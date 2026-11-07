@@ -488,6 +488,7 @@ model StoreSnapshotVisit {
   convertedAt       DateTime?
   orderValue        Float?
   currency          String?
+  orderId           String?
 
   ctaClicks          String?
   startedAt          DateTime  @default(now())
@@ -511,6 +512,7 @@ model StoreSnapshotVisit {
   @@index([storeSnapshotId, startedAt])
   @@index([storeSnapshotId, checkoutStarted])
   @@index([storeSnapshotId, converted])
+  @@unique([orderId, storeSnapshotId]) // orderId first: lookups by order use it
 }
 
 model StoreSnapshotStatsCache {
@@ -691,6 +693,7 @@ model AbTestAssignment {
   convertedAt       DateTime?
   orderValue        Float?
   currency          String?
+  orderId           String?
   ctaClicks         String?
   assignedAt        DateTime      @default(now())
   startedAt         DateTime?
@@ -710,6 +713,7 @@ model AbTestAssignment {
   @@index([testId, checkoutStarted])
   @@index([testId, converted])
   @@index([assignedAt])
+  @@unique([orderId, testId])
 }
 
 model AbTestVisit {
@@ -770,6 +774,7 @@ model AbTestVisit {
   convertedAt       DateTime?
   orderValue        Float?
   currency          String?
+  orderId           String?
 
   ctaClicks          String?
   startedAt          DateTime  @default(now())
@@ -799,6 +804,7 @@ model AbTestVisit {
   @@index([testId, startedAt])
   @@index([testId, checkoutStarted])
   @@index([testId, converted])
+  @@unique([orderId, testId])
 }
 
 // Individual visit/session to a product page
@@ -861,6 +867,8 @@ model Visit {
   convertedAt       DateTime?
   orderValue        Float? // Total order value in store currency
   currency          String? // Currency code (e.g., "USD", "EUR")
+  // Numeric Shopify order id of the conversion; pixel and webhook share it.
+  orderId           String?
 
   // CTA click tracking
   ctaClicks String? // JSON: {"Add to Cart": 3, "Buy Now": 1, ...}
@@ -897,6 +905,7 @@ model Visit {
   @@index([snapshotId, startedAt]) // Sort visits by time within snapshot
   @@index([snapshotId, checkoutStarted]) // Checkout funnel lookups
   @@index([snapshotId, converted]) // Conversion lookups
+  @@unique([orderId, snapshotId]) // One converted visit per order per capture; orderId first for lookups
 }
 
 enum VisitorType {

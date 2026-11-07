@@ -53,8 +53,10 @@ const server = load("../app/utils/growth-projects.server.ts", {
   "./snapshot-setup.server": { savedTrackerState: async () => trackerState, resolveSetupPage: async (_admin, _type, id) => ({ id, title: "Test product", handle: "test-product" }) },
   "./loader-cache.server": cache,
 });
+const orders = load("../app/utils/order-attribution.server.ts");
 const store = load("../app/utils/store-snapshot.server.ts", {
   "../db.server": db, "./growth-tracking.server": tracking, "./loader-cache.server": cache,
+  "./order-attribution.server": orders,
   "./notifications.server": { createNotification: async () => {} },
 });
 const journey = load("../app/utils/customer-journey.server.ts", {
@@ -71,6 +73,7 @@ const trackApi = load("../app/routes/api.track.tsx", {
   "../utils/datacenter-ips.server": { isDatacenterIP: () => ({ isDatacenter: false }) },
   "../utils/notifications.server": {}, "../utils/ab-tests.server": {},
   "../utils/store-snapshot.server": store, "../utils/channel-snapshot.server": {},
+  "../utils/order-attribution.server": orders,
   "../utils/tracking-auth.server": { verifyTrackingRequest: async () => ({ allowed: true, signed: true }) },
 });
 const shop = "growth-db-regression.myshopify.com";

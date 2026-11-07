@@ -118,6 +118,7 @@ function loadTrackRoute(mode) {
       "../utils/ab-tests.server": {},
       "../utils/store-snapshot.server": { normalizeResourceType: (value) => (value ? String(value).toUpperCase() : null) },
       "../utils/channel-snapshot.server": { getActiveChannelSnapshot: async () => null },
+      "../utils/order-attribution.server": {},
     },
   );
   return { action: route.action, seen };

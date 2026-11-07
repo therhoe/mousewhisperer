@@ -6,6 +6,10 @@ import { recordCustomerCommerce } from "../utils/customer-journey.server";
 import { attributeAbTestConversion } from "../utils/ab-tests.server";
 import { attributeStoreSnapshotOrder } from "../utils/store-snapshot.server";
 import { attributeChannelSnapshotEvent } from "../utils/channel-snapshot.server";
+import {
+  attributeProductVisitOrder,
+  orderAttributionId,
+} from "../utils/order-attribution.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
@@ -20,6 +24,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       : new Date();
     const orderTotal = order.total_price ? parseFloat(order.total_price) : null;
     const orderCurrency = order.currency || null;
+    // The checkout pixel reports the same order; both writers key on this id.
+    const orderId =
+      orderAttributionId(order.admin_graphql_api_id) ??
+      orderAttributionId(order.id);
 
     const getAttributeValue = (attributes: any[] | undefined, key: string) => {
       if (!Array.isArray(attributes)) return null;
@@ -83,6 +91,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         timestamp: orderCreatedAt,
         totalPrice: orderTotal,
         currency: orderCurrency,
+        orderId,
+        fillMissingAmount: true,
       });
       abTestConversionsTracked = await attributeAbTestConversion({
         shop,
@@ -90,6 +100,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         timestamp: orderCreatedAt,
         totalPrice: orderTotal,
         currency: orderCurrency,
+        orderId,
+        fillMissingAmount: true,
       });
     }
 
@@ -173,76 +185,82 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const snapshot = project.snapshots[0];
-      let visit = null;
       let matchTier = "";
 
-      // Tier 1: Exact session match with ATC (most accurate)
-      if (sessionId) {
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshotId: snapshot.id,
-            sessionId,
-            ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
-            addedToCart: true,
-            converted: false,
+      // The checkout pixel may have attributed this order to one of the product's
+      // captures already (it matches every project of the product by id or handle).
+      // Each capture keeps one conversion per order; the webhook fills in a missing
+      // shop-currency amount on rows the pixel wrote.
+      const result = await attributeProductVisitOrder(prisma, {
+        orderId,
+        scope: {
+          snapshot: {
+            project: { shop, resourceType: "PRODUCT", OR: productMatches },
           },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "session+ATC";
-      }
+        },
+        convertedAt: orderCreatedAt,
+        orderValue: perProductRevenue || null,
+        currency: orderCurrency,
+        fillMissingAmount: true,
+        findVisit: async (attributedSnapshotIds) => {
+          if (attributedSnapshotIds.includes(snapshot.id)) return null;
+          let visit = null;
 
-      // Tier 2: Exact session match without ATC (Buy Now / direct checkout)
-      if (!visit && sessionId) {
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshotId: snapshot.id,
-            sessionId,
-            ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
-            converted: false,
-          },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "session";
-      }
+          // Tier 1: Exact session match with ATC (most accurate)
+          if (sessionId) {
+            visit = await prisma.visit.findFirst({
+              where: {
+                snapshotId: snapshot.id,
+                sessionId,
+                ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
+                addedToCart: true,
+                converted: false,
+              },
+              orderBy: { startedAt: "desc" },
+            });
+            if (visit) matchTier = "session+ATC";
+          }
 
-      // Tier 3: No session ID available — match by ATC only (best effort)
-      if (!visit && !sessionId && !snapshot.usesAcquisitionSessions) {
-        visit = await prisma.visit.findFirst({
-          where: {
-            snapshotId: snapshot.id,
-            addedToCart: true,
-            converted: false,
-          },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "ATC-only";
-      }
+          // Tier 2: Exact session match without ATC (Buy Now / direct checkout)
+          if (!visit && sessionId) {
+            visit = await prisma.visit.findFirst({
+              where: {
+                snapshotId: snapshot.id,
+                sessionId,
+                ...growthAcquisitionMatch(acquisitionSessionId, "snapshot"),
+                converted: false,
+              },
+              orderBy: { startedAt: "desc" },
+            });
+            if (visit) matchTier = "session";
+          }
 
-      // No fallback beyond this — a missed conversion beats a false one
+          // Tier 3: No session ID available — match by ATC only (best effort)
+          if (!visit && !sessionId && !snapshot.usesAcquisitionSessions) {
+            visit = await prisma.visit.findFirst({
+              where: {
+                snapshotId: snapshot.id,
+                addedToCart: true,
+                converted: false,
+              },
+              orderBy: { startedAt: "desc" },
+            });
+            if (visit) matchTier = "ATC-only";
+          }
 
-      if (visit) {
-        if (visit.converted) {
-          console.log(
-            `[MW Webhook] Visit ${visit.id} already converted, skipping`,
-          );
-          continue;
-        }
+          // No fallback beyond this — a missed conversion beats a false one
+          return visit;
+        },
+      });
 
-        await prisma.visit.update({
-          where: { id: visit.id },
-          data: {
-            converted: true,
-            convertedAt: orderCreatedAt,
-            ...(perProductRevenue ? { orderValue: perProductRevenue } : {}),
-            ...(orderCurrency ? { currency: orderCurrency } : {}),
-          },
-        });
-        await prisma.snapshotStatsCache
-          .deleteMany({ where: { snapshotId: snapshot.id } })
-          .catch(() => {});
+      if (result.outcome === "converted") {
         conversionsTracked++;
         console.log(
-          `[MW Webhook] Converted visit ${visit.id} via ${matchTier} (product: ${productGid}, revenue: ${perProductRevenue})`,
+          `[MW Webhook] Converted visit ${result.visitId} via ${matchTier} (product: ${productGid}, revenue: ${perProductRevenue})`,
+        );
+      } else if (result.outcome === "already") {
+        console.log(
+          `[MW Webhook] Order already attributed to visit ${result.visitId ?? "(concurrent)"} for product ${productGid}, skipping`,
         );
       } else {
         console.log(

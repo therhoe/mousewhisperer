@@ -9,6 +9,12 @@ import type {
 import { createHmac, timingSafeEqual } from "node:crypto";
 import prisma from "../db.server";
 import {
+  isLostOrderWrite,
+  missingShopAmount,
+  orderAmount,
+  orderAttributionId,
+} from "./order-attribution.server";
+import {
   abTargetPathForResource,
   abTargetPathMatchesType,
   normalizeAbTargetPath,
@@ -1853,37 +1859,69 @@ export async function attributeAbTestConversion({
   timestamp,
   totalPrice,
   currency,
+  orderId: rawOrderId,
+  fillMissingAmount = false,
 }: {
   shop?: string | null;
   sessionId: string;
   timestamp?: number | string | Date | null;
   totalPrice?: number | string | null;
   currency?: string | null;
+  // Pixel `checkout.order.id` or webhook order id; one conversion per test per order.
+  orderId?: unknown;
+  // Only the webhook passes true: its amount is in the shop currency.
+  fillMissingAmount?: boolean;
 }) {
   if (!sessionId) return 0;
   const orderDate = timestamp ? new Date(timestamp) : new Date();
+  const orderId = orderAttributionId(rawOrderId);
+  const amount = orderAmount(totalPrice);
+  const conversion = {
+    converted: true,
+    convertedAt: orderDate,
+    ...(amount != null ? { orderValue: amount } : {}),
+    ...(currency ? { currency } : {}),
+    ...(orderId ? { orderId } : {}),
+  };
+  const liveTest = {
+    status: { in: ["LIVE", "PAUSED", "ENDED"] as AbTestStatus[] },
+  };
 
-  const result = await prisma.abTestAssignment.updateMany({
+  // Tests that already hold this order (the other writer, or a retry), per table.
+  const scope = { orderId: orderId!, ...(shop ? { shop } : {}) };
+  const select = { id: true, testId: true, orderValue: true, currency: true };
+  const orderRows = () =>
+    Promise.all([
+      prisma.abTestAssignment.findMany({ where: scope, select }),
+      prisma.abTestVisit.findMany({ where: scope, select }),
+    ]);
+  const [assigned, visited] = orderId ? await orderRows() : [[], []];
+  const assignedTestIds = new Set(assigned.map((row) => row.testId));
+  const visitedTestIds = new Set(visited.map((row) => row.testId));
+
+  const assignments = await prisma.abTestAssignment.findMany({
     where: {
       ...(shop ? { shop } : {}),
       sessionId,
-      test: { status: { in: ["LIVE", "PAUSED", "ENDED"] as AbTestStatus[] } },
+      test: liveTest,
       converted: false,
+      ...(assignedTestIds.size ? { testId: { notIn: [...assignedTestIds] } } : {}),
     },
-    data: {
-      converted: true,
-      convertedAt: orderDate,
-      ...(totalPrice != null && totalPrice !== ""
-        ? {
-            orderValue:
-              typeof totalPrice === "number"
-                ? totalPrice
-                : parseFloat(totalPrice),
-          }
-        : {}),
-      ...(currency ? { currency } : {}),
-    },
+    select: { id: true },
   });
+  let assignmentUpdates = 0;
+  for (const assignment of assignments) {
+    try {
+      await prisma.abTestAssignment.update({
+        where: { id: assignment.id, converted: false },
+        data: conversion,
+      });
+      assignmentUpdates += 1;
+    } catch (error) {
+      // Another delivery of this order converted the assignment first.
+      if (!isLostOrderWrite(error)) throw error;
+    }
+  }
 
   const thirtyDaysBeforeOrder = new Date(orderDate);
   thirtyDaysBeforeOrder.setDate(thirtyDaysBeforeOrder.getDate() - 30);
@@ -1894,7 +1932,7 @@ export async function attributeAbTestConversion({
       sessionId,
       converted: false,
       startedAt: { gte: thirtyDaysBeforeOrder, lte: orderDate },
-      test: { status: { in: ["LIVE", "PAUSED", "ENDED"] as AbTestStatus[] } },
+      test: liveTest,
     },
     orderBy: [
       { testId: "asc" },
@@ -1904,31 +1942,35 @@ export async function attributeAbTestConversion({
     ],
   });
 
-  const updatedTestIds = new Set<string>();
   let visitUpdates = 0;
   for (const visit of visits) {
-    if (updatedTestIds.has(visit.testId)) continue;
-    await prisma.abTestVisit.update({
-      where: { id: visit.id },
-      data: {
-        converted: true,
-        convertedAt: orderDate,
-        ...(totalPrice != null && totalPrice !== ""
-          ? {
-              orderValue:
-                typeof totalPrice === "number"
-                  ? totalPrice
-                  : parseFloat(totalPrice),
-            }
-          : {}),
-        ...(currency ? { currency } : {}),
-      },
-    });
-    updatedTestIds.add(visit.testId);
-    visitUpdates += 1;
+    if (visitedTestIds.has(visit.testId)) continue;
+    visitedTestIds.add(visit.testId);
+    try {
+      await prisma.abTestVisit.update({
+        where: { id: visit.id, converted: false },
+        data: conversion,
+      });
+      visitUpdates += 1;
+    } catch (error) {
+      if (!isLostOrderWrite(error)) throw error;
+    }
   }
 
-  return result.count + visitUpdates;
+  // Last, so it also covers a pixel row committed while this webhook was choosing.
+  if (fillMissingAmount && orderId) {
+    const [assignmentRows, visitRows] = await orderRows();
+    for (const row of assignmentRows) {
+      const fill = missingShopAmount(row, amount, currency ?? null);
+      if (fill) await prisma.abTestAssignment.update({ where: { id: row.id }, data: fill });
+    }
+    for (const row of visitRows) {
+      const fill = missingShopAmount(row, amount, currency ?? null);
+      if (fill) await prisma.abTestVisit.update({ where: { id: row.id }, data: fill });
+    }
+  }
+
+  return assignmentUpdates + visitUpdates;
 }
 
 function abAssignmentFilterWhere(

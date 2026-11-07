@@ -7,6 +7,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const SHOP = "webhook-release-test.myshopify.com";
+const ORDER_ID = "10101";
 const SID = "legacy-test-session";
 const ACQUISITION_ID = "acq_release_test_journey";
 const CREATED_AT = "2026-08-26T12:00:00.000Z";
@@ -14,13 +15,29 @@ const source = readFileSync(
   new URL("../app/routes/webhooks.orders.paid.tsx", import.meta.url),
   "utf8",
 );
-const compiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-    esModuleInterop: true,
-  },
-}).outputText;
+const transpile = (code) =>
+  ts.transpileModule(code, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true,
+    },
+  }).outputText;
+const compiled = transpile(source);
+// The real order-id helper (no imports), so the Page writer runs as in production.
+const orderAttribution = (() => {
+  const module = { exports: {} };
+  runInNewContext(
+    transpile(
+      readFileSync(
+        new URL("../app/utils/order-attribution.server.ts", import.meta.url),
+        "utf8",
+      ),
+    ),
+    { module, exports: module.exports },
+  );
+  return module.exports;
+})();
 
 function fixture(options = {}) {
   const calls = [];
@@ -63,6 +80,12 @@ function fixture(options = {}) {
       },
     },
     visit: {
+      findMany: async (args) => {
+        // The order-id lookups: has the checkout pixel attributed this order?
+        assert.ok(args.where.orderId);
+        record("page-order", args);
+        return options.pixelVisit ? [options.pixelVisit] : [];
+      },
       findFirst: async (args) => {
         record("page-select", args);
         assert.equal(args.where.snapshotId, "snapshot-a");
@@ -129,6 +152,7 @@ function fixture(options = {}) {
         return 1;
       },
     },
+    "../utils/order-attribution.server": orderAttribution,
   };
   const module = { exports: {} };
   runInNewContext(
@@ -196,9 +220,11 @@ test("Channel-only failure still runs Store, A/B and matching Page attribution, 
     "store",
     "ab",
     "page-project",
+    "page-order",
     "page-select",
     "page-write",
     "page-cache",
+    "page-order",
   ]);
   assert.equal(f.writes.length, 1);
   assert.equal(f.writes[0].where.id, "visit-a");
@@ -207,6 +233,17 @@ test("Channel-only failure still runs Store, A/B and matching Page attribution, 
     convertedAt: new Date(CREATED_AT),
     orderValue: 48.5,
     currency: "USD",
+    orderId: ORDER_ID,
+  });
+  assert.deepEqual(call(f, "page-order").where, {
+    snapshot: {
+      project: {
+        shop: SHOP,
+        resourceType: "PRODUCT",
+        OR: [{ productId: "gid://shopify/Product/101" }],
+      },
+    },
+    orderId: ORDER_ID,
   });
   for (const stage of ["store", "ab"]) {
     assert.deepEqual(call(f, stage), {
@@ -217,6 +254,8 @@ test("Channel-only failure still runs Store, A/B and matching Page attribution, 
       timestamp: new Date(CREATED_AT),
       totalPrice: 48.5,
       currency: "USD",
+      orderId: ORDER_ID,
+      fillMissingAmount: true,
     });
   }
   assert.equal(f.warnings.length, 1);
@@ -311,9 +350,11 @@ test("orders without a legacy SID retain the existing Page-only ATC fallback", a
   assert.deepEqual(stages(f), [
     "auth",
     "page-project",
+    "page-order",
     "page-select",
     "page-write",
     "page-cache",
+    "page-order",
   ]);
   assert.equal(call(f, "page-select").where.addedToCart, true);
   assert.equal(call(f, "page-select").where.sessionId, undefined);
@@ -375,4 +416,35 @@ test("non-Response authentication failures retain the existing rejection behavio
   assert.deepEqual(stages(f), ["auth"]);
   assert.equal(f.warnings.length, 0);
   assert.equal(f.errors[0][1], authError);
+});
+
+test("an order the checkout pixel already attributed is not converted again; a missing shop-currency amount is filled in", async () => {
+  for (const [pixelVisit, fill] of [
+    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 45, currency: "EUR" }, { orderValue: 48.5, currency: "USD" }],
+    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: null, currency: null }, { orderValue: 48.5, currency: "USD" }],
+    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 48.49, currency: "USD" }, null],
+  ]) {
+    const f = fixture({ pixelVisit });
+    assert.equal((await f.run()).status, 200);
+    assert.ok(!stages(f).includes("page-select"), "no second visit is selected");
+    if (fill) {
+      assert.deepEqual(f.writes, [{ where: { id: "visit-px" }, data: fill }]);
+    } else {
+      assert.equal(f.writes.length, 0);
+    }
+  }
+});
+
+test("the admin GID and the numeric id normalise to the same order id", async () => {
+  for (const order of [
+    { id: 10101, admin_graphql_api_id: "gid://shopify/Order/10101" },
+    { id: 10101, admin_graphql_api_id: undefined },
+    { id: undefined, admin_graphql_api_id: "gid://shopify/Order/10101" },
+  ]) {
+    const f = fixture({ order });
+    assert.equal((await f.run()).status, 200);
+    assert.equal(call(f, "store").orderId, ORDER_ID);
+    assert.equal(call(f, "ab").orderId, ORDER_ID);
+    assert.equal(f.writes[0].data.orderId, ORDER_ID);
+  }
 });
