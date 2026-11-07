@@ -195,7 +195,9 @@ async function fixture() {
 }
 
 // The pixel reports the presentment currency (EUR here); the webhook the shop's (USD).
-async function pixel(f, orderNumber, { total = "45.00", currency = "EUR" } = {}) {
+// Production pixels send checkout.order.id as the bare numeric string (shep-dev
+// order #1019 arrived as "18986055008350"); `gid` sends the GID form instead.
+async function pixel(f, orderNumber, { total = "45.00", currency = "EUR", gid = false } = {}) {
   const response = await trackApi.action({
     request: new Request(`https://app.test/api/track?shop=${f.shop}`, {
       method: "POST",
@@ -204,7 +206,7 @@ async function pixel(f, orderNumber, { total = "45.00", currency = "EUR" } = {})
         shop: f.shop,
         sessionId: f.sessionId,
         timestamp: now,
-        orderId: `gid://shopify/OrderIdentity/${orderNumber}`,
+        orderId: gid ? `gid://shopify/OrderIdentity/${orderNumber}` : String(orderNumber),
         orderNumber: `#${orderNumber}`,
         totalPrice: total,
         currency,
@@ -280,14 +282,14 @@ after(async () => {
 });
 
 test("both writers normalise the order id to the numeric Shopify id", () => {
-  for (const value of [
-    "gid://shopify/Order/5551234",
-    "gid://shopify/OrderIdentity/5551234",
-    "5551234",
-    5551234,
-    " 5551234 ",
+  for (const [value, expected] of [
+    ["18986055008350", "18986055008350"],
+    [18986055008350, "18986055008350"],
+    ["gid://shopify/Order/5551234", "5551234"],
+    ["gid://shopify/OrderIdentity/5551234", "5551234"],
+    [" 5551234 ", "5551234"],
   ]) {
-    assert.equal(orders.orderAttributionId(value), "5551234", String(value));
+    assert.equal(orders.orderAttributionId(value), expected, String(value));
   }
   for (const value of [null, undefined, "", "abc", -1, 1.5, "gid://shopify/Product/1", {}]) {
     assert.equal(orders.orderAttributionId(value), null, String(value));
@@ -302,6 +304,16 @@ test("pixel then webhook: one conversion per capture, filled in with the shop-cu
 
   await paidWebhook(f, 1001);
   assertOneOrder(await converted(f), usd("1001"));
+});
+
+test("a GID-form pixel order id matches the webhook's order too", async () => {
+  const f = await fixture();
+  const pixelResult = await pixel(f, 1003, { gid: true });
+  assert.equal(pixelResult.conversionsTracked, 1);
+  assertOneOrder(await converted(f), eur("1003"));
+
+  await paidWebhook(f, 1003);
+  assertOneOrder(await converted(f), usd("1003"));
 });
 
 test("pixel in the shop currency, then webhook: the pixel's amount stays", async () => {
