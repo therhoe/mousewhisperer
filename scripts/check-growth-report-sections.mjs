@@ -52,8 +52,8 @@ const all = { audience: "all", source: "", medium: "", campaign: "" };
 const t0 = new Date("2026-10-22T10:00:00Z");
 const later = (minutes) => new Date(t0.getTime() + minutes * 60_000);
 const click = (zone) => JSON.stringify([{ label: "Card", tag: "a", zone }]);
-const report = (projectId, measurementId, filters = all) =>
-  service.getGrowthMeasurementReport(shop, projectId, measurementId, filters);
+const report = (projectId, measurementId, filters = all, currency = null) =>
+  service.getGrowthMeasurementReport(shop, projectId, measurementId, filters, currency);
 try {
   // Store Project: five sessions across collection, product, page and homepage.
   const storeProject = await db.growthProject.create({
@@ -178,6 +178,10 @@ try {
     addedToCart: 2,
     checkoutStarted: 1,
     purchased: 1,
+    // No shop currency was passed, so the one order counts as unpriced.
+    revenue: 0,
+    pricedConversions: 0,
+    unpricedConversions: 1,
   });
   const summary = storeReport.engagementSummary;
   assert.equal(summary.available, true);
@@ -368,15 +372,269 @@ try {
     addedToCart: 1,
     checkoutStarted: 1,
     purchased: 0,
+    revenue: 0,
+    pricedConversions: 0,
+    unpricedConversions: 0,
   });
   assert.deepEqual(plain(imported.pages), []);
+  // ── Revenue (spec 7.2): summed per session in the shop's currency, then given to
+  // every page the converted session viewed.
+  const revenueProject = await db.growthProject.create({
+    data: { shop, title: "Revenue", goal: "Sum orders", scope: "STORE" },
+  });
+  const revenueStore = await db.storeSnapshot.create({
+    data: {
+      shop,
+      name: "Revenue fixture",
+      completionMode: "TIME_WINDOW",
+      durationDays: 7,
+      endsAt: new Date("2026-12-31"),
+      usesAcquisitionSessions: true,
+    },
+  });
+  const revenueMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: revenueProject.id,
+      name: "Revenue baseline",
+      completionMode: "DURATION",
+      durationDays: 7,
+      storeSnapshotId: revenueStore.id,
+    },
+  });
+  const order = (orderValue, currency) => ({ converted: true, convertedAt: later(5), orderValue, currency });
+  const sale = (pageViewId, acquisitionId, pagePath, resourceType, extra = {}) => ({
+    storeSnapshotId: revenueStore.id,
+    sessionId: `browser-${acquisitionId}`,
+    pageViewId,
+    pagePath,
+    resourceType,
+    visitorType: "REAL",
+    acquisitionId,
+    acquisitionSource: "facebook",
+    acquisitionStartedAt: t0,
+    startedAt: t0,
+    deviceType: "mobile",
+    ...extra,
+  });
+  await db.storeSnapshotVisit.createMany({
+    data: [
+      // r1 bought twice: attribution wrote each order to a different page view of the session.
+      sale("r1a", "acq_r1", "/collections/shoes", "COLLECTION", { deviceType: "desktop", ...order(30, "EUR") }),
+      sale("r1b", "acq_r1", "/products/blue", "PRODUCT", { deviceType: "desktop", startedAt: later(1), ...order(20, "EUR") }),
+      // r2 viewed two pages and bought once: its order counts on both pages.
+      sale("r2a", "acq_r2", "/collections/shoes", "COLLECTION", { deviceType: "desktop", acquisitionSource: "google", ...order(40, "EUR") }),
+      sale("r2b", "acq_r2", "/products/red", "PRODUCT", { deviceType: "desktop", acquisitionSource: "google", startedAt: later(1) }),
+      // r3 paid in another currency; r4 has no amount; r6 has an amount but no currency.
+      sale("r3", "acq_r3", "/products/red", "PRODUCT", order(25, "USD")),
+      sale("r4", "acq_r4", "/products/red", "PRODUCT", order(null, null)),
+      // r5 never bought.
+      sale("r5", "acq_r5", "/pages/about", "PAGE"),
+      sale("r6", "acq_r6", "/products/green", "PRODUCT", order(10, null)),
+    ],
+  });
+  const eur = await report(revenueProject.id, revenueMeasurement.id, all, "EUR");
+  assert.equal(eur.currency, "EUR");
+  assert.deepEqual(
+    [eur.sessions, eur.conversions, eur.revenue, eur.pricedConversions, eur.unpricedConversions],
+    [6, 5, 90, 2, 3],
+    "Only EUR amounts are summed; USD, a missing amount and a missing currency are unpriced",
+  );
+  assert.deepEqual(
+    [eur.funnel.purchased, eur.funnel.revenue, eur.funnel.pricedConversions, eur.funnel.unpricedConversions],
+    [5, 90, 2, 3],
+  );
+  const pageRevenue = (path) => {
+    const row = eur.pages.find((item) => item.path === path);
+    return [row.sessions, row.conversions, row.revenue, row.pricedConversions, row.unpricedConversions];
+  };
+  assert.deepEqual(pageRevenue("/collections/shoes"), [2, 2, 90, 2, 0], "r1's two orders and r2's order");
+  assert.deepEqual(pageRevenue("/products/blue"), [1, 1, 50, 1, 0], "A session that bought twice brings both orders");
+  assert.deepEqual(pageRevenue("/products/red"), [3, 3, 40, 1, 2], "r2 viewed it and bought; r3 and r4 are unpriced");
+  assert.deepEqual(pageRevenue("/pages/about"), [1, 0, 0, 0, 0], "A page without conversions has zero revenue");
+  assert.deepEqual(pageRevenue("/products/green"), [1, 1, 0, 0, 1], "An amount without a currency is not recorded");
+  assert.deepEqual(
+    plain(eur.channels).map((row) => [row.source, row.conversions, row.revenue, row.pricedConversions, row.unpricedConversions]),
+    [
+      ["facebook", 4, 50, 1, 3],
+      ["google", 1, 40, 1, 0],
+    ],
+  );
+  assert.deepEqual(
+    plain(eur.engagementSummary.devices).map((row) => [
+      row.device,
+      row.sessions,
+      row.conversions,
+      row.revenue,
+      row.pricedConversions,
+      row.unpricedConversions,
+    ]),
+    [
+      ["mobile", 4, 3, 0, 0, 3],
+      ["desktop", 2, 2, 90, 2, 0],
+    ],
+  );
+  const usd = await report(revenueProject.id, revenueMeasurement.id, all, "USD");
+  assert.deepEqual(
+    [usd.currency, usd.revenue, usd.pricedConversions, usd.unpricedConversions],
+    ["USD", 25, 1, 4],
+    "The shop currency decides which amounts count",
+  );
+  const unknown = await report(revenueProject.id, revenueMeasurement.id);
+  assert.deepEqual(
+    [unknown.currency, unknown.revenue, unknown.pricedConversions, unknown.unpricedConversions],
+    [null, 0, 0, 5],
+    "Without a shop currency nothing is summed",
+  );
+  const googleOnly = await report(revenueProject.id, revenueMeasurement.id, { ...all, source: "google" }, "EUR");
+  assert.deepEqual(
+    [googleOnly.conversions, googleOnly.revenue, googleOnly.pricedConversions],
+    [1, 40, 1],
+    "Revenue follows the same filters as the rate",
+  );
+
+  // Page capture (Visit): the same session bought twice from two loads of the page.
+  const bootResource = await db.project.create({
+    data: {
+      shop,
+      resourceType: "PRODUCT",
+      productId: "gid://shopify/Product/9",
+      productTitle: "Boot",
+      productHandle: "boot",
+    },
+  });
+  const bootProject = await db.growthProject.create({
+    data: { shop, title: "Boot", goal: "Sell boots", scope: "PAGE", resourceProjectId: bootResource.id },
+  });
+  const bootSnapshot = await db.snapshot.create({
+    data: { projectId: bootResource.id, number: 1, usesAcquisitionSessions: true },
+  });
+  const bootMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: bootProject.id,
+      name: "Boot baseline",
+      completionMode: "VISITORS",
+      targetVisitors: 100,
+      snapshotId: bootSnapshot.id,
+    },
+  });
+  const boot = (pageViewId, acquisitionId, extra = {}) => ({
+    snapshotId: bootSnapshot.id,
+    sessionId: `browser-${acquisitionId}`,
+    pageViewId,
+    acquisitionId,
+    acquisitionSource: "google",
+    acquisitionStartedAt: t0,
+    startedAt: t0,
+    visitorType: "REAL",
+    ...extra,
+  });
+  await db.visit.createMany({
+    data: [
+      boot("b1", "acq_b1", order(30, "EUR")),
+      boot("b2", "acq_b1", { startedAt: later(2), ...order(12, "EUR") }),
+      boot("b3", "acq_b2", order(null, null)),
+      boot("b4", "acq_b3"),
+    ],
+  });
+  const bootReport = await report(bootProject.id, bootMeasurement.id, all, "EUR");
+  assert.deepEqual(
+    [bootReport.sessions, bootReport.conversions, bootReport.revenue, bootReport.pricedConversions, bootReport.unpricedConversions],
+    [3, 2, 42, 1, 1],
+    "Page captures sum a session's orders once per session",
+  );
+  assert.deepEqual(plain(bootReport.pages), []);
+
+  // Imported channel capture: amounts were never recorded.
+  const soldChannel = await db.channelSnapshot.create({ data: { shop, name: "Imported sale" } });
+  await db.channelSnapshotSession.create({
+    data: {
+      channelSnapshotId: soldChannel.id,
+      acquisitionId: "acq_sold",
+      trackingSessionId: "browser-sold",
+      source: "facebook",
+      converted: true,
+    },
+  });
+  const soldProject = await db.growthProject.create({
+    data: { shop, title: "Imported sale", goal: "", scope: "STORE" },
+  });
+  const soldMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: soldProject.id,
+      name: "Imported sale",
+      completionMode: "VISITORS",
+      targetVisitors: 100,
+      channelSnapshotId: soldChannel.id,
+    },
+  });
+  const sold = await report(soldProject.id, soldMeasurement.id, all, "EUR");
+  assert.deepEqual(
+    [sold.conversions, sold.revenue, sold.pricedConversions, sold.unpricedConversions],
+    [1, 0, 0, 1],
+    "Imported channel captures show Not recorded",
+  );
+
+  // Imported customer capture: amounts sit on conversion events; pages must not multiply them.
+  const journeys = await db.customerSnapshot.create({
+    data: { shop, name: "Imported journeys", source: "facebook", destinationUrl: "https://shop.example/" },
+  });
+  const journey = (acquisitionId, converted) =>
+    db.customerJourneySession.create({
+      data: {
+        snapshotId: journeys.id,
+        acquisitionId,
+        trackingSessionId: `browser-${acquisitionId}`,
+        source: "facebook",
+        landingPath: "/",
+        startedAt: t0,
+        lastSeenAt: later(5),
+        visitorType: "REAL",
+        converted,
+      },
+    });
+  const j1 = await journey("acq_j1", true);
+  const j2 = await journey("acq_j2", true);
+  await journey("acq_j3", false);
+  await db.customerJourneyPage.createMany({
+    data: [
+      { sessionId: j1.id, pageViewId: "j1a", pagePath: "/", startedAt: t0 },
+      { sessionId: j1.id, pageViewId: "j1b", pagePath: "/products/boot", startedAt: later(1) },
+    ],
+  });
+  await db.customerJourneyEvent.createMany({
+    data: [
+      { sessionId: j1.id, eventKey: "order-1", type: "conversion", occurredAt: later(3), orderId: "1", amount: 40, currency: "EUR" },
+      { sessionId: j2.id, eventKey: "order-2", type: "conversion", occurredAt: later(3), orderId: "2", amount: 15, currency: "USD" },
+      // Other events never carry revenue, even with an amount.
+      { sessionId: j1.id, eventKey: "cart-1", type: "add_to_cart", occurredAt: later(2), amount: 99, currency: "EUR" },
+    ],
+  });
+  const journeyProject = await db.growthProject.create({
+    data: { shop, title: "Imported journeys", goal: "", scope: "STORE" },
+  });
+  const journeyMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: journeyProject.id,
+      name: "Imported journeys",
+      completionMode: "VISITORS",
+      targetVisitors: 100,
+      customerSnapshotId: journeys.id,
+    },
+  });
+  const journeyReport = await report(journeyProject.id, journeyMeasurement.id, all, "EUR");
+  assert.deepEqual(
+    [journeyReport.sessions, journeyReport.conversions, journeyReport.revenue, journeyReport.pricedConversions, journeyReport.unpricedConversions],
+    [3, 2, 40, 1, 1],
+    "A two-page journey counts its order once; the USD order is unpriced",
+  );
   console.log(
-    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows (buyers, private paths, URL variants), layout-only sections, cohorts, empty filters and imported measurements",
+    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows (buyers, private paths, URL variants), layout-only sections, cohorts, empty filters, imported measurements, and per-session revenue for store, page, channel and customer captures in the shop currency",
   );
 } finally {
   await db.growthProject.deleteMany({ where: { shop } });
   await db.project.deleteMany({ where: { shop } });
   await db.storeSnapshot.deleteMany({ where: { shop } });
   await db.channelSnapshot.deleteMany({ where: { shop } });
+  await db.customerSnapshot.deleteMany({ where: { shop } });
   await db.$disconnect();
 }

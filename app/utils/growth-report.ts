@@ -1,4 +1,5 @@
 import type { EngagementOutcomes } from "./click-engagement";
+import type { RevenueCounts } from "./revenue";
 export type GrowthReportFilters = {
   audience: "all" | "active";
   source: string;
@@ -24,7 +25,10 @@ export function growthReportFilters(
     campaign: value("campaign", defaults.defaultCampaign),
   };
 }
-export type GrowthReport = {
+// Every figure set that carries a conversion rate also carries RevenueCounts (spec 7.2).
+export type GrowthReport = RevenueCounts & {
+  /** The shop's currency, or null when Shopify did not answer. Revenue is in it. */
+  currency: string | null;
   sessions: number;
   addedToCart: number;
   conversions: number;
@@ -39,15 +43,17 @@ export type GrowthReport = {
     conversions: number;
     conversionRate: number;
   }>;
-  channels: Array<{
-    source: string;
-    medium: string;
-    campaign: string;
-    sessions: number;
-    addedToCart: number;
-    conversions: number;
-    conversionRate: number;
-  }>;
+  channels: Array<
+    RevenueCounts & {
+      source: string;
+      medium: string;
+      campaign: string;
+      sessions: number;
+      addedToCart: number;
+      conversions: number;
+      conversionRate: number;
+    }
+  >;
   sources: string[];
   engagement: EngagementOutcomes | null;
   engagementUnavailable: boolean;
@@ -73,14 +79,17 @@ export type GrowthEngagementSummary = {
   clickThroughRate: number;
   searchRate: number;
   topSearches: Array<{ term: string; sessions: number }>;
-  devices: Array<{
-    device: string;
-    sessions: number;
-    share: number;
-    conversionRate: number;
-  }>;
+  devices: Array<
+    RevenueCounts & {
+      device: string;
+      sessions: number;
+      share: number;
+      conversions: number;
+      conversionRate: number;
+    }
+  >;
 };
-export type GrowthFunnel = {
+export type GrowthFunnel = RevenueCounts & {
   sessions: number;
   addedToCart: number;
   checkoutStarted: number;
@@ -108,7 +117,9 @@ export type GrowthExitPaths = {
     exitRate: number;
   }>;
 };
-export type GrowthPageRow = {
+// A page's conversions and revenue count every converted session that viewed it,
+// so they overlap across pages.
+export type GrowthPageRow = RevenueCounts & {
   path: string;
   type: string | null;
   sessions: number;

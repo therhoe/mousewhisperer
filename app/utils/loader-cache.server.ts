@@ -23,12 +23,14 @@ export const loaderCacheKeys = {
     projectId: string,
     measurementId: string,
     filters: GrowthReportFilters,
+    currency: string | null = null,
   ) =>
     `growth-report:${shop}:${projectId}:${measurementId}:${JSON.stringify([
       filters.audience,
       filters.source,
       filters.medium,
       filters.campaign,
+      currency,
     ])}`,
   billingDisplay: (shop: string) => `billing-display:${shop}`,
   billingSync: (shop: string) => `billing-sync:${shop}`,

@@ -143,6 +143,18 @@ try {
   assert.equal(report.pageViews, 5);
   assert.equal(report.conversions, 1);
   assert.equal(report.conversionRate, 25);
+  const priced = await service(db).getGrowthMeasurementReport(
+    shop,
+    project.id,
+    measurement.id,
+    all,
+    "EUR",
+  );
+  assert.deepEqual(
+    [priced.currency, priced.conversions, priced.revenue, priced.pricedConversions, priced.unpricedConversions],
+    ["EUR", 1, 0, 0, 1],
+    "A conversion without an amount is counted, but not summed",
+  );
   assert.equal(report.engagement, null, "Store reports do not build Engagement by zone");
   const active = await service(db).getGrowthMeasurementReport(
     shop,
@@ -234,6 +246,8 @@ try {
   assert.deepEqual([lookups, queries], [2, 1]);
   await cached.getGrowthMeasurementReport(shop, project.id, measurement.id, { ...all, audience: "active" });
   assert.equal(queries, 2, "Each filter set has its own cache entry");
+  await cached.getGrowthMeasurementReport(shop, project.id, measurement.id, all, "EUR");
+  assert.equal(queries, 3, "Each shop currency has its own cache entry");
   denied = true;
   await assert.rejects(
     () => cached.getGrowthMeasurementReport(shop, project.id, measurement.id, all),
