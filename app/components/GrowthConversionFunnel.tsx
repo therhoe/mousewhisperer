@@ -1,6 +1,10 @@
 import { BlockStack, Card, InlineGrid, Text } from "@shopify/polaris";
 import { useI18n } from "../utils/i18n";
-import { revenueText } from "../utils/revenue";
+import {
+  PARTIAL_REVENUE_MARK,
+  revenueCell,
+  revenueText,
+} from "../utils/revenue";
 import { MetricTile } from "./GrowthOverviewCard";
 import type { GrowthFunnel } from "../utils/growth-report";
 
@@ -37,6 +41,9 @@ export function GrowthConversionFunnel({
   const beforeRevenue = before
     ? revenueText(before.purchased, before, currency, { t, formatNumber })
     : null;
+  // The current figure's own hint wins the caption; otherwise the comparison's figure
+  // is shown, marked when it was only partly recorded.
+  const markedBeforeRevenue = !revenue.hint && !!beforeRevenue?.partial;
   return (
     <Card>
       <BlockStack gap="400">
@@ -82,11 +89,19 @@ export function GrowthConversionFunnel({
             caption={
               revenue.hint ??
               (beforeRevenue
-                ? t("{value} in {name}", { value: beforeRevenue.value, name })
+                ? t("{value} in {name}", {
+                    value: revenueCell(beforeRevenue),
+                    name,
+                  })
                 : undefined)
             }
           />
         </InlineGrid>
+        {markedBeforeRevenue && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {`${PARTIAL_REVENUE_MARK} ${t("Some orders have no recorded amount")}`}
+          </Text>
+        )}
         <Text as="p" variant="bodySm" tone="subdued">
           {before
             ? t(

@@ -116,6 +116,9 @@ export function GrowthMeasurementResults({
   const beforeRevenue = before
     ? revenueText(before.conversions, before, report.currency, money)
     : null;
+  // The current figure's own hint wins the caption; otherwise the comparison's figure
+  // is shown, marked when it was only partly recorded.
+  const markedBeforeRevenue = !revenue.hint && !!beforeRevenue?.partial;
   const channelRows = report.channels.slice(
     page * CHANNEL_PAGE_SIZE,
     (page + 1) * CHANNEL_PAGE_SIZE,
@@ -190,10 +193,15 @@ export function GrowthMeasurementResults({
             value={revenue.value}
             caption={
               revenue.hint ??
-              (beforeRevenue ? versus(beforeRevenue.value) : undefined)
+              (beforeRevenue ? versus(revenueCell(beforeRevenue)) : undefined)
             }
           />
         </InlineGrid>
+        {markedBeforeRevenue && (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {`${PARTIAL_REVENUE_MARK} ${t("Some orders have no recorded amount")}`}
+          </Text>
+        )}
         {before && (
           <Text as="p" variant="bodySm" tone="subdued">
             {t(

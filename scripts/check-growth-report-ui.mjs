@@ -701,3 +701,46 @@ test("the store layout hands the shop currency to the engagement, funnel and pag
   const html = render(resultsWith({ ...baseReport, layout: "store", pageType: null }), props);
   assert.equal((html.match(/data-currency="EUR"/g) || []).length, 3);
 });
+
+test("the revenue tile marks a partly recorded comparison figure and explains the mark once", () => {
+  const current = { ...baseReport, layout: "page", pageType: "PRODUCT" };
+  const compared = { ...props, comparisonId: "c", comparisonName: "Baseline" };
+  const partial = render(
+    resultsWith(current, { ...current, revenue: 100, pricedConversions: 3, unpricedConversions: 1 }),
+    compared,
+  );
+  assert.match(partial, /Revenue=€180\.00 \[€100\.00\* in Baseline\]/);
+  assert.equal((partial.match(/\* Some orders have no recorded amount/g) || []).length, 1);
+  const complete = render(resultsWith(current, { ...current, revenue: 100 }), compared);
+  assert.match(complete, /Revenue=€180\.00 \[€100\.00 in Baseline\]/);
+  assert.doesNotMatch(complete, /Some orders have no recorded amount/);
+});
+
+test("the funnel marks a partly recorded comparison revenue and explains the mark once", () => {
+  const { GrowthConversionFunnel } = load("app/components/GrowthConversionFunnel.tsx", common);
+  const funnel = {
+    sessions: 200,
+    addedToCart: 40,
+    checkoutStarted: 10,
+    purchased: 12,
+    revenue: 480.5,
+    pricedConversions: 12,
+    unpricedConversions: 0,
+  };
+  const partial = render(GrowthConversionFunnel, {
+    funnel,
+    currency: "EUR",
+    before: { ...funnel, revenue: 100, pricedConversions: 10, unpricedConversions: 2 },
+    comparisonName: "Baseline",
+  });
+  assert.match(partial, /Revenue=€480\.50 \[€100\.00\* in Baseline\]/);
+  assert.equal((partial.match(/\* Some orders have no recorded amount/g) || []).length, 1);
+  const complete = render(GrowthConversionFunnel, {
+    funnel,
+    currency: "EUR",
+    before: { ...funnel, revenue: 100 },
+    comparisonName: "Baseline",
+  });
+  assert.match(complete, /Revenue=€480\.50 \[€100\.00 in Baseline\]/);
+  assert.doesNotMatch(complete, /Some orders have no recorded amount/);
+});
