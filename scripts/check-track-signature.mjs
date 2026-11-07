@@ -188,6 +188,7 @@ function loadShopifyServerWithUnreachableSessions() {
     {
       "./db.server": { __esModule: true, default: prisma },
       "./utils/billing-plans": { WHISPER_PLAN: "Whisper", SIGNAL_PLAN: "Signal" },
+      "./utils/offline-token.server": run("app/utils/offline-token.server.ts", {}),
       "./utils/polaris": { POLARIS_URL: "https://cdn.shopify.com/shopifycloud/polaris-2.js" },
     },
     {

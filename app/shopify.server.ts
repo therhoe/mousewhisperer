@@ -11,6 +11,7 @@ import { LogSeverity, shopifyApi, type Session } from "@shopify/shopify-api";
 import type { SessionStorage } from "@shopify/shopify-app-session-storage";
 import prisma from "./db.server";
 import { SIGNAL_PLAN, WHISPER_PLAN } from "./utils/billing-plans";
+import { createOfflineTokenMigrator } from "./utils/offline-token.server";
 import { POLARIS_URL } from "./utils/polaris";
 
 const SESSION_CACHE_TTL_MS = 5 * 60_000;
@@ -91,6 +92,10 @@ const shopify = shopifyApp({
   sessionStorage,
   distribution: AppDistribution.AppStore,
   polarisUrl: POLARIS_URL,
+  // Shopify retires non-expiring offline tokens for public apps (new installs
+  // blocked from 2027-01-01). New exchanges return expiring tokens, which the
+  // library stores with their refresh token and renews before they run out.
+  future: { expiringOfflineAccessTokens: true },
   billing: {
     [WHISPER_PLAN]: {
       replacementBehavior: BillingReplacementBehavior.ApplyImmediately,
@@ -126,6 +131,31 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export { sessionStorage };
+
+// shopifyApp() keeps its API object private, so the token upgrade gets its own
+// client, built on first use like the proxy signature check below.
+let migrateToExpiringToken:
+  | ReturnType<typeof shopifyApi>["auth"]["migrateToExpiringToken"]
+  | undefined;
+
+/**
+ * Upgrades a store still holding a non-expiring offline token. Called when the
+ * merchant opens the app; scripts/migrate-offline-tokens.mjs covers the rest.
+ */
+export const ensureExpiringOfflineToken = createOfflineTokenMigrator({
+  storage: sessionStorage,
+  migrate: (params) => {
+    migrateToExpiringToken ??= shopifyApi({
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
+      apiVersion,
+      hostName: new URL(process.env.SHOPIFY_APP_URL || "").host,
+      isEmbeddedApp: true,
+      logger: { level: LogSeverity.Error },
+    }).auth.migrateToExpiringToken;
+    return migrateToExpiringToken(params);
+  },
+});
 
 // authenticate.public.appProxy checks the signature and then loads the shop's
 // offline session, so a database outage made validly signed storefront

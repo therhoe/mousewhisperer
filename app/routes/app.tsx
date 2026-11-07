@@ -16,7 +16,7 @@ import dePolaris from "@shopify/polaris/locales/de.json";
 import zhCNPolaris from "@shopify/polaris/locales/zh-CN.json";
 import zhTWPolaris from "@shopify/polaris/locales/zh-TW.json";
 
-import { authenticate } from "../shopify.server";
+import { authenticate, ensureExpiringOfflineToken } from "../shopify.server";
 import { embeddedContextForShop } from "../utils/embedded-filter-context.server";
 import { BackgroundBillingSync } from "../components/BackgroundBillingSync";
 import { useBackInterceptor } from "../components/polaris/navigation";
@@ -35,6 +35,8 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { session } = await authenticate.admin(request);
+  // Once per store: swap a non-expiring offline token for an expiring one.
+  await ensureExpiringOfflineToken(session);
 
   if (process.env.NODE_ENV === "development") {
     console.info("[MW Perf] app layout loader", {

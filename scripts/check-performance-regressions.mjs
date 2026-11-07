@@ -331,6 +331,8 @@ test("layout authenticates but never waits on billing, analytics, or eager page 
           return { session: { shop: "qa.myshopify.com" } };
         },
       },
+      // A store already on an expiring token returns at once (one upgrade per store).
+      ensureExpiringOfflineToken: async (session) => session,
     },
     "../utils/embedded-filter-context.server": loadModule(
       "app/utils/embedded-filter-context.server.ts",
