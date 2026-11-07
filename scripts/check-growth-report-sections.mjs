@@ -401,7 +401,7 @@ try {
       storeSnapshotId: revenueStore.id,
     },
   });
-  const order = (orderValue, currency) => ({ converted: true, convertedAt: later(5), orderValue, currency });
+  const order = (orderValue, currency, convertedAt = later(5)) => ({ converted: true, convertedAt, orderValue, currency });
   const sale = (pageViewId, acquisitionId, pagePath, resourceType, extra = {}) => ({
     storeSnapshotId: revenueStore.id,
     sessionId: `browser-${acquisitionId}`,
@@ -418,9 +418,9 @@ try {
   });
   await db.storeSnapshotVisit.createMany({
     data: [
-      // r1 bought twice: attribution wrote each order to a different page view of the session.
+      // r1 bought twice, 15 minutes apart: attribution wrote each order to a different page view.
       sale("r1a", "acq_r1", "/collections/shoes", "COLLECTION", { deviceType: "desktop", ...order(30, "EUR") }),
-      sale("r1b", "acq_r1", "/products/blue", "PRODUCT", { deviceType: "desktop", startedAt: later(1), ...order(20, "EUR") }),
+      sale("r1b", "acq_r1", "/products/blue", "PRODUCT", { deviceType: "desktop", startedAt: later(1), ...order(20, "EUR", later(20)) }),
       // r2 viewed two pages and bought once: its order counts on both pages.
       sale("r2a", "acq_r2", "/collections/shoes", "COLLECTION", { deviceType: "desktop", acquisitionSource: "google", ...order(40, "EUR") }),
       sale("r2b", "acq_r2", "/products/red", "PRODUCT", { deviceType: "desktop", acquisitionSource: "google", startedAt: later(1) }),
@@ -531,7 +531,7 @@ try {
   await db.visit.createMany({
     data: [
       boot("b1", "acq_b1", order(30, "EUR")),
-      boot("b2", "acq_b1", { startedAt: later(2), ...order(12, "EUR") }),
+      boot("b2", "acq_b1", { startedAt: later(2), ...order(12, "EUR", later(20)) }),
       boot("b3", "acq_b2", order(null, null)),
       boot("b4", "acq_b3"),
     ],
@@ -543,6 +543,102 @@ try {
     "Page captures sum a session's orders once per session",
   );
   assert.deepEqual(plain(bootReport.pages), []);
+
+  // ── One order, delivered twice. The checkout pixel and the orders/paid webhook (and
+  // webhook retries) each convert a page view of the session with the same order. Rows of
+  // one session converted within 10 minutes of each other are one order, counted once at
+  // its largest shop-currency amount.
+  const twiceProject = await db.growthProject.create({
+    data: { shop, title: "Delivered twice", goal: "Count orders once", scope: "STORE" },
+  });
+  const twiceStore = await db.storeSnapshot.create({
+    data: {
+      shop,
+      name: "Delivered twice fixture",
+      completionMode: "TIME_WINDOW",
+      durationDays: 7,
+      endsAt: new Date("2026-12-31"),
+      usesAcquisitionSessions: true,
+    },
+  });
+  const twiceMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: twiceProject.id,
+      name: "Delivered twice",
+      completionMode: "DURATION",
+      durationDays: 7,
+      storeSnapshotId: twiceStore.id,
+    },
+  });
+  const twice = (pageViewId, acquisitionId, pagePath, extra = {}) => ({
+    ...sale(pageViewId, acquisitionId, pagePath, "PRODUCT", extra),
+    storeSnapshotId: twiceStore.id,
+  });
+  await db.storeSnapshotVisit.createMany({
+    data: [
+      // d1: one 60 EUR order written to two of its three page views, a minute apart.
+      twice("d1a", "acq_d1", "/products/one", order(60, "EUR", later(5))),
+      twice("d1b", "acq_d1", "/products/two", { startedAt: later(1), ...order(60, "EUR", later(6)) }),
+      twice("d1c", "acq_d1", "/products/three", { startedAt: later(2) }),
+      // d2 (Markets): the pixel wrote the presentment currency, the webhook the shop currency.
+      twice("d2a", "acq_d2", "/products/one", order(50, "USD", later(5))),
+      twice("d2b", "acq_d2", "/products/two", { startedAt: later(1), ...order(45, "EUR", later(7)) }),
+      // d3: rows without a conversion time are each their own order.
+      twice("d3a", "acq_d3", "/products/four", order(10, "EUR", null)),
+      twice("d3b", "acq_d3", "/products/four", { startedAt: later(1), ...order(10, "EUR", null) }),
+      twice("d3c", "acq_d3", "/products/four", { startedAt: later(2), ...order(10, "EUR", later(5)) }),
+    ],
+  });
+  const twiceReport = await report(twiceProject.id, twiceMeasurement.id, all, "EUR");
+  assert.deepEqual(
+    [twiceReport.sessions, twiceReport.conversions, twiceReport.revenue, twiceReport.pricedConversions, twiceReport.unpricedConversions],
+    [3, 3, 135, 3, 0],
+    "An order delivered twice counts once (60 + 45); rows without a conversion time stay separate (30)",
+  );
+  assert.deepEqual(
+    [twiceReport.funnel.revenue, twiceReport.funnel.pricedConversions, twiceReport.funnel.unpricedConversions],
+    [135, 3, 0],
+  );
+  const twicePage = (path) => {
+    const row = twiceReport.pages.find((item) => item.path === path);
+    return [row.sessions, row.conversions, row.revenue, row.pricedConversions, row.unpricedConversions];
+  };
+  assert.deepEqual(twicePage("/products/one"), [2, 2, 105, 2, 0], "d1's order once, d2's in the shop currency");
+  assert.deepEqual(twicePage("/products/two"), [2, 2, 105, 2, 0]);
+  assert.deepEqual(twicePage("/products/three"), [1, 1, 60, 1, 0], "Every page d1 viewed gets its order once");
+  assert.deepEqual(twicePage("/products/four"), [1, 1, 30, 1, 0]);
+  const marketsOnly = await report(twiceProject.id, twiceMeasurement.id, all, "USD");
+  assert.deepEqual(
+    [marketsOnly.revenue, marketsOnly.pricedConversions, marketsOnly.unpricedConversions],
+    [50, 1, 2],
+    "The same Markets order counts its USD amount when USD is the shop currency",
+  );
+
+  // Page capture (Visit): the same per-product amount delivered twice counts once.
+  const bootTwiceSnapshot = await db.snapshot.create({
+    data: { projectId: bootResource.id, number: 2, usesAcquisitionSessions: true },
+  });
+  const bootTwiceMeasurement = await db.growthMeasurement.create({
+    data: {
+      projectId: bootProject.id,
+      name: "Boot delivered twice",
+      completionMode: "VISITORS",
+      targetVisitors: 100,
+      snapshotId: bootTwiceSnapshot.id,
+    },
+  });
+  await db.visit.createMany({
+    data: [
+      { ...boot("e1", "acq_e1", order(12, "EUR", later(5))), snapshotId: bootTwiceSnapshot.id },
+      { ...boot("e2", "acq_e1", { startedAt: later(2), ...order(12, "EUR", later(6)) }), snapshotId: bootTwiceSnapshot.id },
+    ],
+  });
+  const bootTwice = await report(bootProject.id, bootTwiceMeasurement.id, all, "EUR");
+  assert.deepEqual(
+    [bootTwice.sessions, bootTwice.conversions, bootTwice.revenue, bootTwice.pricedConversions, bootTwice.unpricedConversions],
+    [1, 1, 12, 1, 0],
+    "A page capture counts a product share delivered twice once",
+  );
 
   // Imported channel capture: amounts were never recorded.
   const soldChannel = await db.channelSnapshot.create({ data: { shop, name: "Imported sale" } });
@@ -628,7 +724,7 @@ try {
     "A two-page journey counts its order once; the USD order is unpriced",
   );
   console.log(
-    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows (buyers, private paths, URL variants), layout-only sections, cohorts, empty filters, imported measurements, and per-session revenue for store, page, channel and customer captures in the shop currency",
+    "PASS: funnel, click-through rule, searches, devices, medians, exit paths, page rows (buyers, private paths, URL variants), layout-only sections, cohorts, empty filters, imported measurements, and per-session revenue for store, page, channel and customer captures in the shop currency, with an order delivered twice counted once",
   );
 } finally {
   await db.growthProject.deleteMany({ where: { shop } });

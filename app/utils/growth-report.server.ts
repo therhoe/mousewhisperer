@@ -123,7 +123,7 @@ async function loadReport(
       "addedToCart", "checkoutStarted" AS checkout, converted, 1 AS views, "timeOnPage"::float AS time, "scrollDepth"::float AS scroll, "ctaClicks",
       ${path} AS path, ${type} AS "type", "exitType", "exitUrl", "deviceType" AS device, "searchQuery" AS search,
       CASE WHEN converted AND ${priced} THEN "orderValue" END AS "orderAmount",
-      (converted AND NOT ${priced}) AS "orderUnpriced"
+      (converted AND NOT ${priced}) AS "orderUnpriced", "convertedAt"
       FROM ${table} WHERE ${constraint}`;
   } else if (capture.channelSnapshotId) {
     // Imported channel captures never recorded order amounts.
@@ -131,7 +131,7 @@ async function loadReport(
       s."addedToCart", s."checkoutStarted" AS checkout, s.converted, CASE WHEN v.id IS NULL THEN 0 ELSE 1 END AS views,
       COALESCE(v."timeOnPage",0)::float AS time, COALESCE(v."scrollDepth",0)::float AS scroll, NULL::text AS "ctaClicks",
       NULL::text AS path, NULL::text AS "type", NULL::text AS "exitType", NULL::text AS "exitUrl", NULL::text AS device, NULL::text AS search,
-      NULL::float8 AS "orderAmount", s.converted AS "orderUnpriced"
+      NULL::float8 AS "orderAmount", s.converted AS "orderUnpriced", NULL::timestamp AS "convertedAt"
       FROM "ChannelSnapshotSession" s LEFT JOIN "ChannelSnapshotVisit" v ON v."sessionId" = s.id WHERE s."channelSnapshotId" = ${capture.channelSnapshotId}`;
   } else if (capture.customerSnapshotId) {
     // Amounts sit on the session's conversion events. Only the session's first row
@@ -142,7 +142,7 @@ async function loadReport(
       COALESCE(p."timeOnPage",0)::float AS time, COALESCE(p."scrollDepth",0)::float AS scroll, NULL::text AS "ctaClicks",
       NULL::text AS path, NULL::text AS "type", NULL::text AS "exitType", NULL::text AS "exitUrl", NULL::text AS device, NULL::text AS search,
       CASE WHEN row_number() OVER (PARTITION BY s.id ORDER BY p."startedAt", p.id) = 1 THEN o.amount END AS "orderAmount",
-      COALESCE(o.unpriced, false) AS "orderUnpriced"
+      COALESCE(o.unpriced, false) AS "orderUnpriced", NULL::timestamp AS "convertedAt"
       FROM "CustomerJourneySession" s LEFT JOIN "CustomerJourneyPage" p ON p."sessionId" = s.id
       LEFT JOIN LATERAL (
         SELECT SUM(e.amount) FILTER (WHERE ${priced}) AS amount, bool_or(NOT ${priced}) AS unpriced
@@ -192,11 +192,44 @@ async function loadReport(
         SELECT raw.id AS "sessionId", raw."ctaClicks", filtered.cart AS "addedToCart", filtered.converted FROM raw JOIN filtered USING(id)
         WHERE raw."ctaClicks" IS NOT NULL AND raw."ctaClicks" NOT IN ('[]','{}','') LIMIT 20001
       ) clicks),'[]'::json)`;
+  // Revenue per session (columns revenue, priced, unpriced).
+  const sessionRevenue = detailed
+    ? // The checkout pixel and the orders/paid webhook (and its retries) each attribute
+      // the same order to a page view of the session, and neither carries the order id
+      // here. Converted rows of one session within 10 minutes of the previous one are
+      // therefore one order, counted at its largest shop-currency amount; it is unpriced
+      // only when none of its rows is priced (a Markets order may arrive once in the
+      // presentment currency and once in the shop currency). A row without a conversion
+      // time is its own order.
+      Prisma.sql`converted_rows AS (
+      SELECT id, "convertedAt", "orderAmount",
+        lag("convertedAt") OVER w AS previous, row_number() OVER w AS n
+      FROM marked WHERE converted
+      WINDOW w AS (PARTITION BY id ORDER BY "convertedAt", "viewedAt")
+    ), order_rows AS (
+      SELECT id, "orderAmount", SUM(CASE WHEN "convertedAt" IS NULL OR previous IS NULL
+          OR "convertedAt" - previous > interval '10 minutes' THEN 1 ELSE 0 END)
+          OVER (PARTITION BY id ORDER BY n ROWS UNBOUNDED PRECEDING) AS "order"
+      FROM converted_rows
+    ), orders AS (
+      SELECT id, max("orderAmount") AS amount FROM order_rows GROUP BY id, "order"
+    ), session_revenue AS (
+      SELECT id, SUM(amount)::float8 AS revenue, bool_or(amount IS NOT NULL) AS priced,
+        bool_or(amount IS NULL) AS unpriced
+      FROM orders GROUP BY id
+    )`
+    : // Channel captures have no amounts; customer captures already carry each
+      // session's orders once, on its first row.
+      Prisma.sql`session_revenue AS (
+      SELECT id, SUM("orderAmount")::float8 AS revenue, bool_or("orderAmount" IS NOT NULL) AS priced,
+        bool_or("orderUnpriced") AS unpriced
+      FROM marked GROUP BY id
+    )`;
   const results = await prisma.$queryRaw<Array<{ report: QueryReport }>>(Prisma.sql`
     WITH raw AS (${rows}), marked AS (
       -- Carry only the columns later steps read; ctaClicks and exitUrl stop here.
       SELECT id, "startedAt", "viewedAt", kind, source, medium, campaign, "addedToCart", checkout, converted,
-        views, time, scroll, device, search, "exitType", "exitPath", "orderAmount", "orderUnpriced",
+        views, time, scroll, device, search, "exitType", "exitPath", "orderAmount", "orderUnpriced", "convertedAt",
         -- Account and order links carry personal tokens, so they share one row (without a type).
         CASE WHEN page ~* ${PRIVATE_PATH} THEN '/private-page' ELSE page END COLLATE "C" AS page, "type",
         -- A forward click left from the main content to another store page; collections only to a product.
@@ -206,7 +239,7 @@ async function loadReport(
           AND COALESCE("lastZone", '') NOT IN ('header', 'footer'), false) AS forward
       FROM (
         SELECT id, "startedAt", "viewedAt", kind, source, medium, campaign, "addedToCart", checkout, converted,
-          views, time, scroll, device, search, "exitType", "type", "orderAmount", "orderUnpriced",
+          views, time, scroll, device, search, "exitType", "type", "orderAmount", "orderUnpriced", "convertedAt",
           -- Only paths that can carry a locale or collection prefix run the regular expressions.
           CASE WHEN path LIKE '/__/%' OR path LIKE '/__-__/%' OR path ILIKE '/collections/%/products/%'
             THEN regexp_replace(regexp_replace(path, ${LOCALE_PREFIX}, '', 'i'), ${COLLECTION_PREFIX}, '', 'i')
@@ -224,7 +257,7 @@ async function loadReport(
         -- regular expressions above once per reference below.
         OFFSET 0
       ) parsed
-    ), sessions AS (
+    ), ${sessionRevenue}, session_rows AS (
       SELECT id, MIN("startedAt") AS started,
         CASE WHEN bool_or(kind = 'REAL') THEN 'REAL' WHEN bool_or(kind = 'ZOMBIE') THEN 'ZOMBIE' WHEN bool_or(kind = 'BOT') THEN 'BOT' ELSE 'PENDING' END AS kind,
         COALESCE((array_agg(source ORDER BY "startedAt"))[1], 'unknown') AS source,
@@ -238,13 +271,14 @@ async function loadReport(
         -- reached checkout (also typed "checkout" by the tracker) still exits from that page.
         CASE WHEN bool_or(checkout) OR bool_or(converted) THEN NULL
           ELSE (array_agg(page ORDER BY "viewedAt" DESC) FILTER (WHERE page IS NOT NULL))[1]
-        END AS "exitPage",
-        -- Revenue per session first: a session with two orders sums both, and is still
-        -- one conversion.
-        COALESCE(SUM("orderAmount"), 0)::float8 AS revenue,
-        bool_or("orderAmount" IS NOT NULL) AS priced,
-        bool_or("orderUnpriced") AS unpriced
+        END AS "exitPage"
       FROM marked GROUP BY id
+    ), sessions AS (
+      -- Revenue per session first: a session with two orders sums both, and is still
+      -- one conversion.
+      SELECT session_rows.*, COALESCE(r.revenue, 0)::float8 AS revenue,
+        COALESCE(r.priced, false) AS priced, COALESCE(r.unpriced, false) AS unpriced
+      FROM session_rows LEFT JOIN session_revenue r USING (id)
     ), filtered AS (SELECT * FROM sessions WHERE ${cohort}),
     views AS (
       SELECT id, marked.search, marked."exitType", marked."exitPath", marked.page, marked."type",
