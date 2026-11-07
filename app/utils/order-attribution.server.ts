@@ -1,26 +1,12 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { orderAttributionId } from "./order-id";
 
 // The checkout pixel and the orders/paid webhook (plus its retries) both report every
 // paid order. The numeric Shopify order id is what they share, so each capture converts
 // at most one row per order. The (capture, orderId) unique indexes back this up when
 // both deliveries race.
 
-/**
- * The numeric Shopify order id, from a webhook `id`, its `admin_graphql_api_id`, or the
- * pixel's `checkout.order.id` (a GID string). Anything else is no id.
- */
-export function orderAttributionId(value: unknown): string | null {
-  const raw =
-    typeof value === "number" && Number.isSafeInteger(value) && value > 0
-      ? String(value)
-      : typeof value === "string"
-        ? value.trim()
-        : "";
-  return (
-    raw.match(/^(?:gid:\/\/shopify\/(?:Order|OrderIdentity)\/)?(\d{1,30})$/)?.[1] ??
-    null
-  );
-}
+export { orderAttributionId };
 
 export function orderAmount(value: unknown): number | null {
   if (value == null || value === "") return null;

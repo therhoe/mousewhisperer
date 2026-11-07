@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { normalizeOrderId } from "../utils/customer-journey";
+import { orderAttributionId } from "../utils/order-id";
 import { createNotification } from "../utils/notifications.server";
 
 /**
@@ -22,7 +22,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const orderIds = (
       Array.isArray(payload.orders_requested) ? payload.orders_requested : []
     )
-      .map(normalizeOrderId)
+      .map((id: unknown) => orderAttributionId(id))
       .filter((id: string | null): id is string => Boolean(id));
     if (orderIds.length) {
       const journeys = await db.customerJourneySession.findMany({

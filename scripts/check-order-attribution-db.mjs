@@ -46,7 +46,8 @@ function load(file, mocks = {}) {
 }
 
 const dbModule = { __esModule: true, default: db };
-const orders = load("../app/utils/order-attribution.server.ts");
+const orderId = load("../app/utils/order-id.ts");
+const orders = load("../app/utils/order-attribution.server.ts", { "./order-id": orderId });
 const tracking = load("../app/utils/growth-tracking.server.ts", {
   "../db.server": dbModule,
   "./customer-journey": load("../app/utils/customer-journey.ts"),

@@ -103,12 +103,6 @@ export function inspectJourneyLink(value: string, filter: JourneyFilter) {
   }
 }
 
-export function normalizeOrderId(value: unknown) {
-  const raw =
-    typeof value === "number" ? String(value) : journeyText(value, 100);
-  return raw?.match(/^(?:gid:\/\/shopify\/Order\/)?(\d+)$/)?.[1] || null;
-}
-
 const EVENT_TYPES = new Set([
   "page_view",
   "click",

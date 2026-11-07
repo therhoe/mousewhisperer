@@ -25,19 +25,17 @@ const transpile = (code) =>
   }).outputText;
 const compiled = transpile(source);
 // The real order-id helper (no imports), so the Page writer runs as in production.
-const orderAttribution = (() => {
+const loadUtil = (file, imports = {}) => {
   const module = { exports: {} };
   runInNewContext(
-    transpile(
-      readFileSync(
-        new URL("../app/utils/order-attribution.server.ts", import.meta.url),
-        "utf8",
-      ),
-    ),
-    { module, exports: module.exports },
+    transpile(readFileSync(new URL(`../app/utils/${file}`, import.meta.url), "utf8")),
+    { module, exports: module.exports, require: (name) => imports[name] },
   );
   return module.exports;
-})();
+};
+const orderAttribution = loadUtil("order-attribution.server.ts", {
+  "./order-id": loadUtil("order-id.ts"),
+});
 
 function fixture(options = {}) {
   const calls = [];

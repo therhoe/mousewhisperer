@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { normalizeOrderId } from "../utils/customer-journey";
+import { orderAttributionId } from "../utils/order-id";
 
 /**
  * GDPR customers/redact webhook handler
@@ -21,7 +21,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const orderIds = (
       Array.isArray(payload.orders_to_redact) ? payload.orders_to_redact : []
     )
-      .map(normalizeOrderId)
+      .map((id: unknown) => orderAttributionId(id))
       .filter((id: string | null): id is string => Boolean(id));
     if (orderIds.length)
       await db.customerJourneySession.deleteMany({

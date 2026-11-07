@@ -53,7 +53,8 @@ const server = load("../app/utils/growth-projects.server.ts", {
   "./snapshot-setup.server": { savedTrackerState: async () => trackerState, resolveSetupPage: async (_admin, _type, id) => ({ id, title: "Test product", handle: "test-product" }) },
   "./loader-cache.server": cache,
 });
-const orders = load("../app/utils/order-attribution.server.ts");
+const orderIds = load("../app/utils/order-id.ts");
+const orders = load("../app/utils/order-attribution.server.ts", { "./order-id": orderIds });
 const store = load("../app/utils/store-snapshot.server.ts", {
   "../db.server": db, "./growth-tracking.server": tracking, "./loader-cache.server": cache,
   "./order-attribution.server": orders,
@@ -63,6 +64,7 @@ const journey = load("../app/utils/customer-journey.server.ts", {
   "../db.server": db, "./billing.server": billing,
   "./channel-report": load("../app/utils/channel-report.ts"),
   "./customer-journey": load("../app/utils/customer-journey.ts"),
+  "./order-id": orderIds,
 });
 const trackApi = load("../app/routes/api.track.tsx", {
   "../db.server": db,
