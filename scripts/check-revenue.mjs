@@ -124,3 +124,48 @@ test("missing or broken counts never produce NaN", () => {
   assert.equal(revenue.revenueText(Number.NaN, counts(10, 1, 0), "EUR", formatters("en")).value, "€0.00");
   assert.equal(revenue.revenueText(1, counts(Number.NaN, 1, 0), "EUR", formatters("en")).value, "€0.00");
 });
+
+// Each call answers with the next item: a JSON body, or a function that throws.
+const adminAnswering = (answers) => {
+  const calls = [];
+  return {
+    calls,
+    graphql: async (query) => {
+      calls.push(query);
+      const next = answers.shift();
+      return typeof next === "function" ? next() : Response.json(next);
+    },
+  };
+};
+
+test("the shop currency is read once per shop and then cached", async () => {
+  // A fresh load also loads a fresh loader cache.
+  const { getShopCurrency } = loadModule("app/utils/shop-currency.server.ts");
+  const admin = adminAnswering([
+    { data: { shop: { currencyCode: "EUR" } } },
+    { data: { shop: { currencyCode: "CHF" } } },
+  ]);
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), "EUR");
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), "EUR");
+  assert.equal(admin.calls.length, 1);
+  assert.match(admin.calls[0], /shop \{ currencyCode \}/);
+  assert.equal(await getShopCurrency(admin, "b.myshopify.com"), "CHF");
+  assert.equal(admin.calls.length, 2);
+});
+
+test("an unanswered or malformed currency is null and is asked again next time", async () => {
+  const { getShopCurrency } = loadModule("app/utils/shop-currency.server.ts");
+  const admin = adminAnswering([
+    { errors: [{ message: "Throttled" }] },
+    { data: { shop: { currencyCode: "eur" } } },
+    () => {
+      throw new Error("network down");
+    },
+    { data: { shop: { currencyCode: "EUR" } } },
+  ]);
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), null);
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), null);
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), null);
+  assert.equal(await getShopCurrency(admin, "a.myshopify.com"), "EUR");
+  assert.equal(admin.calls.length, 4);
+});

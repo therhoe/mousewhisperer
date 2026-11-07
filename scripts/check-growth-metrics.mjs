@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-const module = { exports: {} };
 const progress = {
   rangeStart: "2026-10-01",
   rangeEnd: "2026-10-22",
@@ -10,32 +9,38 @@ const progress = {
   currentSessions: 1000,
   currentRate: 2,
 };
-runInNewContext(
-  ts.transpileModule(
-    readFileSync(
-      new URL("../app/utils/growth-metrics.server.ts", import.meta.url),
-      "utf8",
-    ),
-    {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2022,
+// Transpiles one app/utils file and runs it; `resolve` answers its imports.
+function compile(file, resolve) {
+  const module = { exports: {} };
+  runInNewContext(
+    ts.transpileModule(
+      readFileSync(new URL(`../app/utils/${file}`, import.meta.url), "utf8"),
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2022,
+        },
       },
-    },
-  ).outputText,
-  {
-    module,
-    exports: module.exports,
-    require: (id) => {
-      if (id === "./loader-cache.server")
-        return { cachedValue: (_key, _ttl, load) => load() };
-      if (id === "./shopify-analytics.server")
-        return { getShopifyConversionProgress: async () => progress };
-      throw new Error(id);
-    },
+    ).outputText,
+    { module, exports: module.exports, require: resolve },
+  );
+  return module.exports;
+}
+const passThroughCache = { cachedValue: (_key, _ttl, load) => load() };
+const shopCurrency = compile("shop-currency.server.ts", (id) => {
+  if (id === "./loader-cache.server") return passThroughCache;
+  throw new Error(id);
+});
+const { analyticsRows, analyticsNumber, getGrowthMetrics } = compile(
+  "growth-metrics.server.ts",
+  (id) => {
+    if (id === "./loader-cache.server") return passThroughCache;
+    if (id === "./shopify-analytics.server")
+      return { getShopifyConversionProgress: async () => progress };
+    if (id === "./shop-currency.server") return shopCurrency;
+    throw new Error(id);
   },
 );
-const { analyticsRows, analyticsNumber, getGrowthMetrics } = module.exports;
 assert.equal(
   analyticsRows({ columns: [{ name: "orders" }], rows: [[2]] })[0].orders,
   2,

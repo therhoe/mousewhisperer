@@ -1,5 +1,6 @@
 import { cachedValue } from "./loader-cache.server";
 import { getShopifyConversionProgress } from "./shopify-analytics.server";
+import { getShopCurrency } from "./shop-currency.server";
 import type { ConversionPeriod } from "../types/conversion-progress";
 
 type Admin = {
@@ -77,18 +78,14 @@ export async function getGrowthMetrics(input: {
       try {
         const base = `FROM sales\nSHOW average_order_value, amount_spent_per_customer, orders\nWHERE sales_channel = 'Online Store'`;
         const range = `SINCE ${progress.rangeStart} UNTIL ${progress.rangeEnd}`;
-        const [totals, series, currencyResponse] = await Promise.all([
+        const [totals, series, currency] = await Promise.all([
           salesQuery(input.admin, `${base}\n${range}`),
           salesQuery(
             input.admin,
             `${base}\nTIMESERIES day\n${range}\nORDER BY day ASC`,
           ),
-          input.admin.graphql(
-            `query ProjectGrowthCurrency { shop { currencyCode } }`,
-          ),
+          getShopCurrency(input.admin, input.shop),
         ]);
-        const currencyPayload = await currencyResponse.json();
-        const currency = currencyPayload.data?.shop?.currencyCode || null;
         return {
           aov: analyticsNumber(totals[0]?.average_order_value),
           ltv: analyticsNumber(totals[0]?.amount_spent_per_customer),
