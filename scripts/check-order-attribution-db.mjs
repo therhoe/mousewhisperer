@@ -176,6 +176,16 @@ async function fixture() {
   const assignment = await db.abTestAssignment.create({
     data: { testId: testRow.id, variantId: variant.id, shop, sessionId },
   });
+  // Fields a GDPR redact clears on order-linked rows, and the ones it keeps.
+  const person = {
+    ipAddress: "203.0.113.7",
+    city: "Lagos",
+    region: "LA",
+    userAgent: "Mozilla/5.0 fixture",
+    country: "Nigeria",
+    countryCode: "NG",
+    deviceType: "mobile",
+  };
   // Two page views per capture, so a second genuine order has a row to convert.
   for (const [index, minutes] of [90, 60].entries()) {
     const pageViewId = `pv-${index}-${randomUUID()}`;
@@ -186,6 +196,7 @@ async function fixture() {
         pageViewId,
         startedAt: viewed(minutes),
         addedToCart: true,
+        ...person,
       },
     });
     await db.storeSnapshotVisit.create({
@@ -197,6 +208,7 @@ async function fixture() {
         isLandingPage: index === 0,
         pageOrder: index + 1,
         startedAt: viewed(minutes),
+        ...person,
       },
     });
     await db.abTestVisit.create({
@@ -211,6 +223,7 @@ async function fixture() {
         isLandingPage: index === 0,
         pageOrder: index + 1,
         startedAt: viewed(minutes),
+        ...person,
       },
     });
   }
@@ -427,9 +440,59 @@ test("GDPR: a data request reports the order-linked rows; redact unlinks them in
   // 2 orders x (product visit, store visit, A/B visit) + the one A/B assignment.
   assert.match(notice.message, /\b7\b/);
 
+  // A third page view of the session, linked to no order, keeps its fields.
+  const unlinked = await db.storeSnapshotVisit.create({
+    data: {
+      storeSnapshotId: f.storeSnapshot.id,
+      sessionId: f.sessionId,
+      pageViewId: `pv-unlinked-${randomUUID()}`,
+      pagePath: "/pages/about",
+      ipAddress: "203.0.113.7",
+      city: "Lagos",
+    },
+  });
+
   await privacyCall(redact, f.shop, "customers/redact", {
     orders_to_redact: ["6001", 6002],
   });
+  const personFields = {
+    ipAddress: true, city: true, region: true, userAgent: true,
+    country: true, countryCode: true, deviceType: true,
+    converted: true, orderValue: true, currency: true,
+  };
+  const redacted = {
+    ipAddress: null, city: null, region: null, userAgent: null,
+    country: "Nigeria", countryCode: "NG", deviceType: "mobile",
+    converted: true, orderValue: 48.5, currency: "USD",
+  };
+  for (const [name, model, capture] of [
+    ["visits", db.visit, { snapshotId: f.snapshot.id }],
+    ["store", db.storeSnapshotVisit, { storeSnapshotId: f.storeSnapshot.id }],
+    ["abVisits", db.abTestVisit, { testId: f.testRow.id }],
+  ]) {
+    const rows = await model.findMany({
+      where: { ...capture, converted: true },
+      select: personFields,
+    });
+    assert.equal(rows.length, 2, name);
+    for (const row of rows) {
+      // Order 6001 came from the pixel and the webhook, 6002 only from the webhook.
+      assert.deepEqual(row, redacted, `${name} drops what can identify the customer`);
+    }
+  }
+  assert.deepEqual(
+    await db.storeSnapshotVisit.findUnique({
+      where: { id: unlinked.id },
+      select: { ipAddress: true, city: true },
+    }),
+    { ipAddress: "203.0.113.7", city: "Lagos" },
+    "rows not linked to a redacted order are untouched",
+  );
+  const otherVisit = await db.visit.findFirst({
+    where: { snapshotId: other.snapshot.id, converted: true },
+    select: { ipAddress: true, userAgent: true },
+  });
+  assert.deepEqual(otherVisit, { ipAddress: "203.0.113.7", userAgent: "Mozilla/5.0 fixture" }, "another shop keeps its rows");
   const rows = await converted(f);
   for (const [name, list] of Object.entries(rows)) {
     assert.ok(list.length > 0, name);

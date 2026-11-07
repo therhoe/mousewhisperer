@@ -11,8 +11,9 @@ import { redactOrderLinks } from "../utils/order-attribution.server";
  *
  * Customer journeys do not store account identities or contact information,
  * but their order references can be linked to a customer by the merchant.
- * Delete the entire matching journey using Shopify's supplied order IDs, and
- * remove those order IDs from measurement visits and A/B assignments.
+ * Delete the entire matching journey using Shopify's supplied order IDs. On
+ * measurement visits and A/B assignments of those orders, remove the order IDs and
+ * the visit fields that can identify a person (IP, city, region, user agent).
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
@@ -32,7 +33,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           events: { some: { orderId: { in: orderIds } } },
         },
       });
-      // Measurement rows keep the order id only to count each order once.
+      // Measurement rows keep the order id only to count each order once; their
+      // counts and revenue stay, without the order link or identifying fields.
       await redactOrderLinks(db, shop, orderIds);
     }
 

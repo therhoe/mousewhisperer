@@ -160,8 +160,10 @@ export async function countOrderLinkedRows(
 }
 
 /**
- * Removes the order link from `shop`'s measurement rows (customers/redact). The
- * conversion and its amount stay, so reports keep their totals without the order id.
+ * Removes the order link from `shop`'s measurement rows (customers/redact), and on
+ * visit rows also the fields that can identify a person (IP address, city, region,
+ * user agent). Country, device type, the conversion and its amount stay, so reports
+ * keep their totals. Assignments hold none of those fields.
  */
 export async function redactOrderLinks(
   db: OrderLinkClient,
@@ -170,12 +172,19 @@ export async function redactOrderLinks(
 ) {
   if (!orderIds.length) return 0;
   const where = orderLinkWhere(shop, orderIds);
-  const data = { orderId: null };
+  const unlink = { orderId: null };
+  const visitData = {
+    ...unlink,
+    ipAddress: null,
+    city: null,
+    region: null,
+    userAgent: null,
+  };
   const results = await Promise.all([
-    db.visit.updateMany({ where: where.visit, data }),
-    db.storeSnapshotVisit.updateMany({ where: where.storeSnapshotVisit, data }),
-    db.abTestVisit.updateMany({ where: where.abTestVisit, data }),
-    db.abTestAssignment.updateMany({ where: where.abTestAssignment, data }),
+    db.visit.updateMany({ where: where.visit, data: visitData }),
+    db.storeSnapshotVisit.updateMany({ where: where.storeSnapshotVisit, data: visitData }),
+    db.abTestVisit.updateMany({ where: where.abTestVisit, data: visitData }),
+    db.abTestAssignment.updateMany({ where: where.abTestAssignment, data: unlink }),
   ]);
   return results.reduce((sum, result) => sum + result.count, 0);
 }
