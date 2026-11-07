@@ -1982,4 +1982,9 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "没有符合这些筛选条件的项目。",
     "沒有符合這些篩選條件的專案。",
   ],
+  "Some orders have no recorded amount": [
+    "Für einige Bestellungen ist kein Betrag erfasst",
+    "部分订单未记录金额",
+    "部分訂單未記錄金額",
+  ],
 };
