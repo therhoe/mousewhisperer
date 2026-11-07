@@ -10,7 +10,7 @@ import { createNotification } from "./notifications.server";
 import { clearCacheKey, loaderCacheKeys } from "./loader-cache.server";
 import {
   isLostOrderWrite,
-  missingShopAmount,
+  webhookAmount,
   orderAmount,
   orderAttributionId,
 } from "./order-attribution.server";
@@ -599,7 +599,7 @@ export async function attributeStoreSnapshotOrder({
   totalPrice,
   currency,
   orderId: rawOrderId,
-  fillMissingAmount = false,
+  authoritativeAmount = false,
 }: {
   shop?: string | null;
   sessionId: string;
@@ -609,8 +609,8 @@ export async function attributeStoreSnapshotOrder({
   currency?: string | null;
   // Pixel `checkout.order.id` or webhook order id; one row per capture per order.
   orderId?: unknown;
-  // Only the webhook passes true: its amount is in the shop currency.
-  fillMissingAmount?: boolean;
+  // Only the webhook passes true: its HMAC-verified shop-currency amount replaces the pixel's.
+  authoritativeAmount?: boolean;
 }) {
   if (!sessionId) return 0;
 
@@ -682,9 +682,9 @@ export async function attributeStoreSnapshotOrder({
   }
 
   // Last, so it also covers a pixel row committed while this webhook was choosing.
-  if (fillMissingAmount && orderId) {
+  if (authoritativeAmount && orderId) {
     for (const row of await orderRows()) {
-      const fill = missingShopAmount(row, amount, currency ?? null);
+      const fill = webhookAmount(row, amount, currency ?? null);
       if (!fill) continue;
       await prisma.storeSnapshotVisit.update({ where: { id: row.id }, data: fill });
       await clearStoreSnapshotStatsCache(row.storeSnapshotId);

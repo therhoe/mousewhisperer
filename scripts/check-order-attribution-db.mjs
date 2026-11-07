@@ -316,11 +316,12 @@ test("a GID-form pixel order id matches the webhook's order too", async () => {
   assertOneOrder(await converted(f), usd("1003"));
 });
 
-test("pixel in the shop currency, then webhook: the pixel's amount stays", async () => {
+test("pixel in the shop currency, then webhook: the HMAC-verified webhook amount wins", async () => {
   const f = await fixture();
-  await pixel(f, 1002, { total: "48.49", currency: "USD" });
+  // The pixel's amount is client-reported; a forged or stale one must not stick.
+  await pixel(f, 1002, { total: "999.00", currency: "USD" });
   await paidWebhook(f, 1002);
-  assertOneOrder(await converted(f), usd("1002", 48.49));
+  assertOneOrder(await converted(f), usd("1002", 48.5));
 });
 
 test("webhook then pixel: the pixel converts nothing and keeps the webhook amount", async () => {

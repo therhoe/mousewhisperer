@@ -255,7 +255,7 @@ test("Channel-only failure still runs Store, A/B and matching Page attribution, 
       totalPrice: 48.5,
       currency: "USD",
       orderId: ORDER_ID,
-      fillMissingAmount: true,
+      authoritativeAmount: true,
     });
   }
   assert.equal(f.warnings.length, 1);
@@ -418,11 +418,13 @@ test("non-Response authentication failures retain the existing rejection behavio
   assert.equal(f.errors[0][1], authError);
 });
 
-test("an order the checkout pixel already attributed is not converted again; a missing shop-currency amount is filled in", async () => {
+test("an order the checkout pixel already attributed is not converted again; the webhook's amount replaces the pixel's", async () => {
   for (const [pixelVisit, fill] of [
     [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 45, currency: "EUR" }, { orderValue: 48.5, currency: "USD" }],
     [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: null, currency: null }, { orderValue: 48.5, currency: "USD" }],
-    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 48.49, currency: "USD" }, null],
+    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 48.49, currency: "USD" }, { orderValue: 48.5, currency: "USD" }],
+    // Already the webhook's values: nothing to write.
+    [{ id: "visit-px", snapshotId: "snapshot-a", orderValue: 48.5, currency: "USD" }, null],
   ]) {
     const f = fixture({ pixelVisit });
     assert.equal((await f.run()).status, 200);

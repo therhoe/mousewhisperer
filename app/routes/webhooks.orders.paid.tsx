@@ -92,7 +92,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         totalPrice: orderTotal,
         currency: orderCurrency,
         orderId,
-        fillMissingAmount: true,
+        authoritativeAmount: true,
       });
       abTestConversionsTracked = await attributeAbTestConversion({
         shop,
@@ -101,7 +101,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         totalPrice: orderTotal,
         currency: orderCurrency,
         orderId,
-        fillMissingAmount: true,
+        authoritativeAmount: true,
       });
     }
 
@@ -189,8 +189,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       // The checkout pixel may have attributed this order to one of the product's
       // captures already (it matches every project of the product by id or handle).
-      // Each capture keeps one conversion per order; the webhook fills in a missing
-      // shop-currency amount on rows the pixel wrote.
+      // Each capture keeps one conversion per order; the webhook's verified
+      // shop-currency amount replaces the pixel's on rows of this order.
       const result = await attributeProductVisitOrder(prisma, {
         orderId,
         scope: {
@@ -201,7 +201,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         convertedAt: orderCreatedAt,
         orderValue: perProductRevenue || null,
         currency: orderCurrency,
-        fillMissingAmount: true,
+        authoritativeAmount: true,
         findVisit: async (attributedSnapshotIds) => {
           if (attributedSnapshotIds.includes(snapshot.id)) return null;
           let visit = null;

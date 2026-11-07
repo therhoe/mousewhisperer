@@ -41,17 +41,18 @@ export function isLostOrderWrite(error: unknown) {
 type PricedRow = { orderValue: number | null; currency: string | null };
 
 /**
- * The orders/paid webhook carries the shop-currency total; the pixel carries the
- * presentment currency. When the webhook arrives after the pixel, it fills in a row
- * that has no amount, or one in another currency. Otherwise it changes nothing.
+ * The orders/paid webhook is HMAC-verified and carries the shop-currency total; the
+ * pixel's amount is client-reported (and in the presentment currency). So on rows that
+ * hold its order, the webhook's amount and currency always replace what is there. Null
+ * when the webhook has no amount, or the row already holds exactly its values.
  */
-export function missingShopAmount(
+export function webhookAmount(
   row: PricedRow,
   amount: number | null,
   currency: string | null,
 ): { orderValue: number; currency: string } | null {
   if (amount == null || !currency) return null;
-  if (row.orderValue != null && row.currency === currency) return null;
+  if (row.orderValue === amount && row.currency === currency) return null;
   return { orderValue: amount, currency };
 }
 
@@ -73,8 +74,8 @@ export async function attributeProductVisitOrder(
     convertedAt: Date;
     orderValue: number | null;
     currency: string | null;
-    // Only the webhook passes true: its amount is in the shop currency.
-    fillMissingAmount?: boolean;
+    // Only the webhook passes true: its HMAC-verified shop-currency amount replaces the pixel's.
+    authoritativeAmount?: boolean;
   },
 ): Promise<
   | { outcome: "converted"; visitId: string }
@@ -117,13 +118,13 @@ export async function attributeProductVisitOrder(
   }
 
   // Last, so it also covers a pixel row committed while this webhook was choosing.
-  if (input.fillMissingAmount && input.orderId) {
+  if (input.authoritativeAmount && input.orderId) {
     const rows = await db.visit.findMany({
       where: { ...input.scope, orderId: input.orderId },
       select: { id: true, snapshotId: true, orderValue: true, currency: true },
     });
     for (const row of rows) {
-      const fill = missingShopAmount(row, input.orderValue, input.currency);
+      const fill = webhookAmount(row, input.orderValue, input.currency);
       if (!fill) continue;
       await db.visit.update({ where: { id: row.id }, data: fill });
       await clearSnapshotStats(db, row.snapshotId);

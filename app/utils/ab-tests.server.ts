@@ -10,7 +10,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import prisma from "../db.server";
 import {
   isLostOrderWrite,
-  missingShopAmount,
+  webhookAmount,
   orderAmount,
   orderAttributionId,
 } from "./order-attribution.server";
@@ -1860,7 +1860,7 @@ export async function attributeAbTestConversion({
   totalPrice,
   currency,
   orderId: rawOrderId,
-  fillMissingAmount = false,
+  authoritativeAmount = false,
 }: {
   shop?: string | null;
   sessionId: string;
@@ -1869,8 +1869,8 @@ export async function attributeAbTestConversion({
   currency?: string | null;
   // Pixel `checkout.order.id` or webhook order id; one conversion per test per order.
   orderId?: unknown;
-  // Only the webhook passes true: its amount is in the shop currency.
-  fillMissingAmount?: boolean;
+  // Only the webhook passes true: its HMAC-verified shop-currency amount replaces the pixel's.
+  authoritativeAmount?: boolean;
 }) {
   if (!sessionId) return 0;
   const orderDate = timestamp ? new Date(timestamp) : new Date();
@@ -1958,14 +1958,14 @@ export async function attributeAbTestConversion({
   }
 
   // Last, so it also covers a pixel row committed while this webhook was choosing.
-  if (fillMissingAmount && orderId) {
+  if (authoritativeAmount && orderId) {
     const [assignmentRows, visitRows] = await orderRows();
     for (const row of assignmentRows) {
-      const fill = missingShopAmount(row, amount, currency ?? null);
+      const fill = webhookAmount(row, amount, currency ?? null);
       if (fill) await prisma.abTestAssignment.update({ where: { id: row.id }, data: fill });
     }
     for (const row of visitRows) {
-      const fill = missingShopAmount(row, amount, currency ?? null);
+      const fill = webhookAmount(row, amount, currency ?? null);
       if (fill) await prisma.abTestVisit.update({ where: { id: row.id }, data: fill });
     }
   }
