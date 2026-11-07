@@ -448,6 +448,10 @@ test("customer privacy requests identify only matching shop/order journeys and r
     },
     "../db.server": db,
     "../utils/order-id": load("../app/utils/order-id.ts", {}),
+    "../utils/order-attribution.server": load(
+      "../app/utils/order-attribution.server.ts",
+      { "./order-id": load("../app/utils/order-id.ts", {}) },
+    ),
     "../utils/notifications.server": {
       createNotification: async (data) => notifications.push(data),
     },

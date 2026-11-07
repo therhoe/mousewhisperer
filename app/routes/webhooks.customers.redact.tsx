@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { orderAttributionId } from "../utils/order-id";
+import { redactOrderLinks } from "../utils/order-attribution.server";
 
 /**
  * GDPR customers/redact webhook handler
@@ -10,7 +11,8 @@ import { orderAttributionId } from "../utils/order-id";
  *
  * Customer journeys do not store account identities or contact information,
  * but their order references can be linked to a customer by the merchant.
- * Delete the entire matching journey using Shopify's supplied order IDs.
+ * Delete the entire matching journey using Shopify's supplied order IDs, and
+ * remove those order IDs from measurement visits and A/B assignments.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
@@ -23,13 +25,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     )
       .map((id: unknown) => orderAttributionId(id))
       .filter((id: string | null): id is string => Boolean(id));
-    if (orderIds.length)
+    if (orderIds.length) {
       await db.customerJourneySession.deleteMany({
         where: {
           snapshot: { shop },
           events: { some: { orderId: { in: orderIds } } },
         },
       });
+      // Measurement rows keep the order id only to count each order once.
+      await redactOrderLinks(db, shop, orderIds);
+    }
 
     console.log(`Received ${topic} webhook for ${shop}`);
 

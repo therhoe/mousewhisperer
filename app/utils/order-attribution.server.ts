@@ -124,3 +124,58 @@ async function clearSnapshotStats(db: VisitClient, snapshotId: string) {
     .deleteMany({ where: { snapshotId } })
     .catch(() => {});
 }
+
+type OrderLinkClient = Pick<
+  PrismaClient,
+  "visit" | "storeSnapshotVisit" | "abTestVisit" | "abTestAssignment"
+>;
+
+// Rows of one shop that link a measurement to these orders. An order id can be tied
+// to a customer, so GDPR requests cover these rows too.
+function orderLinkWhere(shop: string, orderIds: string[]) {
+  const orderId = { in: orderIds };
+  return {
+    visit: { orderId, snapshot: { project: { shop } } },
+    storeSnapshotVisit: { orderId, storeSnapshot: { shop } },
+    abTestVisit: { orderId, shop },
+    abTestAssignment: { orderId, shop },
+  };
+}
+
+/** How many measurement rows of `shop` hold one of these orders (customers/data_request). */
+export async function countOrderLinkedRows(
+  db: OrderLinkClient,
+  shop: string,
+  orderIds: string[],
+) {
+  if (!orderIds.length) return 0;
+  const where = orderLinkWhere(shop, orderIds);
+  const counts = await Promise.all([
+    db.visit.count({ where: where.visit }),
+    db.storeSnapshotVisit.count({ where: where.storeSnapshotVisit }),
+    db.abTestVisit.count({ where: where.abTestVisit }),
+    db.abTestAssignment.count({ where: where.abTestAssignment }),
+  ]);
+  return counts.reduce((sum, count) => sum + count, 0);
+}
+
+/**
+ * Removes the order link from `shop`'s measurement rows (customers/redact). The
+ * conversion and its amount stay, so reports keep their totals without the order id.
+ */
+export async function redactOrderLinks(
+  db: OrderLinkClient,
+  shop: string,
+  orderIds: string[],
+) {
+  if (!orderIds.length) return 0;
+  const where = orderLinkWhere(shop, orderIds);
+  const data = { orderId: null };
+  const results = await Promise.all([
+    db.visit.updateMany({ where: where.visit, data }),
+    db.storeSnapshotVisit.updateMany({ where: where.storeSnapshotVisit, data }),
+    db.abTestVisit.updateMany({ where: where.abTestVisit, data }),
+    db.abTestAssignment.updateMany({ where: where.abTestAssignment, data }),
+  ]);
+  return results.reduce((sum, result) => sum + result.count, 0);
+}

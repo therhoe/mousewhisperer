@@ -116,6 +116,28 @@ const webhook = load("../app/routes/webhooks.orders.paid.tsx", {
   "../utils/order-attribution.server": orders,
 });
 
+// GDPR webhooks: each call answers with the payload set here.
+let privacyWebhook;
+const notifications = [];
+const privacyImports = {
+  "../db.server": dbModule,
+  "../shopify.server": {
+    authenticate: { webhook: async () => privacyWebhook },
+  },
+  "../utils/order-id": orderId,
+  "../utils/order-attribution.server": orders,
+  "../utils/notifications.server": {
+    createNotification: async (data) => notifications.push(data),
+  },
+};
+const dataRequest = load("../app/routes/webhooks.customers.data_request.tsx", privacyImports);
+const redact = load("../app/routes/webhooks.customers.redact.tsx", privacyImports);
+const privacyCall = async (route, shop, topic, payload) => {
+  privacyWebhook = { shop, topic, payload };
+  const response = await route.action({ request: new Request("https://app.test/webhooks/privacy", { method: "POST" }) });
+  assert.equal(response.status, 200);
+};
+
 const shops = [];
 const PRODUCT = "gid://shopify/Product/101";
 const now = Date.now();
@@ -382,4 +404,40 @@ test("a pixel order without an id keeps the old behaviour (no dedupe key)", asyn
   assert.equal(result, 1);
   const rows = await converted(f);
   assert.deepEqual(rows.store, [{ orderId: null, orderValue: 10, currency: "USD" }]);
+});
+
+test("GDPR: a data request reports the order-linked rows; redact unlinks them in that shop only", async () => {
+  const f = await fixture();
+  const other = await fixture();
+  await pixel(f, 6001);
+  await paidWebhook(f, 6001);
+  await paidWebhook(f, 6002);
+  // Another shop holding the same order number must not be touched.
+  await paidWebhook(other, 6001);
+  notifications.length = 0;
+
+  await privacyCall(dataRequest, f.shop, "customers/data_request", {
+    orders_requested: [6001, "gid://shopify/Order/6002"],
+    data_request: { id: 77 },
+  });
+  const notice = notifications.find((n) => n.referenceId === "order-privacy:77");
+  assert.ok(notice, "the merchant is told about order-linked measurement rows");
+  assert.equal(notice.shop, f.shop);
+  assert.equal(notice.type, "PRIVACY_REQUEST");
+  // 2 orders x (product visit, store visit, A/B visit) + the one A/B assignment.
+  assert.match(notice.message, /\b7\b/);
+
+  await privacyCall(redact, f.shop, "customers/redact", {
+    orders_to_redact: ["6001", 6002],
+  });
+  const rows = await converted(f);
+  for (const [name, list] of Object.entries(rows)) {
+    assert.ok(list.length > 0, name);
+    for (const row of list) {
+      assert.equal(row.orderId, null, `${name} keeps no order link`);
+      // The conversion and its revenue stay in the report.
+      assert.equal(row.currency, "USD", name);
+    }
+  }
+  assertOneOrder(await converted(other), usd("6001"));
 });
