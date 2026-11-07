@@ -195,7 +195,7 @@ async function loadReport(
   // Revenue per session (columns revenue, priced, unpriced).
   const sessionRevenue = detailed
     ? // The checkout pixel and the orders/paid webhook (and its retries) both report each
-      // order. Since migration 20261107000000 both write "orderId" and a capture keeps one
+      // order. Since migrations 20261107000000-07 both write "orderId" and a capture keeps one
       // row per order, but older rows, and pixel deliveries without an order id, can
       // still hold the same order twice. This clustering stays as the safety net; it
       // could later group by "orderId" where present. Converted rows of one session within 10 minutes of the previous one are
