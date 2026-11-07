@@ -1798,26 +1798,6 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "占会话的 {share} · {change} 个百分点",
     "佔工作階段的 {share} · {change} 個百分點",
   ],
-  "About {count} more sessions would have added to cart if this page matched your other products.": [
-    "Etwa {count} weitere Sitzungen hätten etwas in den Warenkorb gelegt, wenn diese Seite Ihren anderen Produkten entspräche.",
-    "如果此页面达到您其他产品页的水平，大约还会多 {count} 个会话加购。",
-    "如果此頁面達到您其他商品頁的水準，大約還會多 {count} 個工作階段加入購物車。",
-  ],
-  "About {count} more sessions would have continued if this page matched your other blog posts.": [
-    "Etwa {count} weitere Sitzungen wären weitergegangen, wenn diese Seite Ihren anderen Blogbeiträgen entspräche.",
-    "如果此页面达到您其他博客文章的水平，大约还会多 {count} 个会话继续浏览。",
-    "如果此頁面達到您其他部落格文章的水準，大約還會多 {count} 個工作階段繼續瀏覽。",
-  ],
-  "About {count} more sessions would have continued if this page matched your other collections.": [
-    "Etwa {count} weitere Sitzungen wären weitergegangen, wenn diese Seite Ihren anderen Kollektionen entspräche.",
-    "如果此页面达到您其他系列页的水平，大约还会多 {count} 个会话继续浏览。",
-    "如果此頁面達到您其他系列頁的水準，大約還會多 {count} 個工作階段繼續瀏覽。",
-  ],
-  "About {count} more sessions would have continued if this page matched your other pages.": [
-    "Etwa {count} weitere Sitzungen wären weitergegangen, wenn diese Seite Ihren anderen Seiten entspräche.",
-    "如果此页面达到您其他页面的水平，大约还会多 {count} 个会话继续浏览。",
-    "如果此頁面達到您其他頁面的水準，大約還會多 {count} 個工作階段繼續瀏覽。",
-  ],
   "Blog": ["Blog", "博客", "部落格"],
   "Closed or switched tab": [
     "Tab geschlossen oder gewechselt",
@@ -1847,7 +1827,6 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "前往其他网站",
     "前往其他網站",
   ],
-  "Missed sessions": ["Verpasste Sitzungen", "错失的会话", "錯失的工作階段"],
   "No visitor continued to another page yet.": [
     "Noch kein Besucher ist zu einer anderen Seite weitergegangen.",
     "尚无访客继续前往其他页面。",
@@ -1986,5 +1965,31 @@ export const catalog: Record<string, readonly [string, string, string]> = {
     "Für einige Bestellungen ist kein Betrag erfasst",
     "部分订单未记录金额",
     "部分訂單未記錄金額",
+  ],
+  Weakness: ["Schwäche", "薄弱度", "薄弱度"],
+  "Weakness is how many sessions a page lost against the typical page of its type.": [
+    "Schwäche gibt an, wie viele Sitzungen eine Seite im Vergleich zur typischen Seite ihres Typs verloren hat.",
+    "薄弱度表示一个页面相比同类型的典型页面损失了多少会话。",
+    "薄弱度表示一個頁面相比同類型的典型頁面損失了多少工作階段。",
+  ],
+  "Weakness {count}: about {count} fewer sessions added to cart here than on your typical product page.": [
+    "Schwäche {count}: Etwa {count} Sitzungen weniger haben hier etwas in den Warenkorb gelegt als auf Ihrer typischen Produktseite.",
+    "薄弱度 {count}：此页面加购的会话比您的典型产品页少约 {count} 个。",
+    "薄弱度 {count}：此頁面加入購物車的工作階段比您的典型商品頁少約 {count} 個。",
+  ],
+  "Weakness {count}: about {count} fewer sessions continued from here than from your typical collection.": [
+    "Schwäche {count}: Etwa {count} Sitzungen weniger sind von hier weitergegangen als von Ihrer typischen Kollektion.",
+    "薄弱度 {count}：从此页面继续浏览的会话比您的典型系列页少约 {count} 个。",
+    "薄弱度 {count}：從此頁面繼續瀏覽的工作階段比您的典型系列頁少約 {count} 個。",
+  ],
+  "Weakness {count}: about {count} fewer sessions continued from here than from your typical blog post.": [
+    "Schwäche {count}: Etwa {count} Sitzungen weniger sind von hier weitergegangen als von Ihrem typischen Blogbeitrag.",
+    "薄弱度 {count}：从此页面继续浏览的会话比您的典型博客文章少约 {count} 个。",
+    "薄弱度 {count}：從此頁面繼續瀏覽的工作階段比您的典型部落格文章少約 {count} 個。",
+  ],
+  "Weakness {count}: about {count} fewer sessions continued from here than from your typical page of this type.": [
+    "Schwäche {count}: Etwa {count} Sitzungen weniger sind von hier weitergegangen als von Ihrer typischen Seite dieses Typs.",
+    "薄弱度 {count}：从此页面继续浏览的会话比您同类型的典型页面少约 {count} 个。",
+    "薄弱度 {count}：從此頁面繼續瀏覽的工作階段比您同類型的典型頁面少約 {count} 個。",
   ],
 };

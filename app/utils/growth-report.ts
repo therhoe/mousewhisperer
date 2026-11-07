@@ -122,7 +122,7 @@ export type RankedGrowthPage = GrowthPageRow & {
   exitRate: number;
   conversionRate: number;
   typicalRate: number | null;
-  missed: number | null;
+  weakness: number | null;
   focus: boolean;
 };
 
@@ -149,8 +149,8 @@ function median(values: number[]) {
     : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-// Missed sessions: how many more sessions would have moved forward if the page
-// matched the typical (median) page of its type in this measurement.
+// Weakness (spec 7.1): how many sessions a page lost against the typical (median)
+// page of its type in this measurement. Formerly "missed sessions"; same calculation.
 export function rankGrowthPages(rows: GrowthPageRow[]): RankedGrowthPage[] {
   const eligible = new Map<string, number[]>();
   for (const row of rows) {
@@ -175,7 +175,7 @@ export function rankGrowthPages(rows: GrowthPageRow[]): RankedGrowthPage[] {
       exitRate: share(row.exits, row.sessions),
       conversionRate: share(row.conversions, row.sessions),
       typicalRate: comparable ? typicalRate : null,
-      missed: comparable
+      weakness: comparable
         ? Math.max(0, Math.round((row.sessions * (typicalRate - keyRate)) / 100))
         : null,
       focus: false,
@@ -183,14 +183,14 @@ export function rankGrowthPages(rows: GrowthPageRow[]): RankedGrowthPage[] {
   });
   ranked.sort(
     (a, b) =>
-      (b.missed ?? -1) - (a.missed ?? -1) ||
+      (b.weakness ?? -1) - (a.weakness ?? -1) ||
       b.sessions - a.sessions ||
       a.path.localeCompare(b.path),
   );
   let focused = 0;
   for (const row of ranked) {
     if (focused === PAGE_FOCUS_COUNT) break;
-    if ((row.missed ?? 0) > 0) {
+    if ((row.weakness ?? 0) > 0) {
       row.focus = true;
       focused += 1;
     }

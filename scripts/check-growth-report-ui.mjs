@@ -320,26 +320,48 @@ const ranked = (path, type, sessions, extra = {}) => ({
   exitRate: 0,
   conversionRate: 0,
   typicalRate: null,
-  missed: null,
+  weakness: null,
   focus: false,
   ...extra,
 });
 
-test("sessions by page explains each focus page in a sentence and badges it", () => {
+test("sessions by page explains each focus page by its weakness and badges it", () => {
   const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
   const html = render(GrowthSessionsByPage, {
     available: true,
     pages: [
-      ranked("/collections/autumn", "COLLECTION", 420, { keyRate: 20, typicalRate: 31, missed: 46, focus: true }),
-      ranked("/products/sample", "PRODUCT", 300, { keyRate: 16, typicalRate: 19, missed: 9, focus: true }),
+      ranked("/collections/autumn", "COLLECTION", 420, { keyRate: 20, typicalRate: 31, weakness: 46, focus: true }),
+      ranked("/products/sample", "PRODUCT", 300, { keyRate: 16, typicalRate: 19, weakness: 9, focus: true }),
       ranked("/search", null, 40),
     ],
   });
-  assert.match(html, /About 46 more sessions would have continued if this page matched your other collections\./);
-  assert.match(html, /About 9 more sessions would have added to cart if this page matched your other products\./);
+  assert.match(
+    html,
+    /Weakness 46: about 46 fewer sessions continued from here than from your typical collection\./,
+  );
+  assert.match(
+    html,
+    /Weakness 9: about 9 fewer sessions added to cart here than on your typical product page\./,
+  );
   assert.equal((html.match(/<mark>Focus here<\/mark>/g) || []).length, 4, "Two sentences and two table rows");
   assert.match(html, /Other/);
-  assert.match(html, /—/, "Unranked pages show a dash for missed sessions");
+  assert.match(html, /—/, "Unranked pages show a dash for weakness");
+  assert.match(html, /<th>Weakness<\/th>/);
+  assert.match(html, /Weakness is how many sessions a page lost against the typical page of its type\./);
+  assert.doesNotMatch(html, /Missed sessions|more sessions would have/);
+});
+
+test("blog and other page types get their own weakness sentence", () => {
+  const { GrowthSessionsByPage } = load("app/components/GrowthSessionsByPage.tsx", common);
+  const html = render(GrowthSessionsByPage, {
+    available: true,
+    pages: [
+      ranked("/blogs/news/a", "BLOG", 100, { weakness: 12, focus: true }),
+      ranked("/pages/about", "PAGE", 100, { weakness: 5, focus: true }),
+    ],
+  });
+  assert.match(html, /Weakness 12: about 12 fewer sessions continued from here than from your typical blog post\./);
+  assert.match(html, /Weakness 5: about 5 fewer sessions continued from here than from your typical page of this type\./);
 });
 
 test("sessions by page shows ten rows per page", () => {

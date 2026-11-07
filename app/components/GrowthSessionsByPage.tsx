@@ -41,25 +41,26 @@ export function GrowthSessionsByPage({
             : type === "HOMEPAGE"
               ? t("Homepage")
               : t("Other");
+  // A Focus row names the page's Weakness, then what it means for that page type.
   const reason = (row: RankedGrowthPage) => {
-    const count = formatNumber(row.missed ?? 0);
+    const count = formatNumber(row.weakness ?? 0);
     if (row.type === "PRODUCT")
       return t(
-        "About {count} more sessions would have added to cart if this page matched your other products.",
+        "Weakness {count}: about {count} fewer sessions added to cart here than on your typical product page.",
         { count },
       );
     if (row.type === "COLLECTION")
       return t(
-        "About {count} more sessions would have continued if this page matched your other collections.",
+        "Weakness {count}: about {count} fewer sessions continued from here than from your typical collection.",
         { count },
       );
     if (row.type === "BLOG")
       return t(
-        "About {count} more sessions would have continued if this page matched your other blog posts.",
+        "Weakness {count}: about {count} fewer sessions continued from here than from your typical blog post.",
         { count },
       );
     return t(
-      "About {count} more sessions would have continued if this page matched your other pages.",
+      "Weakness {count}: about {count} fewer sessions continued from here than from your typical page of this type.",
       { count },
     );
   };
@@ -70,6 +71,11 @@ export function GrowthSessionsByPage({
         <BlockStack gap="200">
           <Text as="h2" variant="headingMd">
             {t("Sessions by page")}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {t(
+              "Weakness is how many sessions a page lost against the typical page of its type.",
+            )}
           </Text>
           <Text as="p" variant="bodySm" tone="subdued">
             {t(
@@ -113,7 +119,7 @@ export function GrowthSessionsByPage({
             t("Key rate"),
             t("Exit rate"),
             t("Conversion rate"),
-            t("Missed sessions"),
+            t("Weakness"),
           ]}
           rows={pages
             .slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE)
@@ -131,7 +137,7 @@ export function GrowthSessionsByPage({
               percent(row.keyRate),
               percent(row.exitRate),
               percent(row.conversionRate),
-              row.missed === null ? "—" : formatNumber(row.missed),
+              row.weakness === null ? "—" : formatNumber(row.weakness),
             ])}
         />
       ) : (

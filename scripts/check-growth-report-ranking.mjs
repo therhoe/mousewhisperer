@@ -1,4 +1,4 @@
-// Database-free checks for the Store "missed sessions" ranking.
+// Database-free checks for the Store "Weakness" ranking.
 // Run: node --test scripts/check-growth-report-ranking.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -42,7 +42,7 @@ test("key rate is add-to-cart for products and click-through for other page type
   assert.equal(pageKeyRate(page("/pages/a", "PAGE", 0)), null);
 });
 
-test("missed sessions compare a page with the median rate of its type", () => {
+test("weakness compares a page with the median rate of its type", () => {
   const ranked = rankGrowthPages([
     page("/collections/a", "COLLECTION", 100, { forwards: 40 }),
     page("/collections/b", "COLLECTION", 100, { forwards: 30 }),
@@ -50,11 +50,11 @@ test("missed sessions compare a page with the median rate of its type", () => {
   ]);
   const byPath = Object.fromEntries(ranked.map((row) => [row.path, row]));
   assert.equal(byPath["/collections/c"].typicalRate, 30);
-  assert.equal(byPath["/collections/c"].missed, 20);
+  assert.equal(byPath["/collections/c"].weakness, 20);
   assert.equal(byPath["/collections/c"].focus, true);
-  assert.equal(byPath["/collections/a"].missed, 0);
+  assert.equal(byPath["/collections/a"].weakness, 0);
   assert.equal(byPath["/collections/a"].focus, false);
-  assert.equal(byPath["/collections/b"].missed, 0);
+  assert.equal(byPath["/collections/b"].weakness, 0);
   assert.equal(ranked[0].path, "/collections/c");
 });
 
@@ -67,7 +67,7 @@ test("small pages and types with fewer than 3 eligible pages are listed but neve
   ]);
   assert.equal(ranked.length, 4);
   for (const row of ranked) {
-    assert.equal(row.missed, null);
+    assert.equal(row.weakness, null);
     assert.equal(row.typicalRate, null);
     assert.equal(row.focus, false);
   }
@@ -79,7 +79,7 @@ test("small pages and types with fewer than 3 eligible pages are listed but neve
   ]);
 });
 
-test("only the top three pages with missed sessions get a focus badge", () => {
+test("only the top three pages with a weakness get a focus badge", () => {
   const ranked = rankGrowthPages(
     [10, 20, 30, 40, 50, 60].map((forwards, i) =>
       page(`/pages/p${i}`, "PAGE", 100, { forwards }),
@@ -90,7 +90,7 @@ test("only the top three pages with missed sessions get a focus badge", () => {
     "/pages/p1",
     "/pages/p2",
   ]);
-  assert.deepEqual(plain(ranked.slice(0, 4).map((row) => row.missed)), [25, 15, 5, 0]);
+  assert.deepEqual(plain(ranked.slice(0, 4).map((row) => row.weakness)), [25, 15, 5, 0]);
 });
 
 test("exit and conversion rates are shares of sessions that viewed the page", () => {
@@ -115,4 +115,15 @@ test("exit outcomes have a fixed display order", () => {
     "external_link",
     "unknown",
   ]);
+});
+
+test("ranked rows carry weakness and no longer carry missed", () => {
+  const [row] = rankGrowthPages([
+    page("/pages/a", "PAGE", 100, { forwards: 10 }),
+    page("/pages/b", "PAGE", 100, { forwards: 30 }),
+    page("/pages/c", "PAGE", 100, { forwards: 50 }),
+  ]);
+  assert.equal(row.path, "/pages/a");
+  assert.equal(row.weakness, 20, "max(0, round(100 × (30 − 10) / 100))");
+  assert.equal("missed" in row, false);
 });
