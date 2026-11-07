@@ -48,6 +48,7 @@ const server = load("../app/utils/customer-journey.server.ts", {
   "../db.server": db,
   "./channel-report": channel,
   "./customer-journey": rules,
+  "./order-id": load("../app/utils/order-id.ts", {}),
   "./billing.server": {
     PlanLimitError,
     clearBillingDisplayCache() {},
@@ -243,6 +244,13 @@ test("purchase pixel/webhook and click retries count once without switching ads 
   await server.recordCustomerJourney(shop, batch(), "REAL");
   await server.recordCustomerCommerce(commerce({ fromPixel: true }));
   await server.recordCustomerCommerce(commerce({ orderId: 999 }));
+  // Every order-id form the pixel or webhook may send keys the same order
+  // (the same normaliser as the measurement writers).
+  // Real pixel deliveries carry an event id, which is the key when no order id parses.
+  for (const orderId of ["999", "gid://shopify/OrderIdentity/999", " 999 "])
+    await server.recordCustomerCommerce(
+      commerce({ fromPixel: true, orderId, eventId: `pixel-${orderId}` }),
+    );
   assert.equal(
     await db.customerJourneyEvent.count({ where: { type: "conversion" } }),
     1,
@@ -439,7 +447,11 @@ test("customer privacy requests identify only matching shop/order journeys and r
       },
     },
     "../db.server": db,
-    "../utils/customer-journey": rules,
+    "../utils/order-id": load("../app/utils/order-id.ts", {}),
+    "../utils/order-attribution.server": load(
+      "../app/utils/order-attribution.server.ts",
+      { "./order-id": load("../app/utils/order-id.ts", {}) },
+    ),
     "../utils/notifications.server": {
       createNotification: async (data) => notifications.push(data),
     },

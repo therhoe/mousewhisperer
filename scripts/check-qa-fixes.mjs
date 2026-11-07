@@ -169,6 +169,9 @@ function storeHarness(rows = [], cached = null) {
       }),
       "./notifications.server": { createNotification: async () => {} },
       "./loader-cache.server": { clearCacheKey: () => {}, loaderCacheKeys: {} },
+      "./order-attribution.server": load("app/utils/order-attribution.server.ts", {
+        "./order-id": load("app/utils/order-id.ts"),
+      }),
     },
     {},
     "\nexport { classifyStoreSessions, computeStoreSnapshotStats };\n",

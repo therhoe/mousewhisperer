@@ -16,10 +16,10 @@ import {
   normalizeJourneySource,
   matchesJourney,
   readJourneyEvents,
-  normalizeOrderId,
   validateJourneyDestination,
   type JourneyFilter,
 } from "./customer-journey";
+import { orderAttributionId } from "./order-id";
 
 export class CustomerSnapshotError extends Error {
   constructor(
@@ -528,7 +528,7 @@ export async function recordCustomerCommerce(input: {
 }) {
   const sid = journeyText(input.sessionId);
   const acquisitionId = journeyText(input.acquisitionSessionId);
-  const orderId = normalizeOrderId(input.orderId);
+  const orderId = orderAttributionId(input.orderId);
   if (!input.shop || !sid || !acquisitionId) return 0;
   if (
     !["add_to_cart", "cart_removed", "checkout_started", "conversion"].includes(

@@ -30,6 +30,7 @@ function trackingAction(recordCustomerJourney) {
     "../utils/ab-tests.server": {},
     "../utils/store-snapshot.server": {},
     "../utils/channel-snapshot.server": {},
+    "../utils/order-attribution.server": {},
     // Signature checks have their own tests (check-track-signature.mjs).
     "../utils/tracking-auth.server": {
       verifyTrackingRequest: async () => ({ allowed: true, signed: true }),

@@ -14,6 +14,10 @@ import {
 } from "../utils/datacenter-ips.server";
 import { createNotification } from "../utils/notifications.server";
 import {
+  attributeProductVisitOrder,
+  orderAttributionId,
+} from "../utils/order-attribution.server";
+import {
   assignTemplateAbVariant,
   attributeAbTestAddToCart,
   attributeAbTestCheckoutStarted,
@@ -914,6 +918,8 @@ async function handlePixelEvent(
     );
 
     let conversionsTracked = 0;
+    const attributionOrderId = orderAttributionId(orderId);
+    const convertedAt = new Date(timestamp);
 
     // Update all visits for products in this order
     for (const product of uniqueProducts) {
@@ -934,66 +940,65 @@ async function handlePixelEvent(
         JSON.stringify(projectMatch),
       );
 
-      // Tier 1: exact session ID match — prefer the visit where addedToCart happened
-      let visit = await prisma.visit.findFirst({
-        where: {
-          sessionId,
-          ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
-          snapshot: {
-            project: { ...projectMatch, ...(channelShop ? { shop: channelShop } : {}) },
-          },
-          addedToCart: true,
-          converted: false,
+      const snapshotScope = {
+        project: { ...projectMatch, ...(channelShop ? { shop: channelShop } : {}) },
+      };
+      let matchTier: string | null = null;
+      // The orders/paid webhook may have attributed this order already; each capture
+      // keeps one conversion per order.
+      const result = await attributeProductVisitOrder(prisma, {
+        orderId: attributionOrderId,
+        scope: { snapshot: snapshotScope },
+        convertedAt,
+        orderValue: perProductRevenue,
+        currency: data.currency || null,
+        findVisit: async (attributedSnapshotIds) => {
+          // Captures that already hold this order keep that one conversion.
+          const freshCapture = attributedSnapshotIds.length
+            ? { snapshotId: { notIn: attributedSnapshotIds } }
+            : {};
+          // Tier 1: exact session ID match — prefer the visit where addedToCart happened
+          let visit = await prisma.visit.findFirst({
+            where: {
+              ...freshCapture,
+              sessionId,
+              ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
+              snapshot: snapshotScope,
+              addedToCart: true,
+              converted: false,
+            },
+            orderBy: { startedAt: "desc" },
+          });
+          matchTier = visit ? "session+ATC" : null;
+
+          // Tier 2: exact session match without ATC
+          if (!visit) {
+            visit = await prisma.visit.findFirst({
+              where: {
+                ...freshCapture,
+                sessionId,
+                ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
+                snapshot: snapshotScope,
+                converted: false,
+              },
+              orderBy: { startedAt: "desc" },
+            });
+            if (visit) matchTier = "session";
+          }
+
+          // No fallback tiers — a missed conversion is better than a false one
+          return visit;
         },
-        orderBy: { startedAt: "desc" },
       });
 
-      let matchTier = visit ? "session+ATC" : null;
-
-      // Tier 2: exact session match without ATC
-      if (!visit) {
-        visit = await prisma.visit.findFirst({
-          where: {
-            sessionId,
-            ...growthAcquisitionMatch(data.acquisitionSessionId, "snapshot"),
-            snapshot: {
-              project: { ...projectMatch, ...(channelShop ? { shop: channelShop } : {}) },
-            },
-            converted: false,
-          },
-          orderBy: { startedAt: "desc" },
-        });
-        if (visit) matchTier = "session";
-      }
-
-      // No fallback tiers — a missed conversion is better than a false one
-
-      if (visit) {
-        // Skip if already converted (dedup pixel + webhook)
-        if (visit.converted) {
-          console.log(
-            `[MW Pixel] Conversion — visit ${visit.id} already converted, skipping`,
-          );
-          continue;
-        }
-
-        await prisma.visit.update({
-          where: { id: visit.id },
-          data: {
-            converted: true,
-            convertedAt: new Date(timestamp),
-            ...(perProductRevenue != null
-              ? { orderValue: perProductRevenue }
-              : {}),
-            ...(data.currency ? { currency: data.currency } : {}),
-          },
-        });
-        await prisma.snapshotStatsCache
-          .deleteMany({ where: { snapshotId: visit.snapshotId } })
-          .catch(() => {});
+      if (result.outcome === "converted") {
         conversionsTracked++;
         console.log(
-          `[MW Pixel] Conversion matched visit ${visit.id} via ${matchTier}`,
+          `[MW Pixel] Conversion matched visit ${result.visitId} via ${matchTier}`,
+        );
+      } else if (result.outcome === "already") {
+        console.log(
+          `[MW Pixel] Conversion — order already attributed to visit ${result.visitId ?? "(concurrent)"}, skipping`,
         );
       } else {
         console.log(
@@ -1013,12 +1018,15 @@ async function handlePixelEvent(
       timestamp,
       totalPrice: data.totalPrice,
       currency: data.currency,
+      orderId: attributionOrderId,
     });
     const abConversionsTracked = await attributeAbTestConversion({
+      shop: channelShop,
       sessionId,
       timestamp,
       totalPrice: data.totalPrice,
       currency: data.currency,
+      orderId: attributionOrderId,
     });
     return Response.json(
       {

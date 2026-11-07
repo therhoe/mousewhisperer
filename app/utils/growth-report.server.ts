@@ -194,9 +194,11 @@ async function loadReport(
       ) clicks),'[]'::json)`;
   // Revenue per session (columns revenue, priced, unpriced).
   const sessionRevenue = detailed
-    ? // The checkout pixel and the orders/paid webhook (and its retries) each attribute
-      // the same order to a page view of the session, and neither carries the order id
-      // here. Converted rows of one session within 10 minutes of the previous one are
+    ? // The checkout pixel and the orders/paid webhook (and its retries) both report each
+      // order. Since migrations 20261107000000-07 both write "orderId" and a capture keeps one
+      // row per order, but older rows, and pixel deliveries without an order id, can
+      // still hold the same order twice. This clustering stays as the safety net; it
+      // could later group by "orderId" where present. Converted rows of one session within 10 minutes of the previous one are
       // therefore one order, counted at its largest shop-currency amount; it is unpriced
       // only when none of its rows is priced (a Markets order may arrive once in the
       // presentment currency and once in the shop currency). A row without a conversion

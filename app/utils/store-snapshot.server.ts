@@ -8,6 +8,12 @@ import prisma from "../db.server";
 import { growthAcquisitionMatch, writeGrowthVisit } from "./growth-tracking.server";
 import { createNotification } from "./notifications.server";
 import { clearCacheKey, loaderCacheKeys } from "./loader-cache.server";
+import {
+  isLostOrderWrite,
+  webhookAmount,
+  orderAmount,
+  orderAttributionId,
+} from "./order-attribution.server";
 
 const STORE_SNAPSHOT_STATS_TTL_MS = 30_000;
 const STORE_SNAPSHOT_STATS_VERSION = 2;
@@ -564,6 +570,7 @@ export async function updateStoreSnapshotConversion({
   timestamp,
   totalPrice,
   currency,
+  orderId,
 }: {
   shop?: string | null;
   sessionId: string;
@@ -571,6 +578,7 @@ export async function updateStoreSnapshotConversion({
   timestamp: number | string | Date;
   totalPrice?: string | number | null;
   currency?: string | null;
+  orderId?: unknown;
 }) {
   return attributeStoreSnapshotOrder({
     shop,
@@ -579,6 +587,7 @@ export async function updateStoreSnapshotConversion({
     timestamp,
     totalPrice,
     currency,
+    orderId,
   });
 }
 
@@ -589,6 +598,8 @@ export async function attributeStoreSnapshotOrder({
   timestamp,
   totalPrice,
   currency,
+  orderId: rawOrderId,
+  authoritativeAmount = false,
 }: {
   shop?: string | null;
   sessionId: string;
@@ -596,6 +607,10 @@ export async function attributeStoreSnapshotOrder({
   timestamp: number | string | Date;
   totalPrice?: string | number | null;
   currency?: string | null;
+  // Pixel `checkout.order.id` or webhook order id; one row per capture per order.
+  orderId?: unknown;
+  // Only the webhook passes true: its HMAC-verified shop-currency amount replaces the pixel's.
+  authoritativeAmount?: boolean;
 }) {
   if (!sessionId) return 0;
 
@@ -603,6 +618,18 @@ export async function attributeStoreSnapshotOrder({
   if (!Number.isFinite(orderDate.getTime())) return 0;
   const thirtyDaysBeforeOrder = new Date(orderDate);
   thirtyDaysBeforeOrder.setDate(thirtyDaysBeforeOrder.getDate() - 30);
+  const orderId = orderAttributionId(rawOrderId);
+  const amount = orderAmount(totalPrice);
+
+  const orderRows = () =>
+    prisma.storeSnapshotVisit.findMany({
+      where: { orderId: orderId!, ...(shop ? { storeSnapshot: { shop } } : {}) },
+      select: { id: true, storeSnapshotId: true, orderValue: true, currency: true },
+    });
+  // Captures that already hold this order (the other writer, or a retry).
+  const updatedSnapshotIds = new Set<string>(
+    orderId ? (await orderRows()).map((row) => row.storeSnapshotId) : [],
+  );
 
   const visits = await prisma.storeSnapshotVisit.findMany({
     where: {
@@ -627,31 +654,41 @@ export async function attributeStoreSnapshotOrder({
     ],
   });
 
-  const updatedSnapshotIds = new Set<string>();
   let updated = 0;
 
   for (const visit of visits) {
     if (updatedSnapshotIds.has(visit.storeSnapshotId)) continue;
 
-    await prisma.storeSnapshotVisit.update({
-      where: { id: visit.id },
-      data: {
-        converted: true,
-        convertedAt: orderDate,
-        ...(totalPrice != null && totalPrice !== ""
-          ? {
-              orderValue:
-                typeof totalPrice === "number"
-                  ? totalPrice
-                  : parseFloat(totalPrice),
-            }
-          : {}),
-        ...(currency ? { currency } : {}),
-      },
-    });
+    try {
+      await prisma.storeSnapshotVisit.update({
+        where: { id: visit.id, converted: false },
+        data: {
+          converted: true,
+          convertedAt: orderDate,
+          ...(amount != null ? { orderValue: amount } : {}),
+          ...(currency ? { currency } : {}),
+          ...(orderId ? { orderId } : {}),
+        },
+      });
+    } catch (error) {
+      // Another delivery of this order converted the capture first.
+      if (!isLostOrderWrite(error)) throw error;
+      updatedSnapshotIds.add(visit.storeSnapshotId);
+      continue;
+    }
     updatedSnapshotIds.add(visit.storeSnapshotId);
     await clearStoreSnapshotStatsCache(visit.storeSnapshotId);
     updated++;
+  }
+
+  // Last, so it also covers a pixel row committed while this webhook was choosing.
+  if (authoritativeAmount && orderId) {
+    for (const row of await orderRows()) {
+      const fill = webhookAmount(row, amount, currency ?? null);
+      if (!fill) continue;
+      await prisma.storeSnapshotVisit.update({ where: { id: row.id }, data: fill });
+      await clearStoreSnapshotStatsCache(row.storeSnapshotId);
+    }
   }
 
   return updated;

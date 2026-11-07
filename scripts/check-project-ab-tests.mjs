@@ -42,6 +42,9 @@ const service = (db) =>
     "./ab-project-targeting": targeting,
     "./ab-test-report": trend,
     "./click-engagement": clicks,
+    "./order-attribution.server": compile("app/utils/order-attribution.server.ts", {
+      "./order-id": compile("app/utils/order-id.ts"),
+    }),
   });
 const filters = (audience = "all") => ({
   audience,
