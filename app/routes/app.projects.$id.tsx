@@ -47,6 +47,7 @@ import { ScopeBadge, StatusBadge } from "../components/GrowthProjectList";
 import { useBackgroundJson } from "../utils/background-json";
 import type { GrowthReport } from "../utils/growth-report";
 import { useI18n } from "../utils/i18n";
+import { revenueText } from "../utils/revenue";
 import { mergeReportParams } from "../utils/embedded-filter-params";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -191,8 +192,15 @@ function LatestSummary({
     report ? format(report) : loading ? "…" : "—";
   const percent = (number: number) =>
     `${formatNumber(number, { maximumFractionDigits: 2 })}%`;
+  // Conversions and revenue sit beside the conversion rate (spec 7.2).
+  const revenue = report
+    ? revenueText(report.conversions, report, report.currency, {
+        t,
+        formatNumber,
+      })
+    : null;
   return (
-    <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
+    <InlineGrid columns={{ xs: 2, sm: 3, md: 5 }} gap="300">
       <MetricTile
         label={t("Sessions")}
         value={value((item) => formatNumber(item.sessions))}
@@ -202,8 +210,17 @@ function LatestSummary({
         value={value((item) => percent(item.atcRate))}
       />
       <MetricTile
+        label={t("Conversions")}
+        value={value((item) => formatNumber(item.conversions))}
+      />
+      <MetricTile
         label={t("Conversion rate")}
         value={value((item) => percent(item.conversionRate))}
+      />
+      <MetricTile
+        label={t("Revenue")}
+        value={revenue ? revenue.value : value(() => "")}
+        caption={revenue?.hint ?? undefined}
       />
     </InlineGrid>
   );

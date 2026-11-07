@@ -63,6 +63,7 @@ const pure = compile("app/utils/growth-projects.ts");
 const reportPure = compile("app/utils/growth-report.ts");
 const embeddedFilters = compile("app/utils/embedded-filter-params.ts");
 const navigation = compile("app/utils/navigation.ts");
+const revenuePure = compile("app/utils/revenue.ts");
 const realJsx = require("react/jsx-runtime");
 // Records the click handlers of Polaris elements so tests can press them.
 function jsxRuntime(state) {
@@ -302,6 +303,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
     "../utils/growth-projects.server": services,
     "../utils/growth-projects": pure,
     "../utils/growth-report": reportPure,
+    "../utils/revenue": revenuePure,
     "../utils/embedded-filter-params": embeddedFilters,
     "../utils/growth-report.server": reportPure,
     "../utils/billing.server": { isPlanLimitError: () => false },
@@ -362,7 +364,8 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
       },
     },
     "../components/GrowthOverviewCard": {
-      MetricTile: ({ label, value }) => React.createElement("div", null, label, value),
+      MetricTile: ({ label, value, caption }) =>
+        React.createElement("div", { "data-tile": label }, `${label}=${value}${caption ? ` [${caption}]` : ""}`),
     },
     "./GrowthOverviewCard": {
       MetricTile: ({ label, value }) => React.createElement("div", null, label, value),
@@ -371,7 +374,7 @@ function harness(file, data = { project, shop: "owner.myshopify.com" }) {
       useLanguageActionGroup: () => ({ title: "Language", actions: [] }),
     },
     "../utils/background-json": {
-      useBackgroundJson: () => ({ data: undefined, loading: true, error: null, reload() {} }),
+      useBackgroundJson: () => state.background ?? { data: undefined, loading: true, error: null, reload() {} },
     },
     "./GrowthMeasurementResults": {
       GrowthMeasurementResults: ({ measurementId, filters }) =>
@@ -988,4 +991,32 @@ test("Clear filters during a held load puts the Scope select back to all scopes"
   assert.equal(dom.el("scope").value, "ALL");
   dom.render();
   assert.equal(dom.el("scope").value, "ALL");
+});
+
+test("the latest measurement shows conversions and revenue beside the conversion rate", () => {
+  const h = harness("app/routes/app.projects.$id.tsx");
+  const report = {
+    sessions: 200,
+    atcRate: 10,
+    conversions: 6,
+    conversionRate: 3,
+    revenue: 240,
+    pricedConversions: 6,
+    unpricedConversions: 0,
+    currency: "EUR",
+  };
+  const answer = (value) => ({ data: { report: value }, loading: false, error: null, reload() {} });
+  h.state.background = answer(report);
+  let html = h.render();
+  assert.match(html, /Conversions=6</);
+  assert.match(html, /Conversion rate=3%</);
+  assert.match(html, /Revenue=240</);
+  h.state.background = answer({ ...report, pricedConversions: 5, unpricedConversions: 1 });
+  html = h.render();
+  assert.match(html, /Revenue=240 \[Some orders have no recorded amount\]/);
+  h.state.background = answer({ ...report, revenue: 0, pricedConversions: 0, unpricedConversions: 6 });
+  html = h.render();
+  assert.match(html, /Revenue=Not recorded/);
+  h.state.background = undefined;
+  assert.match(h.render(), /Revenue=…/, "Loading shows an ellipsis, not Not recorded");
 });
